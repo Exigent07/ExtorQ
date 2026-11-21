@@ -3,7 +3,8 @@
 These Pydantic models are the single source of truth for every record that
 crosses a component boundary. Collectors, the ingestion gateway, the pipeline,
 detection, correlation, AI and the analyst API all import from here; nobody
-defines parallel event formats. Changes follow docs/team/INTERFACE_CHANGES.md.
+defines parallel event formats. Changes follow docs/team/PLAN.md §8
+(proposals in docs/team/interface-changes/<agent>.md; the lead merges).
 """
 
 from extorq.contracts.ai import (
@@ -36,7 +37,12 @@ from extorq.contracts.alert import (
     TelemetryRequirement,
 )
 from extorq.contracts.asset import Asset, InventoryItem, InventoryItemType
-from extorq.contracts.catalog import EVENT_CATALOG, EventTypeSpec, SourceType, validate_event_semantics
+from extorq.contracts.catalog import (
+    EVENT_CATALOG,
+    EventTypeSpec,
+    SourceType,
+    validate_event_semantics,
+)
 from extorq.contracts.common import (
     SCHEMA_VERSION,
     AssetType,
@@ -57,6 +63,7 @@ from extorq.contracts.context import (
     Relationship,
     RelationshipBasis,
     RelationshipType,
+    ServiceSummary,
     SourceCoverage,
     TimelineEntry,
 )
@@ -89,6 +96,19 @@ from extorq.contracts.ingest import (
     record_identity,
 )
 from extorq.contracts.scan import ScanCoverage, ScanRun, ScanScope, ScanStatus, SkippedCheck
+from extorq.contracts.service import (
+    AdapterSupport,
+    DiscoveryEvidence,
+    InstanceKind,
+    MonitoringStatus,
+    PortAttribution,
+    Service,
+    ServiceCategory,
+    ServiceEndpoint,
+    ServiceInstance,
+    ServiceKind,
+    ServiceRef,
+)
 from extorq.contracts.simulation import SimulationRun, SimulationStatus
 
 __all__ = [
@@ -105,6 +125,7 @@ __all__ = [
     "AcceptedRisk",
     "Actor",
     "ActorType",
+    "AdapterSupport",
     "AlertEvidence",
     "AnalystState",
     "AnalystStatus",
@@ -116,6 +137,7 @@ __all__ = [
     "Criticality",
     "DedupStrategy",
     "DetectionAlert",
+    "DiscoveryEvidence",
     "Environment",
     "EventCategory",
     "EventSummary",
@@ -131,6 +153,7 @@ __all__ = [
     "IngestBatch",
     "IngestRecord",
     "IngestResult",
+    "InstanceKind",
     "InventoryItem",
     "InventoryItemType",
     "InvestigationContext",
@@ -138,10 +161,12 @@ __all__ = [
     "JevAnswer",
     "JevTriageResult",
     "KubernetesInfo",
+    "MonitoringStatus",
     "Network",
     "Outcome",
     "PackageRef",
     "PipelineHealth",
+    "PortAttribution",
     "PostureFinding",
     "ProcessInfo",
     "Provenance",
@@ -162,6 +187,13 @@ __all__ = [
     "ScanScope",
     "ScanStatus",
     "SecurityEvent",
+    "Service",
+    "ServiceCategory",
+    "ServiceEndpoint",
+    "ServiceInstance",
+    "ServiceKind",
+    "ServiceRef",
+    "ServiceSummary",
     "Severity",
     "SimulationRun",
     "SimulationStatus",

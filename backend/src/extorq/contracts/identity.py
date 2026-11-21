@@ -132,11 +132,28 @@ def context_id(alert_id_value: str, context_input_hash: str) -> str:
 
 
 def assessment_id(
-    provider: str, model: str, task: str, prompt_version: str, context_input_hash: str, nonce: str = ""
+    provider: str,
+    model: str,
+    task: str,
+    prompt_version: str,
+    context_input_hash: str,
+    nonce: str = "",
 ) -> str:
-    return stable_id("assessment.v1", provider, model, task, prompt_version, context_input_hash, nonce)
+    return stable_id(
+        "assessment.v1", provider, model, task, prompt_version, context_input_hash, nonce
+    )
 
 
 def scope_hash(targets: list[str], description: str = "") -> str:
     """Hash identifying the scope of a scan; lifecycle comparisons require equal scope."""
     return stable_id("scope.v1", canonical_json(sorted(targets)), description)
+
+
+def service_id(asset_id: str, service_kind: str, service_key: str) -> str:
+    """Identity of a Service: stable for the same natural key on the same asset."""
+    return stable_id("service.v1", asset_id, service_kind, service_key)
+
+
+def instance_id(service_id_value: str, instance_kind: str, instance_key: str) -> str:
+    """Identity of a ServiceInstance (process: pid+start time, container id, pod uid)."""
+    return stable_id("instance.v1", service_id_value, instance_kind, instance_key)

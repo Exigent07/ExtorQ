@@ -32,7 +32,7 @@ from extorq.contracts.event import Resource
 class FindingCategory(StrEnum):
     VULNERABILITY = "vulnerability"
     MISCONFIGURATION = "misconfiguration"
-    SECRET = "secret"
+    SECRET = "secret"  # noqa: S105 - finding category name, not a credential
     CODE = "code"
     POSTURE = "posture"
     EXPOSURE = "exposure"
@@ -66,6 +66,8 @@ class PostureFinding(ContractModel):
     title: ShortStr
     description: MediumStr | None = None
     resource: Resource | None = None
+    #: Service the finding applies to, when attributable (e.g. sshd config → ssh service) (1.1).
+    service_id: HexId | None = None
     package: PackageRef | None = None
     cve_ids: list[ShortStr] = Field(default_factory=list, max_length=32)
     cvss_score: float | None = Field(default=None, ge=0, le=10)

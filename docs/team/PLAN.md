@@ -254,3 +254,67 @@ Simulation marker: any actor/object name containing `extorq-sim-<run_id>` sets
 Each agent keeps `docs/team/status/<agent>.md` current: done, verified (with the
 exact commands run and their results), not verified, blockers, next steps.
 The lead maintains `docs/team/TASKBOARD.md`.
+
+---
+
+## 10. Amendment (2026-11-21): node-wise, service-aware monitoring
+
+Hosts and Kubernetes nodes run many services; ExtorQ models them explicitly instead
+of one undifferentiated telemetry stream. Contract schema **1.1** (additive; 1.0
+records stay valid). Lead-owned artefacts (already merged and applied):
+
+* `backend/src/extorq/contracts/service.py` — `Service`, `ServiceInstance`,
+  `ServiceEndpoint`, `ServiceRef`, enums `ServiceKind` (host_service, application,
+  k8s_workload, k8s_service), `ServiceCategory`, `AdapterSupport`
+  (implemented / planned / none), `MonitoringStatus` (monitored / degraded /
+  unmonitored), `DiscoveryEvidence`, `PortAttribution` (confirmed / inferred / unknown).
+* `SecurityEvent.service: ServiceRef | None`, `KubernetesInfo.container_id`,
+  `PostureFinding.service_id`, `DetectionAlert.service_ids`,
+  `InvestigationContext.services` / `related_assets`, `EventSummary.service_*`,
+  new `RelationshipBasis` values (same_service, same_service_instance,
+  cross_service_same_asset, cross_asset), `AssetType.KUBERNETES_NODE`
+  (asset id `k8s:<cluster>/node/<name>`), record kinds `service`, `service_instance`.
+* Identities: `identity.service_id(asset_id, service_kind, service_key)`,
+  `identity.instance_id(service_id, instance_kind, instance_key)`.
+* Catalog: `service.discovered`, `service.removed`, `service.exposure.changed`,
+  `http.server.error`, `audit.config.changed`, `account.user.created/deleted`,
+  source type `linux.apache`; `extorq.collector.gap_detected` may now be emitted
+  under each collector's own source types; `system.log.notable` also from `linux.auditd`.
+* Migration `0004_services.sql` (applied live): tables `services`,
+  `service_instances`, views `v_services`, `v_service_instances_current`; columns
+  `events.{service_id, service_name, service_instance_id, adapter_id, k8s_container_id}`,
+  `finding_observations.service_id`, `alerts.service_ids`; grants.
+* Collector-side interface `collectors/src/extorq_collectors/services/`
+  (`ServiceCandidate`, `ServiceAdapter`, `AdapterContext`, registry with
+  implemented-over-planned precedence, `classify_coverage`, `build_service`,
+  `exposure_of`, `service_ref`) and **planned** adapters: ftp (vsftpd/ProFTPD),
+  postgresql, mysql, dns, redis. Also `ContractModel` now rejects NaN/Infinity.
+
+### 10.1 Rules of the service model
+1. A service exists only with discovery evidence. A process is never assumed to be a
+   network service; a port is attributed to a service only with explicit
+   `PortAttribution` (confirmed requires an observed socket owner).
+2. Coverage is explicit and visible: discovered → supported (adapter implemented) →
+   actively monitored (enabled + fresh). Unsupported/planned/unmonitored services are
+   shown, never hidden.
+3. Kubernetes: nodes are assets; workloads and logical Kubernetes Services are
+   distinct `ServiceKind`s; Pods/containers are `ServiceInstance`s. A Kubernetes
+   Service is never confused with a host OS service.
+4. Adapters collect only what their source supports and declare `never_collects`
+   (no FTP file contents, credentials, HTTP Authorization headers, DB query text).
+5. Correlation across services/hosts preserves identities, timestamps, network
+   context and confidence; temporal proximity alone is never causation.
+
+### 10.2 Ownership and work per agent
+| Agent | Amendment work |
+|---|---|
+| A | rows mapping for `service`/`service_instance` + new event/finding/alert columns; producers registry allows the new kinds for host + k8s inventory producers; gateway accepts 1.1, rejects NaN/Infinity tokens; console wiring from `docs/team/interface-changes/D2.md`; SDK support for service records |
+| B1 | owns the shared `collectors/src/extorq_collectors/services/**` package from now on (extend, don't break the interface); Linux discovery (systemd units, processes, listening sockets, nginx/sshd/app config refs); **implemented** adapters in `extorq_collectors/linux/adapters/`: ssh, nginx (access + error log), apache (access/error parsers; tested on documented formats, marked not deployed in the lab), webapp-json (lab-portal), systemd (lifecycle + persistence); events carry `ServiceRef`; Service/ServiceInstance records; `service.*` events |
+| B3 | macOS discovery (launchd jobs, processes, listeners) through the shared interface; ssh adapter binding for macOS unified-log sshd where Remote Login is enabled (else the service is reported not running/unmonitored) |
+| B2 | Kubernetes hierarchy: node assets, workload + Kubernetes Service services, Pod/container instances, container-log enrichment (pod uid, container id, namespace, node, workload) and `ServiceRef` on events in `otlp_k8s.py` |
+| C2 | service-aware correlation (relationship bases, cross-service on one asset, cross-asset only with identity evidence), `alerts.service_ids`, rule **CORR-002** (ordered sequence HTTP probing → SSH auth failures → unexpected systemd change on one host, e.g. ClickHouse `windowFunnel`, confidence never implies causation) |
+| C3 | migration `0005_findings_services.sql` (CREATE OR REPLACE VIEW `v_findings_current` adding `service_id`), service attribution of findings where evidence allows (e.g. package → owning service, inferred) |
+| D1 | `GET /api/v1/assets/{id}/services`, `GET /api/v1/services`, `GET /api/v1/services/{service_id}` (instances, endpoints, telemetry coverage, events, findings, alerts); regenerate OpenAPI |
+| D2 | drill-down Asset → Services/Workloads → Telemetry → Findings → Alerts → Investigation; unsupported/unmonitored services shown transparently |
+| E | include service summaries in the AI allow-list projection (names, kinds, coverage only) |
+| F | architecture/data-model/threat-model/AGENTS.md updates for the service model and adapter data minimisation |

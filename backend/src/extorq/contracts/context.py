@@ -5,11 +5,11 @@ telemetry by the correlation layer and is hashed (``input_hash``) so every AI
 assessment can be traced to the exact evidence it saw.
 
 Relationship semantics (docs/correlation.md):
-* DIRECT        – a verified shared identifier links the event to the alert
+* DIRECT        - a verified shared identifier links the event to the alert
                   (request id, pod uid, audit id, commit sha, workflow run).
-* CANDIDATE     – plausible but inferred (same asset + time window + a shared
+* CANDIDATE     - plausible but inferred (same asset + time window + a shared
                   non-identifying attribute such as source IP or principal name).
-* UNESTABLISHED – considered and shown for completeness, but no supported link
+* UNESTABLISHED - considered and shown for completeness, but no supported link
                   (e.g. IP match through a shared NAT/gateway address).
 Correlation never asserts causation.
 """
@@ -62,6 +62,11 @@ class RelationshipBasis(StrEnum):
     SHARED_SOURCE_IP = "shared_source_ip"
     SHARED_NAT_SOURCE_IP = "shared_nat_source_ip"
     SAME_ASSET_TIME_WINDOW = "same_asset_time_window"
+    #: 1.1 service-aware bases
+    SAME_SERVICE = "same_service"
+    SAME_SERVICE_INSTANCE = "same_service_instance"
+    CROSS_SERVICE_SAME_ASSET = "cross_service_same_asset"
+    CROSS_ASSET = "cross_asset"
     SIMULATION_RUN = "simulation_run"
 
 
@@ -74,6 +79,8 @@ class EventSummary(ContractModel):
     outcome: Outcome
     actor_name: ShortStr | None = None
     src_ip: IpAddress | None = None
+    service_id: HexId | None = None
+    service_name: ShortStr | None = None
     #: Deterministic one-line description built from normalized fields (untrusted
     #: substrings are sanitized and truncated).
     summary: MediumStr
@@ -98,6 +105,18 @@ class TimelineEntry(ContractModel):
     summary: MediumStr
     is_evidence: bool
     relationship_type: RelationshipType | None = None
+
+
+class ServiceSummary(ContractModel):
+    service_id: HexId
+    asset_id: AssetId
+    name: ShortStr
+    service_kind: ShortStr
+    category: ShortStr
+    adapter_support: ShortStr
+    monitoring_status: ShortStr
+    #: Role of the service in this investigation: evidence source or related activity.
+    role: Literal["evidence", "related"]
 
 
 class AssetSummary(ContractModel):
@@ -143,6 +162,10 @@ class InvestigationContext(ContractModel):
     alert: DetectionAlert
     rule: RuleMetadata
     asset: AssetSummary
+    #: Services involved (evidence or related), for service-aware correlation (1.1).
+    services: list[ServiceSummary] = Field(default_factory=list, max_length=32)
+    #: Other assets with related activity (cross-asset correlation, 1.1).
+    related_assets: list[AssetSummary] = Field(default_factory=list, max_length=16)
     evidence: list[EventSummary] = Field(max_length=100)
     timeline: list[TimelineEntry] = Field(max_length=300)
     relationships: list[Relationship] = Field(max_length=300)

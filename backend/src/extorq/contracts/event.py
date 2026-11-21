@@ -46,6 +46,7 @@ from extorq.contracts.common import (
     SimulationRunId,
     UtcDatetime,
 )
+from extorq.contracts.service import ServiceRef
 
 MAX_EVENT_BYTES = 64 * 1024
 
@@ -124,6 +125,8 @@ class KubernetesInfo(ContractModel):
     pod_name: ShortStr | None = None
     pod_uid: ShortStr | None = None
     container_name: ShortStr | None = None
+    #: Runtime container id (e.g. 'containerd://<64 hex>') when the source reports it.
+    container_id: ShortStr | None = None
     node_name: ShortStr | None = None
     workload_kind: ShortStr | None = None
     workload_name: ShortStr | None = None
@@ -195,6 +198,8 @@ class SecurityEvent(ContractModel):
     http: HttpInfo | None = None
     kubernetes: KubernetesInfo | None = None
     github: GitHubInfo | None = None
+    #: Service that produced the record, when the adapter can genuinely attribute it (1.1).
+    service: ServiceRef | None = None
     #: Sanitized, human-readable one-line message (attacker-controlled content!).
     message: MediumStr | None = None
     attributes: Attributes = Field(default_factory=dict)

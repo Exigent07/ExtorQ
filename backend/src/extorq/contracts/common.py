@@ -21,14 +21,18 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
-SCHEMA_VERSION = "1.0"
-SchemaVersion = Annotated[str, StringConstraints(pattern=r"^1\.0$")]
+#: 1.1 = additive service-model fields (Service, ServiceInstance, event.service, ...).
+#: 1.0 records remain valid; consumers must tolerate both.
+SCHEMA_VERSION = "1.1"
+SchemaVersion = Annotated[str, StringConstraints(pattern=r"^1\.[01]$")]
 
 
 class ContractModel(BaseModel):
     """Base class for every versioned contract model."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    # allow_inf_nan=False: NaN/Infinity are not valid JSON and would poison canonical
+    # identities and storage (F-IC-1).
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, allow_inf_nan=False)
 
 
 # ── Time ──────────────────────────────────────────────────────────────
@@ -66,7 +70,7 @@ HexId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 #: Rule identifiers such as ``VM-001``, ``K8S-002``, ``GH-001``, ``CORR-001``.
 RuleId = Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9]{1,15}-[0-9]{3}$")]
-#: Simulation run identifiers (lower-case alphanumerics, 8–32 chars).
+#: Simulation run identifiers (lower-case alphanumerics, 8-32 chars).
 SimulationRunId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9]{8,32}$")]
 #: Dotted event type such as ``auth.ssh.login_failed``.
 EventTypeStr = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,5}$")]
@@ -100,7 +104,9 @@ def _bound_attributes(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"at most {_MAX_ATTR_KEYS} attribute keys are allowed")
     for key, item in value.items():
         if not _KEY_RE.match(key):
-            raise ValueError(f"invalid attribute key {key!r} (expected ^[a-z0-9][a-z0-9_.-]{{0,63}}$)")
+            raise ValueError(
+                f"invalid attribute key {key!r} (expected ^[a-z0-9][a-z0-9_.-]{{0,63}}$)"
+            )
         if isinstance(item, str) and len(item) > _MAX_ATTR_STR:
             raise ValueError(f"attribute {key!r} exceeds {_MAX_ATTR_STR} characters")
         if isinstance(item, list):
@@ -108,7 +114,9 @@ def _bound_attributes(value: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"attribute {key!r} list exceeds {_MAX_ATTR_LIST} items")
             for element in item:
                 if isinstance(element, str) and len(element) > _MAX_ATTR_LIST_ITEM:
-                    raise ValueError(f"attribute {key!r} list item exceeds {_MAX_ATTR_LIST_ITEM} chars")
+                    raise ValueError(
+                        f"attribute {key!r} list item exceeds {_MAX_ATTR_LIST_ITEM} chars"
+                    )
     return value
 
 
@@ -160,6 +168,8 @@ class AssetType(StrEnum):
     MACOS_HOST = "macos_host"
     LINUX_HOST = "linux_host"
     KUBERNETES_CLUSTER = "kubernetes_cluster"
+    #: Physical/virtual node of a cluster (asset id "k8s:<cluster>/node/<name>").
+    KUBERNETES_NODE = "kubernetes_node"
     KUBERNETES_NAMESPACE = "kubernetes_namespace"
     KUBERNETES_WORKLOAD = "kubernetes_workload"
     GITHUB_ACCOUNT = "github_account"

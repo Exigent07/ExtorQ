@@ -33,6 +33,7 @@ from extorq.contracts.finding import PostureFinding
 from extorq.contracts.health import CollectorHealth
 from extorq.contracts.identity import canonical_json, iso_utc, stable_id
 from extorq.contracts.scan import ScanRun
+from extorq.contracts.service import Service, ServiceInstance
 from extorq.contracts.simulation import SimulationRun
 
 MAX_BATCH_RECORDS = 1000
@@ -48,6 +49,8 @@ class RecordKind(StrEnum):
     SCAN_RUN = "scan_run"
     COLLECTOR_HEALTH = "collector_health"
     SIMULATION_RUN = "simulation_run"
+    SERVICE = "service"
+    SERVICE_INSTANCE = "service_instance"
 
 
 class EventRecord(ContractModel):
@@ -85,6 +88,16 @@ class SimulationRunRecord(ContractModel):
     data: SimulationRun
 
 
+class ServiceRecord(ContractModel):
+    kind: Literal["service"] = "service"
+    data: Service
+
+
+class ServiceInstanceRecord(ContractModel):
+    kind: Literal["service_instance"] = "service_instance"
+    data: ServiceInstance
+
+
 IngestRecord = Annotated[
     EventRecord
     | AssetRecord
@@ -92,7 +105,9 @@ IngestRecord = Annotated[
     | FindingRecord
     | ScanRunRecord
     | CollectorHealthRecord
-    | SimulationRunRecord,
+    | SimulationRunRecord
+    | ServiceRecord
+    | ServiceInstanceRecord,
     Field(discriminator="kind"),
 ]
 
@@ -144,8 +159,26 @@ def record_identity(record: IngestRecord) -> str:
         return stable_id("rec.sim.v1", data.run_id, data.status.value)
     if isinstance(data, InventoryItem):
         return stable_id(
-            "rec.inv.v1", data.asset_id, data.item_type.value, data.item_key,
-            data.snapshot_id, data.present, canonical_json(data.attributes),
+            "rec.inv.v1",
+            data.asset_id,
+            data.item_type.value,
+            data.item_key,
+            data.snapshot_id,
+            data.present,
+            canonical_json(data.attributes),
+        )
+    if isinstance(data, Service):
+        # Content-based (like assets): repeated identical discovery collapses, changes flow.
+        return stable_id(
+            "rec.service.v1", data.service_id, canonical_json(data.model_dump(mode="json"))
+        )
+    if isinstance(data, ServiceInstance):
+        return stable_id(
+            "rec.instance.v1",
+            data.instance_id,
+            data.state,
+            data.present,
+            canonical_json(data.model_dump(mode="json", exclude={"observed_at"})),
         )
     if isinstance(data, Asset):
         # Full content (including last_seen): collectors send asset upserts at most

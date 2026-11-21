@@ -110,6 +110,8 @@ class DetectionAlert(ContractModel):
     group_key: MediumStr
     #: Grouping entities, e.g. {"src_ip": "10.0.2.2", "unit": "x.service"}.
     entities: dict[ShortStr, MediumStr] = Field(default_factory=dict, max_length=16)
+    #: Services whose telemetry is evidence for this alert (1.1); may span several services.
+    service_ids: list[HexId] = Field(default_factory=list, max_length=16)
     #: Deterministic, template-rendered summary (no AI).
     summary: MediumStr
     first_seen: UtcDatetime
