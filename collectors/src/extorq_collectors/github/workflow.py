@@ -543,7 +543,9 @@ def _analyse_job(job_id: str, job: Mapping[str, Any]) -> JobAnalysis:
                     isinstance(unsafe_opt_in, str)
                     and (unsafe_opt_in.strip().lower() == "true" or "${{" in unsafe_opt_in)
                 ):
-                    untrusted.append(_clip(f"{label}: actions/checkout allow-unsafe-pr-checkout=true"))
+                    untrusted.append(
+                        _clip(f"{label}: actions/checkout allow-unsafe-pr-checkout=true")
+                    )
             scripts: list[str] = []
             run = step.get("run")
             if isinstance(run, str):
@@ -682,7 +684,9 @@ class WorkflowDelta:
     def summary(self) -> str:
         bits: list[str] = []
         if self.write_all_added:
-            bits.append(f"permissions: write-all added ({len(self.added_write_scopes)} write scopes)")
+            bits.append(
+                f"permissions: write-all added ({len(self.added_write_scopes)} write scopes)"
+            )
         elif self.added_write_scopes:
             shown = ", ".join(self.added_write_scopes[:6])
             more = len(self.added_write_scopes) - 6
@@ -853,3 +857,46 @@ def compare_workflows(
 
 def is_workflow_path(path: str) -> bool:
     return bool(WORKFLOW_PATH_RE.match(path)) and ".." not in path.split("/")
+
+
+def workflow_inventory_attributes(
+    analysis: WorkflowAnalysis,
+    repo_default: RepoDefault | None,
+    *,
+    blob_sha: str | None = None,
+    head_sha: str | None = None,
+) -> dict[str, Any]:
+    """Bounded InventoryItem attributes describing one workflow file at a commit."""
+
+    def lst(items: Iterable[str]) -> list[str]:
+        return [_clip(item, 500) for item in list(items)[:MAX_EVIDENCE_ITEMS]]
+
+    attributes: dict[str, Any] = {
+        "parse_ok": analysis.ok,
+        "parse_error": analysis.error,
+        "name": analysis.name,
+        "blob_sha": blob_sha,
+        "head_sha": head_sha,
+        "analyzer_version": ANALYZER_VERSION,
+        "repo_default_workflow_permissions": repo_default or "unknown",
+    }
+    if not analysis.ok:
+        return attributes
+    effective = analysis.effective_permissions(repo_default)
+    attributes.update(
+        {
+            "triggers": lst(analysis.triggers),
+            "privileged_triggers": lst(analysis.privileged_triggers),
+            "permissions": render_permissions(analysis, repo_default),
+            "write_all": analysis.has_write_all,
+            "relies_on_repo_default": analysis.relies_on_default,
+            "effective_write_scopes": lst(effective.write_scopes),
+            "effective_permissions_unknown": effective.unknown,
+            "jobs": len(analysis.jobs),
+            "unpinned_third_party_actions": lst(analysis.unpinned_third_party_actions),
+            "secrets_inherit_jobs": lst(analysis.secrets_inherit_jobs),
+            "privileged_untrusted_checkout": analysis.privileged_untrusted_checkout,
+            "script_injection_count": len(analysis.script_injections),
+        }
+    )
+    return attributes

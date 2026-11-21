@@ -25,6 +25,7 @@ from extorq.api.routes.common import (
     Limit,
     Offset,
     Repo,
+    ServiceIdQuery,
     Since,
     Until,
     now_ms,
@@ -70,6 +71,7 @@ def list_alerts(
     open_only: Annotated[bool, Query(description="Exclude closed_* analyst statuses.")] = False,
     simulation_run_id: Annotated[str | None, Query(pattern=SIM_RUN_PATTERN)] = None,
     sort: Literal["last_seen", "first_seen", "severity"] = "last_seen",
+    service_id: ServiceIdQuery = None,
 ) -> s.AlertListResponse:
     now = now_ms(clock)
     time_range = service.resolve_range(
@@ -89,6 +91,7 @@ def list_alerts(
         statuses=tuple(st.value for st in status or ()),
         open_only=open_only,
         simulation_run_id=simulation_run_id or "",
+        service_id=service_id or "",
         sort=sort,
     )
     rows = repo.list_alerts(filters, limit, offset)

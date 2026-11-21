@@ -1,0 +1,145 @@
+{
+ "engine_requested": "OSS",
+ "errors": [],
+ "paths": {
+  "scanned": [
+   "/src/app/__init__.py",
+   "/src/app/diagnostics.py",
+   "/src/app/inventory.py",
+   "/src/app/main.py",
+   "/src/app/upstream.py",
+   "/src/conftest.py"
+  ]
+ },
+ "profiling_results": [],
+ "results": [
+  {
+   "check_id": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+   "end": {
+    "col": 19,
+    "line": 18,
+    "offset": 684
+   },
+   "extra": {
+    "engine_kind": "OSS",
+    "fingerprint": "requires login",
+    "fix": "False",
+    "lines": "<source lines not stored in fixtures>",
+    "message": "Found 'subprocess' function 'run' with 'shell=True'. This is dangerous because this call will spawn the command using a shell process. Doing so propagates current shell settings and variables, which makes it much easier for a malicious actor to execute commands. Use 'shell=False' instead.",
+    "metadata": {
+     "category": "security",
+     "confidence": "MEDIUM",
+     "cwe": [
+      "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+     ],
+     "cwe2021-top25": true,
+     "cwe2022-top25": true,
+     "impact": "LOW",
+     "license": "Semgrep Rules License v1.0. For more details, visit semgrep.dev/legal/rules-license",
+     "likelihood": "HIGH",
+     "owasp": [
+      "A01:2017 - Injection",
+      "A03:2021 - Injection",
+      "A05:2025 - Injection"
+     ],
+     "references": [
+      "https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess",
+      "https://docs.python.org/3/library/subprocess.html"
+     ],
+     "shortlink": "https://sg.run/J92w",
+     "source": "https://semgrep.dev/r/python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+     "source-rule-url": "https://bandit.readthedocs.io/en/latest/plugins/b602_subprocess_popen_with_shell_equals_true.html",
+     "subcategory": [
+      "secure default"
+     ],
+     "technology": [
+      "python"
+     ],
+     "vulnerability_class": [
+      "Command Injection"
+     ]
+    },
+    "severity": "ERROR",
+    "validation_state": "NO_VALIDATOR"
+   },
+   "path": "/src/app/diagnostics.py",
+   "start": {
+    "col": 15,
+    "line": 18,
+    "offset": 680
+   }
+  }
+ ],
+ "skipped_rules": [],
+ "time": {
+  "fixpoint_timeouts": [],
+  "matching_time": {
+   "per_file_and_rule_time": {
+    "mean": 0.004977998733520508,
+    "std_dev": 5.902482682486152e-05
+   },
+   "total_time": 0.1244499683380127,
+   "very_slow_rules_on_files": [],
+   "very_slow_stats": {
+    "count_ratio": 0.0,
+    "time_ratio": 0.0
+   }
+  },
+  "max_memory_bytes": 240480064,
+  "parsing_time": {
+   "per_file_time": {
+    "mean": 0.004447278976440431,
+    "std_dev": 9.277352104745659e-05
+   },
+   "total_time": 0.11118197441101074,
+   "very_slow_files": [],
+   "very_slow_stats": {
+    "count_ratio": 0.0,
+    "time_ratio": 0.0
+   }
+  },
+  "prefiltering": {
+   "file_level_time": 0.0,
+   "project_level_time": 0.0,
+   "rules_matched_ratio": 0.02759381898454746,
+   "rules_selected_ratio": 0.02759381898454746,
+   "rules_with_file_prefilters_ratio": 0.9933774834437086,
+   "rules_with_project_prefilters_ratio": 0.0
+  },
+  "profiling_times": {
+   "config_time": 0.5790185928344727,
+   "core_time": 0.9220383167266846,
+   "ignores_time": 0.00026679039001464844,
+   "total_time": 1.5201621055603027
+  },
+  "rules": [],
+  "rules_parse_time": 0.1289658546447754,
+  "scanning_time": {
+   "per_file_time": {
+    "mean": 0.07611385981241862,
+    "std_dev": 0.001420991566129083
+   },
+   "total_time": 0.4566831588745117,
+   "very_slow_files": [],
+   "very_slow_stats": {
+    "count_ratio": 0.0,
+    "time_ratio": 0.0
+   }
+  },
+  "tainting_time": {
+   "per_def_and_rule_time": {
+    "mean": 0.0005977967206169576,
+    "std_dev": 5.052416842763359e-06
+   },
+   "total_time": 0.050812721252441406,
+   "very_slow_rules_on_defs": [],
+   "very_slow_stats": {
+    "count_ratio": 0.0,
+    "time_ratio": 0.0
+   }
+  },
+  "targets": [],
+  "total_bytes": 0
+ },
+ "version": "1.184.0"
+}

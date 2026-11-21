@@ -49,7 +49,19 @@ def load_latest_context(read_client: Any, alert_id: str) -> InvestigationContext
     loader = optional_attr("extorq.correlation.store", "load_latest_context")
     if loader is None:
         return _fallback_load_latest(read_client, alert_id)
-    ctx = loader(read_client, alert_id)
+    store_error = optional_attr("extorq.correlation.store", "ContextStoreError")
+    try:
+        ctx = loader(read_client, alert_id)
+    except Exception as exc:
+        # A stored context that fails validation or its input-hash check is a property of
+        # that one context: report it as ContextLoadError so callers can skip it (the
+        # ai-worker must never be blocked by one bad row). Storage/connectivity errors
+        # propagate unchanged.
+        if isinstance(store_error, type) and isinstance(exc, store_error):
+            raise ContextLoadError(
+                f"correlation store rejected the stored context ({type(exc).__name__})"
+            ) from None
+        raise
     if ctx is None or isinstance(ctx, InvestigationContext):
         return ctx
     try:  # tolerate a loader that returns a dict / JSON text

@@ -1,0 +1,32 @@
+# ExtorQ ClickHouse datasource (owner: D1). Provisioned read-only: editable=false, so UI
+# users cannot repoint it or change its identity.
+#
+# * Identity: extorq_grafana (PLAN 4.4): readonly=2 settings profile + quota; SELECT on
+#   analytics tables; on extorq.events every column EXCEPT raw/payload; on
+#   ingest_quarantine every column except payload_excerpt.
+# * Transport: HTTP to clickhouse:8123 on the internal compose network "data" (no egress,
+#   never published). TLS is not used on that internal hop (see infra/grafana/README.md).
+# * Password: read by Grafana from the compose file secret at provisioning time
+#   ($__file{} expansion). It is stored encrypted in Grafana's database and never placed
+#   in an environment variable, image layer or this file.
+apiVersion: 1
+
+datasources:
+  - name: ExtorQ ClickHouse
+    uid: extorq-clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    orgId: 1
+    isDefault: true
+    editable: false
+    jsonData:
+      host: clickhouse
+      port: 8123
+      protocol: http
+      secure: false
+      username: extorq_grafana
+      defaultDatabase: extorq
+      dialTimeout: "10"
+      queryTimeout: "30"
+    secureJsonData:
+      password: $__file{/run/secrets/extorq_grafana_password}

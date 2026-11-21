@@ -247,6 +247,18 @@ class TriageWorker:
             self.stop_event.wait(delay)
 
 
+def _instance_name() -> str | None:
+    """Platform ``EXTORQ_INSTANCE_NAME`` (compose: ``ai-worker``), if the settings load."""
+    get_settings = optional_attr("extorq.common.config", "get_settings")
+    if get_settings is None:
+        return None
+    try:
+        name = getattr(get_settings(), "instance_name", None)
+    except Exception:  # noqa: BLE001 - fall back to hostname:pid
+        return None
+    return str(name)[:200] if name else None
+
+
 def _clients() -> tuple[Any, Any]:
     get_client = optional_attr("extorq.storage.clickhouse", "get_client")
     if get_client is None:
@@ -272,6 +284,10 @@ def main(once: bool = False) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _stop)
     worker = TriageWorker(
-        read_client=read_client, write_client=write_client, settings=settings, stop_event=stop
+        read_client=read_client,
+        write_client=write_client,
+        settings=settings,
+        stop_event=stop,
+        instance=_instance_name(),
     )
     worker.run_forever(once=once)

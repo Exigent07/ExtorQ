@@ -1,0 +1,55 @@
+# GitHub repository security collector (owner: C1). Loaded by `extorq-collect run`.
+#
+# This file holds NO secrets. Token resolution (collectors/src/extorq_collectors/github/token.py),
+# first match wins:
+#   1. EXTORQ_GITHUB_TOKEN_FILE (or settings.token_file): path to a file (mode 0600) holding a
+#      fine-grained, READ-ONLY personal access token scoped to the monitored repositories.
+#      This is the recommended setup; see docs/telemetry/github.md for the exact permissions.
+#   2. EXTORQ_GITHUB_TOKEN environment variable.
+#   3. `gh auth token` (GitHub CLI), only when gh_cli_token_fallback is true.
+#
+# gh_cli_token_fallback is the YAML alias of the collector setting allow_gh_cli_token (the SDK's
+# config secret check rejects any `*_token: <value>` key, even a boolean). The GitHub CLI token
+# is an OAuth token whose scopes (typically repo, workflow, read:org, gist) are far BROADER
+# than the read-only access this collector needs.
+# The collector only ever sends GET requests, never logs the token, and reports
+# token_source=gh_cli plus a warning in its CollectorHealth details while it is in use.
+# Default: false (least privilege). To monitor the lab repository without minting a PAT, the
+# operator may set it to true after the user has approved using the CLI token; a token file
+# or EXTORQ_GITHUB_TOKEN always takes precedence. Without any token the collector reports a
+# FAILED cycle naming the missing settings (never values).
+collectors:
+  - collector_id: github-repos
+    producer_id: github-collector
+    # Health records are attributed to the lab repository asset (ids are lower-case).
+    asset_id: github:exigent07/extorq-lab
+    module: extorq_collectors.github.collector:GitHubCollector
+    interval_seconds: 120
+    enabled: true
+    settings:
+      # Repositories to monitor, as OWNER/NAME. The default branch is always monitored;
+      # add `branches: [...]` (max 10) for more. Example of the long form:
+      #   repos:
+      #     - full_name: Exigent07/extorq-lab
+      #       branches: [release]
+      # Exigent07/extorq-lab is the private, disposable lab repository created by
+      # simulations/github/create_lab_repo.sh. Until it exists (and a token is available) the
+      # collector reports a FAILED cycle ("not found or not accessible" / "no GitHub token
+      # configured"), which is accurate.
+      repos:
+        - Exigent07/extorq-lab
+      gh_cli_token_fallback: false
+      # token_file: var/secrets/github/readonly-pat   # path only, never a token value
+      api_base_url: https://api.github.com
+      page_size: 50                    # per_page for listings (1-100)
+      max_pages: 10                    # pages per listing per poll (bounded collection)
+      max_commits_per_poll: 50         # backlog beyond this continues on the next poll
+      initial_commit_backfill: 10      # commits read on the very first poll of a branch
+      runs_lookback_hours: 24          # workflow runs older than this are never listed
+      posture_interval_seconds: 900    # posture scan cadence (also runs on any change)
+      security_alerts_interval_seconds: 1800
+      collect_security_alerts: true    # Dependabot / code scanning / secret scanning alerts
+      collect_push_activity: true      # push time + pusher via GET /repos/{o}/{r}/activity
+      request_timeout_seconds: 20
+      max_rate_limit_wait_seconds: 60  # longer waits end the cycle early; resumes next cycle
+      rate_limit_reserve: 200          # skip optional scans below this remaining budget

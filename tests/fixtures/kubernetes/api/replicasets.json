@@ -1,0 +1,1828 @@
+{
+ "apiVersion": "apps/v1",
+ "items": [
+  {
+   "metadata": {
+    "annotations": {
+     "deployment.kubernetes.io/desired-replicas": "1",
+     "deployment.kubernetes.io/max-replicas": "2",
+     "deployment.kubernetes.io/revision": "1"
+    },
+    "creationTimestamp": "2026-11-21T10:33:22Z",
+    "generation": 2,
+    "labels": {
+     "app.kubernetes.io/name": "lab-portal",
+     "app.kubernetes.io/part-of": "extorq",
+     "pod-template-hash": "56999479cc"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deployment.kubernetes.io/desired-replicas": {},
+         "f:deployment.kubernetes.io/max-replicas": {},
+         "f:deployment.kubernetes.io/revision": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/name": {},
+         "f:app.kubernetes.io/part-of": {},
+         "f:pod-template-hash": {}
+        },
+        "f:ownerReferences": {
+         ".": {},
+         "k:{\"uid\":\"180bd310-cae1-40a8-ad4e-27df80dd8ed4\"}": {}
+        }
+       },
+       "f:spec": {
+        "f:replicas": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:labels": {
+           ".": {},
+           "f:app.kubernetes.io/name": {},
+           "f:app.kubernetes.io/part-of": {},
+           "f:pod-template-hash": {}
+          }
+         },
+         "f:spec": {
+          "f:automountServiceAccountToken": {},
+          "f:containers": {
+           "k:{\"name\":\"lab-portal\"}": {
+            ".": {},
+            "f:env": {
+             ".": {},
+             "k:{\"name\":\"LAB_PORTAL_DEMO_USER\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LAB_PORTAL_HOST\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LAB_PORTAL_PASSWORD_HASH_FILE\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LAB_PORTAL_PORT\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LAB_PORTAL_TRUSTED_PROXIES\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LOG_ACCESS\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             }
+            },
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:livenessProbe": {
+             ".": {},
+             "f:failureThreshold": {},
+             "f:httpGet": {
+              ".": {},
+              "f:path": {},
+              "f:port": {},
+              "f:scheme": {}
+             },
+             "f:initialDelaySeconds": {},
+             "f:periodSeconds": {},
+             "f:successThreshold": {},
+             "f:timeoutSeconds": {}
+            },
+            "f:name": {},
+            "f:ports": {
+             ".": {},
+             "k:{\"containerPort\":8080,\"protocol\":\"TCP\"}": {
+              ".": {},
+              "f:containerPort": {},
+              "f:name": {},
+              "f:protocol": {}
+             }
+            },
+            "f:readinessProbe": {
+             ".": {},
+             "f:failureThreshold": {},
+             "f:httpGet": {
+              ".": {},
+              "f:path": {},
+              "f:port": {},
+              "f:scheme": {}
+             },
+             "f:periodSeconds": {},
+             "f:successThreshold": {},
+             "f:timeoutSeconds": {}
+            },
+            "f:resources": {
+             ".": {},
+             "f:limits": {
+              ".": {},
+              "f:cpu": {},
+              "f:memory": {}
+             },
+             "f:requests": {
+              ".": {},
+              "f:cpu": {},
+              "f:memory": {}
+             }
+            },
+            "f:securityContext": {
+             ".": {},
+             "f:allowPrivilegeEscalation": {},
+             "f:capabilities": {
+              ".": {},
+              "f:drop": {}
+             },
+             "f:readOnlyRootFilesystem": {},
+             "f:runAsNonRoot": {}
+            },
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/var/run/secrets/lab-portal\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:enableServiceLinks": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {
+           ".": {},
+           "f:fsGroup": {},
+           "f:runAsGroup": {},
+           "f:runAsNonRoot": {},
+           "f:runAsUser": {},
+           "f:seccompProfile": {
+            ".": {},
+            "f:type": {}
+           }
+          },
+          "f:serviceAccount": {},
+          "f:serviceAccountName": {},
+          "f:terminationGracePeriodSeconds": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"demo-credentials\"}": {
+            ".": {},
+            "f:name": {},
+            "f:secret": {
+             ".": {},
+             "f:defaultMode": {},
+             "f:items": {},
+             "f:secretName": {}
+            }
+           }
+          }
+         }
+        }
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T10:34:18Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:observedGeneration": {},
+        "f:replicas": {},
+        "f:terminatingReplicas": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T10:34:19Z"
+     }
+    ],
+    "name": "lab-portal-56999479cc",
+    "namespace": "extorq-apps",
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "Deployment",
+      "name": "lab-portal",
+      "uid": "180bd310-cae1-40a8-ad4e-27df80dd8ed4"
+     }
+    ],
+    "resourceVersion": "2211",
+    "uid": "9b45b54f-d5b0-49da-9a0b-9b20fc4dd2fc"
+   },
+   "spec": {
+    "replicas": 0,
+    "selector": {
+     "matchLabels": {
+      "app.kubernetes.io/name": "lab-portal",
+      "pod-template-hash": "56999479cc"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app.kubernetes.io/name": "lab-portal",
+       "app.kubernetes.io/part-of": "extorq",
+       "pod-template-hash": "56999479cc"
+      }
+     },
+     "spec": {
+      "automountServiceAccountToken": false,
+      "containers": [
+       {
+        "env": [
+         {
+          "name": "LAB_PORTAL_HOST",
+          "value": "0.0.0.0"
+         },
+         {
+          "name": "LAB_PORTAL_PORT",
+          "value": "8080"
+         },
+         {
+          "name": "LOG_ACCESS",
+          "value": "1"
+         },
+         {
+          "name": "LAB_PORTAL_DEMO_USER",
+          "value": "lab-admin"
+         },
+         {
+          "name": "LAB_PORTAL_PASSWORD_HASH_FILE",
+          "value": "/var/run/secrets/lab-portal/password_hash"
+         },
+         {
+          "name": "LAB_PORTAL_TRUSTED_PROXIES",
+          "value": "127.0.0.1"
+         }
+        ],
+        "image": "extorq/lab-portal:2aa9e4797693",
+        "imagePullPolicy": "Never",
+        "livenessProbe": {
+         "failureThreshold": 3,
+         "httpGet": {
+          "path": "/healthz",
+          "port": "http",
+          "scheme": "HTTP"
+         },
+         "initialDelaySeconds": 5,
+         "periodSeconds": 20,
+         "successThreshold": 1,
+         "timeoutSeconds": 1
+        },
+        "name": "lab-portal",
+        "ports": [
+         {
+          "containerPort": 8080,
+          "name": "http",
+          "protocol": "TCP"
+         }
+        ],
+        "readinessProbe": {
+         "failureThreshold": 3,
+         "httpGet": {
+          "path": "/healthz",
+          "port": "http",
+          "scheme": "HTTP"
+         },
+         "periodSeconds": 10,
+         "successThreshold": 1,
+         "timeoutSeconds": 1
+        },
+        "resources": {
+         "limits": {
+          "cpu": "250m",
+          "memory": "128Mi"
+         },
+         "requests": {
+          "cpu": "20m",
+          "memory": "32Mi"
+         }
+        },
+        "securityContext": {
+         "allowPrivilegeEscalation": false,
+         "capabilities": {
+          "drop": [
+           "ALL"
+          ]
+         },
+         "readOnlyRootFilesystem": true,
+         "runAsNonRoot": true
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/var/run/secrets/lab-portal",
+          "name": "demo-credentials",
+          "readOnly": true
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "enableServiceLinks": false,
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {
+       "fsGroup": 10001,
+       "runAsGroup": 10001,
+       "runAsNonRoot": true,
+       "runAsUser": 10001,
+       "seccompProfile": {
+        "type": "RuntimeDefault"
+       }
+      },
+      "serviceAccount": "lab-portal",
+      "serviceAccountName": "lab-portal",
+      "terminationGracePeriodSeconds": 30,
+      "volumes": [
+       {
+        "name": "demo-credentials",
+        "secret": {
+         "defaultMode": 288,
+         "items": [
+          {
+           "key": "password_hash",
+           "path": "password_hash"
+          }
+         ],
+         "secretName": "lab-portal-demo-credentials"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "status": {
+    "observedGeneration": 2,
+    "replicas": 0,
+    "terminatingReplicas": 0
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "deployment.kubernetes.io/desired-replicas": "1",
+     "deployment.kubernetes.io/max-replicas": "2",
+     "deployment.kubernetes.io/revision": "2"
+    },
+    "creationTimestamp": "2026-11-21T10:34:07Z",
+    "generation": 1,
+    "labels": {
+     "app.kubernetes.io/name": "lab-portal",
+     "app.kubernetes.io/part-of": "extorq",
+     "pod-template-hash": "b7fcd5dc9"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deployment.kubernetes.io/desired-replicas": {},
+         "f:deployment.kubernetes.io/max-replicas": {},
+         "f:deployment.kubernetes.io/revision": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/name": {},
+         "f:app.kubernetes.io/part-of": {},
+         "f:pod-template-hash": {}
+        },
+        "f:ownerReferences": {
+         ".": {},
+         "k:{\"uid\":\"180bd310-cae1-40a8-ad4e-27df80dd8ed4\"}": {}
+        }
+       },
+       "f:spec": {
+        "f:replicas": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:annotations": {
+           ".": {},
+           "f:extorq.io/credential-sha256": {}
+          },
+          "f:labels": {
+           ".": {},
+           "f:app.kubernetes.io/name": {},
+           "f:app.kubernetes.io/part-of": {},
+           "f:pod-template-hash": {}
+          }
+         },
+         "f:spec": {
+          "f:automountServiceAccountToken": {},
+          "f:containers": {
+           "k:{\"name\":\"lab-portal\"}": {
+            ".": {},
+            "f:env": {
+             ".": {},
+             "k:{\"name\":\"LAB_PORTAL_DEMO_USER\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LAB_PORTAL_HOST\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LAB_PORTAL_PASSWORD_HASH_FILE\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LAB_PORTAL_PORT\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LAB_PORTAL_TRUSTED_PROXIES\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"LOG_ACCESS\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             }
+            },
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:livenessProbe": {
+             ".": {},
+             "f:failureThreshold": {},
+             "f:httpGet": {
+              ".": {},
+              "f:path": {},
+              "f:port": {},
+              "f:scheme": {}
+             },
+             "f:initialDelaySeconds": {},
+             "f:periodSeconds": {},
+             "f:successThreshold": {},
+             "f:timeoutSeconds": {}
+            },
+            "f:name": {},
+            "f:ports": {
+             ".": {},
+             "k:{\"containerPort\":8080,\"protocol\":\"TCP\"}": {
+              ".": {},
+              "f:containerPort": {},
+              "f:name": {},
+              "f:protocol": {}
+             }
+            },
+            "f:readinessProbe": {
+             ".": {},
+             "f:failureThreshold": {},
+             "f:httpGet": {
+              ".": {},
+              "f:path": {},
+              "f:port": {},
+              "f:scheme": {}
+             },
+             "f:periodSeconds": {},
+             "f:successThreshold": {},
+             "f:timeoutSeconds": {}
+            },
+            "f:resources": {
+             ".": {},
+             "f:limits": {
+              ".": {},
+              "f:cpu": {},
+              "f:memory": {}
+             },
+             "f:requests": {
+              ".": {},
+              "f:cpu": {},
+              "f:memory": {}
+             }
+            },
+            "f:securityContext": {
+             ".": {},
+             "f:allowPrivilegeEscalation": {},
+             "f:capabilities": {
+              ".": {},
+              "f:drop": {}
+             },
+             "f:readOnlyRootFilesystem": {},
+             "f:runAsNonRoot": {}
+            },
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/var/run/secrets/lab-portal\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:enableServiceLinks": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {
+           ".": {},
+           "f:fsGroup": {},
+           "f:runAsGroup": {},
+           "f:runAsNonRoot": {},
+           "f:runAsUser": {},
+           "f:seccompProfile": {
+            ".": {},
+            "f:type": {}
+           }
+          },
+          "f:serviceAccount": {},
+          "f:serviceAccountName": {},
+          "f:terminationGracePeriodSeconds": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"demo-credentials\"}": {
+            ".": {},
+            "f:name": {},
+            "f:secret": {
+             ".": {},
+             "f:defaultMode": {},
+             "f:items": {},
+             "f:secretName": {}
+            }
+           }
+          }
+         }
+        }
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T10:34:07Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:availableReplicas": {},
+        "f:fullyLabeledReplicas": {},
+        "f:observedGeneration": {},
+        "f:readyReplicas": {},
+        "f:replicas": {},
+        "f:terminatingReplicas": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T10:34:18Z"
+     }
+    ],
+    "name": "lab-portal-b7fcd5dc9",
+    "namespace": "extorq-apps",
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "Deployment",
+      "name": "lab-portal",
+      "uid": "180bd310-cae1-40a8-ad4e-27df80dd8ed4"
+     }
+    ],
+    "resourceVersion": "2194",
+    "uid": "24bd0883-7098-4048-9255-fe78fd63f534"
+   },
+   "spec": {
+    "replicas": 1,
+    "selector": {
+     "matchLabels": {
+      "app.kubernetes.io/name": "lab-portal",
+      "pod-template-hash": "b7fcd5dc9"
+     }
+    },
+    "template": {
+     "metadata": {
+      "annotations": {
+       "extorq.io/credential-sha256": "e96765fd189a58ca"
+      },
+      "labels": {
+       "app.kubernetes.io/name": "lab-portal",
+       "app.kubernetes.io/part-of": "extorq",
+       "pod-template-hash": "b7fcd5dc9"
+      }
+     },
+     "spec": {
+      "automountServiceAccountToken": false,
+      "containers": [
+       {
+        "env": [
+         {
+          "name": "LAB_PORTAL_HOST",
+          "value": "0.0.0.0"
+         },
+         {
+          "name": "LAB_PORTAL_PORT",
+          "value": "8080"
+         },
+         {
+          "name": "LOG_ACCESS",
+          "value": "1"
+         },
+         {
+          "name": "LAB_PORTAL_DEMO_USER",
+          "value": "lab-admin"
+         },
+         {
+          "name": "LAB_PORTAL_PASSWORD_HASH_FILE",
+          "value": "/var/run/secrets/lab-portal/password_hash"
+         },
+         {
+          "name": "LAB_PORTAL_TRUSTED_PROXIES",
+          "value": "127.0.0.1"
+         }
+        ],
+        "image": "extorq/lab-portal:2aa9e4797693",
+        "imagePullPolicy": "Never",
+        "livenessProbe": {
+         "failureThreshold": 3,
+         "httpGet": {
+          "path": "/healthz",
+          "port": "http",
+          "scheme": "HTTP"
+         },
+         "initialDelaySeconds": 5,
+         "periodSeconds": 20,
+         "successThreshold": 1,
+         "timeoutSeconds": 1
+        },
+        "name": "lab-portal",
+        "ports": [
+         {
+          "containerPort": 8080,
+          "name": "http",
+          "protocol": "TCP"
+         }
+        ],
+        "readinessProbe": {
+         "failureThreshold": 3,
+         "httpGet": {
+          "path": "/healthz",
+          "port": "http",
+          "scheme": "HTTP"
+         },
+         "periodSeconds": 10,
+         "successThreshold": 1,
+         "timeoutSeconds": 1
+        },
+        "resources": {
+         "limits": {
+          "cpu": "250m",
+          "memory": "128Mi"
+         },
+         "requests": {
+          "cpu": "20m",
+          "memory": "32Mi"
+         }
+        },
+        "securityContext": {
+         "allowPrivilegeEscalation": false,
+         "capabilities": {
+          "drop": [
+           "ALL"
+          ]
+         },
+         "readOnlyRootFilesystem": true,
+         "runAsNonRoot": true
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/var/run/secrets/lab-portal",
+          "name": "demo-credentials",
+          "readOnly": true
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "enableServiceLinks": false,
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {
+       "fsGroup": 10001,
+       "runAsGroup": 10001,
+       "runAsNonRoot": true,
+       "runAsUser": 10001,
+       "seccompProfile": {
+        "type": "RuntimeDefault"
+       }
+      },
+      "serviceAccount": "lab-portal",
+      "serviceAccountName": "lab-portal",
+      "terminationGracePeriodSeconds": 30,
+      "volumes": [
+       {
+        "name": "demo-credentials",
+        "secret": {
+         "defaultMode": 288,
+         "items": [
+          {
+           "key": "password_hash",
+           "path": "password_hash"
+          }
+         ],
+         "secretName": "lab-portal-demo-credentials"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "status": {
+    "availableReplicas": 1,
+    "fullyLabeledReplicas": 1,
+    "observedGeneration": 1,
+    "readyReplicas": 1,
+    "replicas": 1,
+    "terminatingReplicas": 0
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "deployment.kubernetes.io/desired-replicas": "1",
+     "deployment.kubernetes.io/max-replicas": "2",
+     "deployment.kubernetes.io/revision": "1"
+    },
+    "creationTimestamp": "2026-11-21T10:16:24Z",
+    "generation": 2,
+    "labels": {
+     "app.kubernetes.io/name": "weak-log-reader",
+     "app.kubernetes.io/part-of": "extorq",
+     "pod-template-hash": "759c4c7bb9"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deployment.kubernetes.io/desired-replicas": {},
+         "f:deployment.kubernetes.io/max-replicas": {},
+         "f:deployment.kubernetes.io/revision": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/name": {},
+         "f:app.kubernetes.io/part-of": {},
+         "f:pod-template-hash": {}
+        },
+        "f:ownerReferences": {
+         ".": {},
+         "k:{\"uid\":\"a16d3c61-d4a3-4f40-bfe1-686d225b4836\"}": {}
+        }
+       },
+       "f:spec": {
+        "f:replicas": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:labels": {
+           ".": {},
+           "f:app.kubernetes.io/name": {},
+           "f:app.kubernetes.io/part-of": {},
+           "f:pod-template-hash": {}
+          }
+         },
+         "f:spec": {
+          "f:automountServiceAccountToken": {},
+          "f:containers": {
+           "k:{\"name\":\"reader\"}": {
+            ".": {},
+            "f:command": {},
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:name": {},
+            "f:resources": {},
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/host/var/log\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {
+           ".": {},
+           "f:runAsUser": {}
+          },
+          "f:terminationGracePeriodSeconds": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"node-logs\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           }
+          }
+         }
+        }
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:42Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:observedGeneration": {},
+        "f:replicas": {},
+        "f:terminatingReplicas": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T14:30:42Z"
+     }
+    ],
+    "name": "weak-log-reader-759c4c7bb9",
+    "namespace": "extorq-posture-lab",
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "Deployment",
+      "name": "weak-log-reader",
+      "uid": "a16d3c61-d4a3-4f40-bfe1-686d225b4836"
+     }
+    ],
+    "resourceVersion": "22149",
+    "uid": "ded93a70-1343-4d83-a6e0-3cae4f1fda30"
+   },
+   "spec": {
+    "replicas": 0,
+    "selector": {
+     "matchLabels": {
+      "app.kubernetes.io/name": "weak-log-reader",
+      "pod-template-hash": "759c4c7bb9"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app.kubernetes.io/name": "weak-log-reader",
+       "app.kubernetes.io/part-of": "extorq",
+       "pod-template-hash": "759c4c7bb9"
+      }
+     },
+     "spec": {
+      "automountServiceAccountToken": true,
+      "containers": [
+       {
+        "command": [
+         "/bin/sh",
+         "-c",
+         "trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done"
+        ],
+        "image": "alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+        "imagePullPolicy": "IfNotPresent",
+        "name": "reader",
+        "resources": {},
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/host/var/log",
+          "name": "node-logs",
+          "readOnly": true
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {
+       "runAsUser": 0
+      },
+      "terminationGracePeriodSeconds": 30,
+      "volumes": [
+       {
+        "hostPath": {
+         "path": "/var/log",
+         "type": "Directory"
+        },
+        "name": "node-logs"
+       }
+      ]
+     }
+    }
+   },
+   "status": {
+    "observedGeneration": 2,
+    "replicas": 0,
+    "terminatingReplicas": 0
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "deployment.kubernetes.io/desired-replicas": "1",
+     "deployment.kubernetes.io/max-replicas": "2",
+     "deployment.kubernetes.io/revision": "2"
+    },
+    "creationTimestamp": "2026-11-21T14:30:41Z",
+    "generation": 1,
+    "labels": {
+     "app.kubernetes.io/name": "weak-log-reader",
+     "app.kubernetes.io/part-of": "extorq",
+     "pod-template-hash": "b99c886cd"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deployment.kubernetes.io/desired-replicas": {},
+         "f:deployment.kubernetes.io/max-replicas": {},
+         "f:deployment.kubernetes.io/revision": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/name": {},
+         "f:app.kubernetes.io/part-of": {},
+         "f:pod-template-hash": {}
+        },
+        "f:ownerReferences": {
+         ".": {},
+         "k:{\"uid\":\"a16d3c61-d4a3-4f40-bfe1-686d225b4836\"}": {}
+        }
+       },
+       "f:spec": {
+        "f:replicas": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:labels": {
+           ".": {},
+           "f:app.kubernetes.io/name": {},
+           "f:app.kubernetes.io/part-of": {},
+           "f:pod-template-hash": {}
+          }
+         },
+         "f:spec": {
+          "f:automountServiceAccountToken": {},
+          "f:containers": {
+           "k:{\"name\":\"reader\"}": {
+            ".": {},
+            "f:command": {},
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:name": {},
+            "f:resources": {},
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/host/var/log/extorq-posture-lab\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {
+           ".": {},
+           "f:runAsUser": {}
+          },
+          "f:terminationGracePeriodSeconds": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"node-logs\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           }
+          }
+         }
+        }
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:41Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:availableReplicas": {},
+        "f:fullyLabeledReplicas": {},
+        "f:observedGeneration": {},
+        "f:readyReplicas": {},
+        "f:replicas": {},
+        "f:terminatingReplicas": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T14:30:42Z"
+     }
+    ],
+    "name": "weak-log-reader-b99c886cd",
+    "namespace": "extorq-posture-lab",
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "Deployment",
+      "name": "weak-log-reader",
+      "uid": "a16d3c61-d4a3-4f40-bfe1-686d225b4836"
+     }
+    ],
+    "resourceVersion": "22136",
+    "uid": "69f8f213-8df3-4ce2-a91c-92de24b4e71a"
+   },
+   "spec": {
+    "replicas": 1,
+    "selector": {
+     "matchLabels": {
+      "app.kubernetes.io/name": "weak-log-reader",
+      "pod-template-hash": "b99c886cd"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app.kubernetes.io/name": "weak-log-reader",
+       "app.kubernetes.io/part-of": "extorq",
+       "pod-template-hash": "b99c886cd"
+      }
+     },
+     "spec": {
+      "automountServiceAccountToken": true,
+      "containers": [
+       {
+        "command": [
+         "/bin/sh",
+         "-c",
+         "trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done"
+        ],
+        "image": "alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+        "imagePullPolicy": "IfNotPresent",
+        "name": "reader",
+        "resources": {},
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/host/var/log/extorq-posture-lab",
+          "name": "node-logs",
+          "readOnly": true
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {
+       "runAsUser": 0
+      },
+      "terminationGracePeriodSeconds": 30,
+      "volumes": [
+       {
+        "hostPath": {
+         "path": "/var/log/extorq-posture-lab",
+         "type": "DirectoryOrCreate"
+        },
+        "name": "node-logs"
+       }
+      ]
+     }
+    }
+   },
+   "status": {
+    "availableReplicas": 1,
+    "fullyLabeledReplicas": 1,
+    "observedGeneration": 1,
+    "readyReplicas": 1,
+    "replicas": 1,
+    "terminatingReplicas": 0
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "deployment.kubernetes.io/desired-replicas": "2",
+     "deployment.kubernetes.io/max-replicas": "3",
+     "deployment.kubernetes.io/revision": "1"
+    },
+    "creationTimestamp": "2026-11-21T10:16:12Z",
+    "generation": 1,
+    "labels": {
+     "k8s-app": "kube-dns",
+     "pod-template-hash": "559f6c778d"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deployment.kubernetes.io/desired-replicas": {},
+         "f:deployment.kubernetes.io/max-replicas": {},
+         "f:deployment.kubernetes.io/revision": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:k8s-app": {},
+         "f:pod-template-hash": {}
+        },
+        "f:ownerReferences": {
+         ".": {},
+         "k:{\"uid\":\"103307ff-3803-47a5-98c4-f73f8d8b5019\"}": {}
+        }
+       },
+       "f:spec": {
+        "f:replicas": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:labels": {
+           ".": {},
+           "f:k8s-app": {},
+           "f:pod-template-hash": {}
+          }
+         },
+         "f:spec": {
+          "f:affinity": {
+           ".": {},
+           "f:podAntiAffinity": {
+            ".": {},
+            "f:preferredDuringSchedulingIgnoredDuringExecution": {}
+           }
+          },
+          "f:containers": {
+           "k:{\"name\":\"coredns\"}": {
+            ".": {},
+            "f:args": {},
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:livenessProbe": {
+             ".": {},
+             "f:failureThreshold": {},
+             "f:httpGet": {
+              ".": {},
+              "f:path": {},
+              "f:port": {},
+              "f:scheme": {}
+             },
+             "f:initialDelaySeconds": {},
+             "f:periodSeconds": {},
+             "f:successThreshold": {},
+             "f:timeoutSeconds": {}
+            },
+            "f:name": {},
+            "f:ports": {
+             ".": {},
+             "k:{\"containerPort\":53,\"protocol\":\"TCP\"}": {
+              ".": {},
+              "f:containerPort": {},
+              "f:name": {},
+              "f:protocol": {}
+             },
+             "k:{\"containerPort\":53,\"protocol\":\"UDP\"}": {
+              ".": {},
+              "f:containerPort": {},
+              "f:name": {},
+              "f:protocol": {}
+             },
+             "k:{\"containerPort\":8080,\"protocol\":\"TCP\"}": {
+              ".": {},
+              "f:containerPort": {},
+              "f:name": {},
+              "f:protocol": {}
+             },
+             "k:{\"containerPort\":8181,\"protocol\":\"TCP\"}": {
+              ".": {},
+              "f:containerPort": {},
+              "f:name": {},
+              "f:protocol": {}
+             },
+             "k:{\"containerPort\":9153,\"protocol\":\"TCP\"}": {
+              ".": {},
+              "f:containerPort": {},
+              "f:name": {},
+              "f:protocol": {}
+             }
+            },
+            "f:readinessProbe": {
+             ".": {},
+             "f:failureThreshold": {},
+             "f:httpGet": {
+              ".": {},
+              "f:path": {},
+              "f:port": {},
+              "f:scheme": {}
+             },
+             "f:periodSeconds": {},
+             "f:successThreshold": {},
+             "f:timeoutSeconds": {}
+            },
+            "f:resources": {
+             ".": {},
+             "f:limits": {
+              ".": {},
+              "f:memory": {}
+             },
+             "f:requests": {
+              ".": {},
+              "f:cpu": {},
+              "f:memory": {}
+             }
+            },
+            "f:securityContext": {
+             ".": {},
+             "f:allowPrivilegeEscalation": {},
+             "f:capabilities": {
+              ".": {},
+              "f:add": {},
+              "f:drop": {}
+             },
+             "f:readOnlyRootFilesystem": {}
+            },
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/etc/coredns\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:nodeSelector": {},
+          "f:priorityClassName": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {},
+          "f:serviceAccount": {},
+          "f:serviceAccountName": {},
+          "f:terminationGracePeriodSeconds": {},
+          "f:tolerations": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"config-volume\"}": {
+            ".": {},
+            "f:configMap": {
+             ".": {},
+             "f:defaultMode": {},
+             "f:items": {},
+             "f:name": {}
+            },
+            "f:name": {}
+           }
+          }
+         }
+        }
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:12Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:availableReplicas": {},
+        "f:fullyLabeledReplicas": {},
+        "f:observedGeneration": {},
+        "f:readyReplicas": {},
+        "f:replicas": {},
+        "f:terminatingReplicas": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T10:16:24Z"
+     }
+    ],
+    "name": "coredns-559f6c778d",
+    "namespace": "kube-system",
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "Deployment",
+      "name": "coredns",
+      "uid": "103307ff-3803-47a5-98c4-f73f8d8b5019"
+     }
+    ],
+    "resourceVersion": "541",
+    "uid": "6cfe1508-d0cc-4acb-b384-5e511c19363d"
+   },
+   "spec": {
+    "replicas": 2,
+    "selector": {
+     "matchLabels": {
+      "k8s-app": "kube-dns",
+      "pod-template-hash": "559f6c778d"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "k8s-app": "kube-dns",
+       "pod-template-hash": "559f6c778d"
+      }
+     },
+     "spec": {
+      "affinity": {
+       "podAntiAffinity": {
+        "preferredDuringSchedulingIgnoredDuringExecution": [
+         {
+          "podAffinityTerm": {
+           "labelSelector": {
+            "matchExpressions": [
+             {
+              "key": "k8s-app",
+              "operator": "In",
+              "values": [
+               "kube-dns"
+              ]
+             }
+            ]
+           },
+           "topologyKey": "kubernetes.io/hostname"
+          },
+          "weight": 100
+         }
+        ]
+       }
+      },
+      "containers": [
+       {
+        "args": [
+         "-conf",
+         "/etc/coredns/Corefile"
+        ],
+        "image": "registry.k8s.io/coredns/coredns:v1.14.6",
+        "imagePullPolicy": "IfNotPresent",
+        "livenessProbe": {
+         "failureThreshold": 5,
+         "httpGet": {
+          "path": "/health",
+          "port": "liveness-probe",
+          "scheme": "HTTP"
+         },
+         "initialDelaySeconds": 60,
+         "periodSeconds": 10,
+         "successThreshold": 1,
+         "timeoutSeconds": 5
+        },
+        "name": "coredns",
+        "ports": [
+         {
+          "containerPort": 53,
+          "name": "dns",
+          "protocol": "UDP"
+         },
+         {
+          "containerPort": 53,
+          "name": "dns-tcp",
+          "protocol": "TCP"
+         },
+         {
+          "containerPort": 9153,
+          "name": "metrics",
+          "protocol": "TCP"
+         },
+         {
+          "containerPort": 8080,
+          "name": "liveness-probe",
+          "protocol": "TCP"
+         },
+         {
+          "containerPort": 8181,
+          "name": "readiness-probe",
+          "protocol": "TCP"
+         }
+        ],
+        "readinessProbe": {
+         "failureThreshold": 3,
+         "httpGet": {
+          "path": "/ready",
+          "port": "readiness-probe",
+          "scheme": "HTTP"
+         },
+         "periodSeconds": 10,
+         "successThreshold": 1,
+         "timeoutSeconds": 1
+        },
+        "resources": {
+         "limits": {
+          "memory": "170Mi"
+         },
+         "requests": {
+          "cpu": "100m",
+          "memory": "70Mi"
+         }
+        },
+        "securityContext": {
+         "allowPrivilegeEscalation": false,
+         "capabilities": {
+          "add": [
+           "NET_BIND_SERVICE"
+          ],
+          "drop": [
+           "ALL"
+          ]
+         },
+         "readOnlyRootFilesystem": true
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/etc/coredns",
+          "name": "config-volume",
+          "readOnly": true
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "Default",
+      "nodeSelector": {
+       "kubernetes.io/os": "linux"
+      },
+      "priorityClassName": "system-cluster-critical",
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {},
+      "serviceAccount": "coredns",
+      "serviceAccountName": "coredns",
+      "terminationGracePeriodSeconds": 30,
+      "tolerations": [
+       {
+        "key": "CriticalAddonsOnly",
+        "operator": "Exists"
+       },
+       {
+        "effect": "NoSchedule",
+        "key": "node-role.kubernetes.io/control-plane"
+       }
+      ],
+      "volumes": [
+       {
+        "configMap": {
+         "defaultMode": 420,
+         "items": [
+          {
+           "key": "Corefile",
+           "path": "Corefile"
+          }
+         ],
+         "name": "coredns"
+        },
+        "name": "config-volume"
+       }
+      ]
+     }
+    }
+   },
+   "status": {
+    "availableReplicas": 2,
+    "fullyLabeledReplicas": 2,
+    "observedGeneration": 1,
+    "readyReplicas": 2,
+    "replicas": 2,
+    "terminatingReplicas": 0
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "deployment.kubernetes.io/desired-replicas": "1",
+     "deployment.kubernetes.io/max-replicas": "2",
+     "deployment.kubernetes.io/revision": "1"
+    },
+    "creationTimestamp": "2026-11-21T10:16:12Z",
+    "generation": 1,
+    "labels": {
+     "app": "local-path-provisioner",
+     "pod-template-hash": "75f7fc7dc5"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deployment.kubernetes.io/desired-replicas": {},
+         "f:deployment.kubernetes.io/max-replicas": {},
+         "f:deployment.kubernetes.io/revision": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app": {},
+         "f:pod-template-hash": {}
+        },
+        "f:ownerReferences": {
+         ".": {},
+         "k:{\"uid\":\"eb1f73cf-53e9-4328-aafd-f3a6699b6774\"}": {}
+        }
+       },
+       "f:spec": {
+        "f:replicas": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:labels": {
+           ".": {},
+           "f:app": {},
+           "f:pod-template-hash": {}
+          }
+         },
+         "f:spec": {
+          "f:containers": {
+           "k:{\"name\":\"local-path-provisioner\"}": {
+            ".": {},
+            "f:command": {},
+            "f:env": {
+             ".": {},
+             "k:{\"name\":\"CONFIG_MOUNT_PATH\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"POD_NAMESPACE\"}": {
+              ".": {},
+              "f:name": {},
+              "f:valueFrom": {
+               ".": {},
+               "f:fieldRef": {}
+              }
+             }
+            },
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:name": {},
+            "f:resources": {},
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/etc/config/\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:nodeSelector": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {},
+          "f:serviceAccount": {},
+          "f:serviceAccountName": {},
+          "f:terminationGracePeriodSeconds": {},
+          "f:tolerations": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"config-volume\"}": {
+            ".": {},
+            "f:configMap": {
+             ".": {},
+             "f:defaultMode": {},
+             "f:name": {}
+            },
+            "f:name": {}
+           }
+          }
+         }
+        }
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:12Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:availableReplicas": {},
+        "f:fullyLabeledReplicas": {},
+        "f:observedGeneration": {},
+        "f:readyReplicas": {},
+        "f:replicas": {},
+        "f:terminatingReplicas": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T10:16:23Z"
+     }
+    ],
+    "name": "local-path-provisioner-75f7fc7dc5",
+    "namespace": "local-path-storage",
+    "ownerReferences": [
+     {
+      "apiVersion": "apps/v1",
+      "blockOwnerDeletion": true,
+      "controller": true,
+      "kind": "Deployment",
+      "name": "local-path-provisioner",
+      "uid": "eb1f73cf-53e9-4328-aafd-f3a6699b6774"
+     }
+    ],
+    "resourceVersion": "505",
+    "uid": "ef8584b5-0f86-48dc-9231-03e79a4d47b1"
+   },
+   "spec": {
+    "replicas": 1,
+    "selector": {
+     "matchLabels": {
+      "app": "local-path-provisioner",
+      "pod-template-hash": "75f7fc7dc5"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app": "local-path-provisioner",
+       "pod-template-hash": "75f7fc7dc5"
+      }
+     },
+     "spec": {
+      "containers": [
+       {
+        "command": [
+         "local-path-provisioner",
+         "--debug",
+         "start",
+         "--helper-image",
+         "docker.io/kindest/local-path-helper:v20260131-7181c60a",
+         "--config",
+         "/etc/config/config.json"
+        ],
+        "env": [
+         {
+          "name": "POD_NAMESPACE",
+          "valueFrom": {
+           "fieldRef": {
+            "apiVersion": "v1",
+            "fieldPath": "metadata.namespace"
+           }
+          }
+         },
+         {
+          "name": "CONFIG_MOUNT_PATH",
+          "value": "/etc/config/"
+         }
+        ],
+        "image": "docker.io/kindest/local-path-provisioner:v20260820-69b56db7",
+        "imagePullPolicy": "IfNotPresent",
+        "name": "local-path-provisioner",
+        "resources": {},
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/etc/config/",
+          "name": "config-volume"
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "nodeSelector": {
+       "kubernetes.io/os": "linux"
+      },
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {},
+      "serviceAccount": "local-path-provisioner-service-account",
+      "serviceAccountName": "local-path-provisioner-service-account",
+      "terminationGracePeriodSeconds": 30,
+      "tolerations": [
+       {
+        "effect": "NoSchedule",
+        "key": "node-role.kubernetes.io/control-plane",
+        "operator": "Equal"
+       },
+       {
+        "effect": "NoSchedule",
+        "key": "node-role.kubernetes.io/master",
+        "operator": "Equal"
+       }
+      ],
+      "volumes": [
+       {
+        "configMap": {
+         "defaultMode": 420,
+         "name": "local-path-config"
+        },
+        "name": "config-volume"
+       }
+      ]
+     }
+    }
+   },
+   "status": {
+    "availableReplicas": 1,
+    "fullyLabeledReplicas": 1,
+    "observedGeneration": 1,
+    "readyReplicas": 1,
+    "replicas": 1,
+    "terminatingReplicas": 0
+   }
+  }
+ ],
+ "kind": "ReplicaSetList",
+ "metadata": {
+  "resourceVersion": "23216"
+ }
+}

@@ -8,6 +8,7 @@ import {
   zAssessmentListResponse,
   zAssetDetailResponse,
   zAssetListResponse,
+  zAssetServicesResponse,
   zContextResponse,
   zEventDetailResponse,
   zEventListResponse,
@@ -15,6 +16,7 @@ import {
   zHealthResponse,
   zOverviewResponse,
   zRuleListResponse,
+  zServiceDetailResponse,
   zSummaryResponse,
   zTimeSeriesResponse,
 } from "@/lib/api/schemas";
@@ -223,5 +225,26 @@ export function getTimeseries(
       group_by: query.groupBy,
       asset_id: query.assetId && isAssetId(query.assetId) ? query.assetId : undefined,
     },
+  });
+}
+
+// ── Services (PLAN §10, contracts 1.1) ──────────────────────────────────────────────
+
+export function listAssetServices(session: Session, assetId: string, options: { includeRemoved?: boolean } = {}) {
+  if (!isAssetId(assetId)) return Promise.resolve(invalidId<never>("asset id"));
+  return apiRequest(session, zAssetServicesResponse, {
+    method: "GET",
+    path: `/api/v1/assets/${seg(assetId)}/services`,
+    route: "/api/v1/assets/{id}/services",
+    query: { limit: 200, include_removed: options.includeRemoved ? "true" : undefined },
+  });
+}
+
+export function getService(session: Session, serviceId: string) {
+  if (!isHexId(serviceId)) return Promise.resolve(invalidId<never>("service id"));
+  return apiRequest(session, zServiceDetailResponse, {
+    method: "GET",
+    path: `/api/v1/services/${seg(serviceId)}`,
+    route: "/api/v1/services/{id}",
   });
 }

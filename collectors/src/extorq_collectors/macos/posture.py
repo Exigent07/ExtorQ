@@ -700,9 +700,17 @@ class PostureOptions:
 
 
 def run_posture(
-    runner: CommandRunner, options: PostureOptions, now: Callable[[], datetime]
+    runner: CommandRunner,
+    options: PostureOptions,
+    now: Callable[[], datetime],
+    *,
+    listeners: ListenerSnapshot | None = None,
 ) -> PostureRun:
-    """Execute every posture command and evaluate the checks (never raises on host errors)."""
+    """Execute every posture command and evaluate the checks (never raises on host errors).
+
+    ``listeners`` reuses a snapshot the inventory source collected moments earlier
+    in the same cycle; otherwise the listening sockets are collected here.
+    """
     started = now()
     out: dict[str, CommandResult] = {}
     for name, argv in COMMANDS.items():
@@ -968,8 +976,10 @@ def run_posture(
             )
         )
 
-    snapshot: ListenerSnapshot = collect_listeners(
-        runner, include_udp=True, timeout=options.command_timeout
+    snapshot: ListenerSnapshot = (
+        listeners
+        if listeners is not None
+        else collect_listeners(runner, include_udp=True, timeout=options.command_timeout)
     )
     errors.extend(f"listeners: {e}" for e in snapshot.errors)
     if snapshot.method == "unavailable":

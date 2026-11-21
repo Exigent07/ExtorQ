@@ -1,0 +1,35 @@
+# Kubernetes inventory / service hierarchy / Events / posture collector (owner: B2).
+# Loaded by `uv run extorq-collect run [--only k8s-inventory]` (run from the repo root or set
+# EXTORQ_HOME so relative paths resolve).
+#
+# This file holds NO secrets. The collector authenticates to the kind API server with the
+# read-only ServiceAccount extorq-system/extorq-inventory (infra/kind/manifests/10-inventory-rbac.yaml):
+#   infra/kind/kind.sh token     # TokenRequest token (default 24 h) + kubeconfig, both 0600 in var/kube/
+# The kubeconfig references the token by path (tokenFile); kubeconfigs with client certificates
+# (the cluster-admin kubeconfig), inline tokens or exec plugins are refused by the collector.
+# The gateway token of producer k8s-inventory-extorq-lab is read by the runner from
+# var/secrets/tokens/k8s-inventory-extorq-lab.token.
+#
+# Container logs and API audit events are NOT collected here: the OTel Collector DaemonSet in
+# the cluster ships them to the gateway (infra/kind/otel/collector.yaml).
+collectors:
+  - collector_id: k8s-inventory
+    producer_id: k8s-inventory-extorq-lab
+    asset_id: k8s:extorq-lab
+    module: extorq_collectors.kubernetes.collector:KubernetesInventoryCollector
+    # Every cycle: LIST all kinds, diff, Events, service hierarchy, posture scan (ScanRun).
+    interval_seconds: 60
+    enabled: true
+    settings:
+      kubeconfig: var/kube/extorq-inventory.kubeconfig
+      request_timeout_seconds: 15
+      # Kubernetes system namespaces are excluded from workload/namespace/service posture
+      # checks (recorded in every ScanRun's coverage notes); RBAC is evaluated everywhere.
+      excluded_namespaces: [kube-system, kube-public, kube-node-lease, local-path-storage]
+      # Full re-send of services, instances and inventory items (heals lost records,
+      # refreshes last_seen).
+      refresh_seconds: 900
+      # core/v1 Events expire after the API server's --event-ttl (default 1 h): a polling gap
+      # longer than this is reported as extorq.collector.gap_detected.
+      event_ttl_seconds: 3600
+      max_events_per_cycle: 2000

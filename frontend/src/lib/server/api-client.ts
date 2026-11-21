@@ -49,6 +49,8 @@ function buildUrl(base: URL, path: string, query: ApiRequest["query"]): URL {
   const prefix = base.pathname.replace(/\/+$/, "");
   const url = new URL(`${prefix}${path}`, base.origin);
   if (url.origin !== base.origin) throw new Error("API URL escaped the configured origin");
+  // Dot segments are normalised by URL(); the result must still be below the API prefix.
+  if (!url.pathname.startsWith(`${prefix}/api/v1/`)) throw new Error("API URL escaped the API path");
   if (query) {
     for (const [key, raw] of Object.entries(query)) {
       const values = Array.isArray(raw) ? raw : [raw];

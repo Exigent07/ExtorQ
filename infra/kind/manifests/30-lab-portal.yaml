@@ -120,6 +120,10 @@ metadata:
   labels:
     app.kubernetes.io/name: lab-portal
     app.kubernetes.io/part-of: extorq
+  annotations:
+    extorq.io/accepted-risk: >-
+      Demo app exposure: NodePort 30080 is published by kind only on the Mac loopback
+      (127.0.0.1:8089, infra/kind/cluster.yaml); the node itself is on a Docker network.
 spec:
   type: NodePort
   selector:

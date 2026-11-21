@@ -1,8 +1,9 @@
-"""Mapping of validated contract models to ClickHouse rows (0001 column contract).
+"""Mapping of validated contract models to ClickHouse rows (0001 + 0004 column contract).
 
 ``to_row(kind, model, producer_id=..., batch_id=..., ingested_at=...)`` returns a
 ``dict`` whose keys are exactly the columns of ``TABLE_BY_KIND[kind]`` in
-``infra/clickhouse/migrations/0001_core_tables.sql``. Values are Python objects
+``infra/clickhouse/migrations/0001_core_tables.sql`` plus the service-model
+columns added by ``0004_services.sql`` (contract schema 1.1). Values are Python objects
 accepted by clickhouse-connect's typed insert (aware UTC ``datetime`` for
 ``DateTime64``, ``None`` for ``Nullable``, ``list`` for ``Array``, ``dict`` for
 ``Map``). Rules:
@@ -16,8 +17,22 @@ accepted by clickhouse-connect's typed insert (aware UTC ``datetime`` for
   string must be encodable as UTF-8, so a record that passes ``to_row`` at the
   gateway can always be inserted by the writer.
 
-Besides the seven ingest kinds, this module provides row builders for
-``pipeline_health``, ``ingest_quarantine`` and ``ingest_audit``.
+Besides the nine ingest kinds, this module provides row builders for
+``pipeline_health``, ``ingest_quarantine``, ``ingest_audit`` and ``alerts``
+(:func:`alert_to_row`, the full column contract including ``service_ids``; the
+detector owns alert writes).
+
+Schema 1.1 mapping (``0004_services.sql``):
+
+* ``Service`` -> ``services`` (``endpoints`` = canonical JSON array of ServiceEndpoint);
+* ``ServiceInstance`` -> ``service_instances`` (field ``user`` -> column ``process_user``);
+* ``SecurityEvent.service.{service_id,name,instance_id,adapter_id}`` ->
+  ``events.{service_id,service_name,service_instance_id,adapter_id}`` and
+  ``SecurityEvent.kubernetes.container_id`` -> ``events.k8s_container_id``;
+* ``PostureFinding.service_id`` -> ``finding_observations.service_id``;
+* ``DetectionAlert.service_ids`` -> ``alerts.service_ids``.
+
+1.0 records (no ``service``) map the new columns to NULL / empty arrays.
 """
 
 from __future__ import annotations
@@ -27,6 +42,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from extorq.contracts.alert import DetectionAlert
 from extorq.contracts.asset import Asset, InventoryItem
 from extorq.contracts.event import SecurityEvent
 from extorq.contracts.finding import PostureFinding
@@ -34,6 +50,7 @@ from extorq.contracts.health import CollectorHealth, PipelineHealth
 from extorq.contracts.identity import canonical_json
 from extorq.contracts.ingest import RecordKind
 from extorq.contracts.scan import ScanRun, ScanStatus
+from extorq.contracts.service import Service, ServiceInstance
 from extorq.contracts.simulation import SimulationRun, SimulationStatus
 
 #: Target table (in database ``extorq``) for every ingest record kind.
@@ -45,6 +62,8 @@ TABLE_BY_KIND: dict[RecordKind, str] = {
     RecordKind.SCAN_RUN: "scan_runs",
     RecordKind.COLLECTOR_HEALTH: "collector_health",
     RecordKind.SIMULATION_RUN: "simulation_runs",
+    RecordKind.SERVICE: "services",
+    RecordKind.SERVICE_INSTANCE: "service_instances",
 }
 
 #: Model class expected for each kind (to_row rejects mismatches).
@@ -56,11 +75,14 @@ MODEL_BY_KIND: dict[RecordKind, type[BaseModel]] = {
     RecordKind.SCAN_RUN: ScanRun,
     RecordKind.COLLECTOR_HEALTH: CollectorHealth,
     RecordKind.SIMULATION_RUN: SimulationRun,
+    RecordKind.SERVICE: Service,
+    RecordKind.SERVICE_INSTANCE: ServiceInstance,
 }
 
 PIPELINE_HEALTH_TABLE = "pipeline_health"
 QUARANTINE_TABLE = "ingest_quarantine"
 AUDIT_TABLE = "ingest_audit"
+ALERTS_TABLE = "alerts"
 
 _UINT_MAX = {8: 2**8 - 1, 16: 2**16 - 1, 32: 2**32 - 1, 64: 2**64 - 1}
 #: DateTime64(3) supports 1900-01-01 .. 2299-12-31; ExtorQ restricts to the Unix era.
@@ -169,9 +191,13 @@ def event_to_row(
 ) -> dict[str, Any]:
     actor, resource, net = event.actor, event.resource, event.network
     proc, http, k8s, gh, sim = (
-        event.process, event.http, event.kubernetes, event.github, event.simulation
+        event.process,
+        event.http,
+        event.kubernetes,
+        event.github,
+        event.simulation,
     )
-    prov = event.provenance
+    prov, svc = event.provenance, event.service
     return {
         "event_id": event.event_id,
         "schema_version": event.schema_version,
@@ -216,6 +242,7 @@ def event_to_row(
         "k8s_pod_name": k8s.pod_name if k8s else None,
         "k8s_pod_uid": k8s.pod_uid if k8s else None,
         "k8s_container": k8s.container_name if k8s else None,
+        "k8s_container_id": k8s.container_id if k8s else None,
         "k8s_node": k8s.node_name if k8s else None,
         "k8s_verb": k8s.verb if k8s else None,
         "k8s_resource": k8s.resource if k8s else None,
@@ -234,6 +261,10 @@ def event_to_row(
         "gh_actor_login": gh.actor_login if gh else None,
         "gh_event_name": gh.event_name if gh else None,
         "gh_conclusion": gh.conclusion if gh else None,
+        "service_id": svc.service_id if svc else None,
+        "service_name": svc.name if svc else None,
+        "service_instance_id": svc.instance_id if svc else None,
+        "adapter_id": svc.adapter_id if svc else None,
         "simulation_run_id": sim.run_id if sim else None,
         "scenario_id": sim.scenario_id if sim else None,
         "message": event.message,
@@ -306,6 +337,7 @@ def finding_to_row(
         "resource_name": res.name if res else None,
         "resource_namespace": res.namespace if res else None,
         "resource_path": res.path if res else None,
+        "service_id": finding.service_id,
         "package_name": pkg.name if pkg else None,
         "installed_version": pkg.installed_version if pkg else None,
         "fixed_version": pkg.fixed_version if pkg else None,
@@ -394,6 +426,73 @@ def simulation_run_to_row(
     }
 
 
+def service_to_row(service: Service, *, producer_id: str, ingested_at: datetime) -> dict[str, Any]:
+    """``Service`` -> ``extorq.services`` (0004). Endpoints are a canonical JSON array."""
+    return {
+        "service_id": service.service_id,
+        "asset_id": service.asset_id,
+        "service_kind": _enum(service.service_kind),
+        "service_key": service.service_key,
+        "name": service.name,
+        "category": _enum(service.category),
+        "product": service.product,
+        "version": service.version,
+        "discovered_via": [_enum(e) for e in service.discovered_via],
+        "adapter_id": service.adapter_id,
+        "adapter_support": _enum(service.adapter_support),
+        "monitoring_status": _enum(service.monitoring_status),
+        "coverage_note": service.coverage_note,
+        "telemetry_sources": [_enum(s) for s in service.telemetry_sources],
+        "endpoints": canonical_json([e.model_dump(mode="json") for e in service.endpoints]),
+        "config_refs": list(service.config_refs),
+        "instance_count": _uint(service.instance_count, 32, "instance_count"),
+        "last_telemetry_at": _time(service.last_telemetry_at, "last_telemetry_at"),
+        "attributes": canonical_json(service.attributes),
+        "first_seen": _req_time(service.first_seen, "first_seen"),
+        "last_seen": _req_time(service.last_seen, "last_seen"),
+        "present": 1 if service.present else 0,
+        "observed_by": service.observed_by,
+        "schema_version": service.schema_version,
+        "producer_id": producer_id,
+        "ingested_at": _req_time(ingested_at, "ingested_at"),
+    }
+
+
+def service_instance_to_row(
+    instance: ServiceInstance, *, producer_id: str, ingested_at: datetime
+) -> dict[str, Any]:
+    """``ServiceInstance`` -> ``extorq.service_instances`` (0004); ``user`` -> ``process_user``."""
+    return {
+        "instance_id": instance.instance_id,
+        "service_id": instance.service_id,
+        "asset_id": instance.asset_id,
+        "instance_kind": _enum(instance.instance_kind),
+        "instance_key": instance.instance_key,
+        "parent_instance_id": instance.parent_instance_id,
+        "state": instance.state,
+        "pid": _uint(instance.pid, 32, "pid"),
+        "process_name": instance.process_name,
+        "process_user": instance.user,
+        "namespace": instance.namespace,
+        "pod_name": instance.pod_name,
+        "pod_uid": instance.pod_uid,
+        "container_name": instance.container_name,
+        "container_id": instance.container_id,
+        "image": instance.image,
+        "node_name": instance.node_name,
+        "workload_kind": instance.workload_kind,
+        "workload_name": instance.workload_name,
+        "started_at": _time(instance.started_at, "started_at"),
+        "observed_at": _req_time(instance.observed_at, "observed_at"),
+        "present": 1 if instance.present else 0,
+        "observed_by": instance.observed_by,
+        "attributes": canonical_json(instance.attributes),
+        "schema_version": instance.schema_version,
+        "producer_id": producer_id,
+        "ingested_at": _req_time(ingested_at, "ingested_at"),
+    }
+
+
 def to_row(
     kind: RecordKind | str,
     model: BaseModel,
@@ -409,12 +508,14 @@ def to_row(
         raise RowError(f"unknown record kind {kind!r}") from None
     expected = MODEL_BY_KIND[record_kind]
     if not isinstance(model, expected):
-        raise RowError(f"kind {record_kind.value} expects {expected.__name__}, "
-                       f"got {type(model).__name__}")
+        raise RowError(
+            f"kind {record_kind.value} expects {expected.__name__}, got {type(model).__name__}"
+        )
     row: dict[str, Any]
     if isinstance(model, SecurityEvent):
-        row = event_to_row(model, producer_id=producer_id, batch_id=batch_id,
-                           ingested_at=ingested_at)
+        row = event_to_row(
+            model, producer_id=producer_id, batch_id=batch_id, ingested_at=ingested_at
+        )
     elif isinstance(model, Asset):
         row = asset_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
     elif isinstance(model, InventoryItem):
@@ -427,6 +528,10 @@ def to_row(
         row = collector_health_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
     elif isinstance(model, SimulationRun):
         row = simulation_run_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
+    elif isinstance(model, Service):
+        row = service_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
+    elif isinstance(model, ServiceInstance):
+        row = service_instance_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
     else:  # pragma: no cover - MODEL_BY_KIND covers every kind
         raise RowError(f"no row mapper for {type(model).__name__}")
     _check_utf8(row)
@@ -505,6 +610,46 @@ def audit_row(
         "decision": decision,
         "reason": reason,
         "path": path,
+    }
+    _check_utf8(row)
+    return row
+
+
+def alert_to_row(alert: DetectionAlert) -> dict[str, Any]:
+    """``DetectionAlert`` -> ``extorq.alerts`` (0001 + ``service_ids`` from 0004).
+
+    Shared helper for the detector (the only writer of alerts, PLAN §3 invariant 4):
+    ``payload`` is the canonical JSON of the validated model; ``service_ids`` lists the
+    services whose telemetry is evidence for the alert (empty when not attributable).
+    """
+    row = {
+        "alert_id": alert.alert_id,
+        "schema_version": alert.schema_version,
+        "rule_id": alert.rule_id,
+        "rule_version": alert.rule_version,
+        "rule_title": alert.rule_title,
+        "severity": _enum(alert.severity),
+        "confidence": _enum(alert.confidence),
+        "asset_id": alert.asset_id,
+        "asset_type": _enum(alert.asset_type),
+        "group_key": alert.group_key,
+        "entities": dict(alert.entities),
+        "service_ids": list(alert.service_ids),
+        "summary": alert.summary,
+        "first_seen": _req_time(alert.first_seen, "first_seen"),
+        "last_seen": _req_time(alert.last_seen, "last_seen"),
+        "window_start": _req_time(alert.window_start, "window_start"),
+        "window_end": _req_time(alert.window_end, "window_end"),
+        "event_count": _uint(alert.event_count, 64, "event_count"),
+        "evidence_event_ids": list(alert.evidence_event_ids),
+        "evidence_truncated": 1 if alert.evidence_truncated else 0,
+        "features": canonical_json(alert.features),
+        "mitre_techniques": list(alert.mitre_techniques),
+        "simulation_run_ids": list(alert.simulation_run_ids),
+        "created_at": _req_time(alert.created_at, "created_at"),
+        "updated_at": _req_time(alert.updated_at, "updated_at"),
+        "detector_version": alert.detector_version,
+        "payload": canonical_json(alert),
     }
     _check_utf8(row)
     return row

@@ -12,17 +12,19 @@ from extorq.api import schemas as s
 from extorq.api import service
 from extorq.api.auth import CurrentPrincipal
 from extorq.api.errors import NotFound
-from extorq.api.repository import AlertFilters, FindingFilters
+from extorq.api.repository import AlertFilters, FindingFilters, ServiceFilters
 from extorq.api.routes.common import (
     AssetIdPath,
     Clock,
     Limit,
     Offset,
     Repo,
+    Settings,
     Since,
     Until,
     now_ms,
 )
+from extorq.api.routes.services import evaluate_services
 from extorq.contracts import AssetType, Environment
 
 router = APIRouter(tags=["assets"])
@@ -83,6 +85,7 @@ def get_asset(
     asset_id: AssetIdPath,
     principal: CurrentPrincipal,
     repo: Repo,
+    settings: Settings,
     clock: Clock,
     since: Since = None,
     until: Until = None,
@@ -138,6 +141,11 @@ def get_asset(
         ASSET_RECENT_ALERTS_LIMIT,
         0,
     )
+    attribution = repo.finding_service_attribution([str(r["finding_id"]) for r in finding_rows])
+    evaluator = service.ServiceEvaluator(collectors, now, settings.service_stale_seconds)
+    service_items, truncated, _ = evaluate_services(
+        repo, evaluator, ServiceFilters(asset_id=asset_id)
+    )
     return s.AssetDetailResponse(
         asset=asset,
         collectors=collectors,
@@ -145,6 +153,8 @@ def get_asset(
         event_counts=event_counts,
         event_counts_range=event_range,
         findings_summary=service.findings_summary(severity_rows, lifecycle),
-        findings=[service.finding_item(r, lifecycle_list) for r in finding_rows],
+        findings=[service.finding_item(r, lifecycle_list, attribution) for r in finding_rows],
         recent_alerts=[service.alert_item(r) for r in alert_rows],
+        services_summary=service.services_summary(service_items, truncated=truncated),
+        child_assets=[service.asset_brief(r) for r in repo.asset_children(asset_id)],
     )

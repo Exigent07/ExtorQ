@@ -14,9 +14,16 @@ Authorization (per record):
 * the asset id must match one of ``allowed_asset_patterns`` (``fnmatchcase``);
 * source types must match ``allowed_source_types`` for records that carry them
   (``event.source.source_type`` and every ``collector_health.source_types`` entry);
-  exception: ``extorq.collector.gap_detected`` events (catalog source
-  ``extorq.pipeline``) are allowed when ``attributes.source_type`` names a
-  source type the producer is authorized for (B1 interface note 4.1);
+  exception: ``extorq.collector.gap_detected`` events with the legacy catalog
+  source ``extorq.pipeline`` are allowed when ``attributes.source_type`` names a
+  source type the producer is authorized for (B1 interface note 4.1; since
+  catalog 1.1 gap events may also use the collector's own source types, which
+  pass the normal check). ``service.telemetry_sources`` is descriptive metadata
+  and is NOT checked: a Kubernetes workload's logs arrive through a different
+  producer (the OTel pipeline) than its inventory record;
+* a ``service_instance`` without ``asset_id`` passes this check only on its kind;
+  :func:`extorq.ingest.processing.prepare_batch` then quarantines it
+  (``asset_unattributable``) because its asset cannot be verified;
 * ``scan_run.producer_id`` must equal the authenticated producer.
 """
 
@@ -37,7 +44,7 @@ from extorq.contracts.event import SecurityEvent
 from extorq.contracts.health import CollectorHealth
 from extorq.contracts.ingest import IngestRecord, RecordKind
 from extorq.contracts.scan import ScanRun
-
+from extorq.contracts.service import ServiceInstance
 
 GAP_EVENT_TYPE = "extorq.collector.gap_detected"
 GAP_SOURCE_TYPE = "extorq.pipeline"
@@ -68,6 +75,9 @@ class ProducerEntry(BaseModel):
             return f"kind_not_allowed:{kind}"
         data = record.data
         asset_id = data.asset_id
+        if asset_id is None:
+            # Only ServiceInstance may omit asset_id (contract 1.1); prepare_batch quarantines it.
+            return None if isinstance(data, ServiceInstance) else "asset_missing"
         if not self.asset_allowed(asset_id):
             return f"asset_not_allowed:{asset_id}"
         if isinstance(data, SecurityEvent):

@@ -181,7 +181,7 @@ def render(text: str, hashes: dict[str, PasswordHash]) -> str:
             raise MigrationError(f"placeholder references unknown user {user!r}")
         value = hashes[user].sha256 if field == "password_sha256" else hashes[user].salt
         pattern = _HEX64 if field == "password_sha256" else _HEX32
-        if not pattern.match(value):
+        if not pattern.fullmatch(value):
             raise MigrationError(f"invalid {field} for {user}")
         return value
 
@@ -255,7 +255,7 @@ class Migrator:
         for index, statement in enumerate(statements, start=1):
             try:
                 self.client.command(statement)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - re-raised as MigrationError below
                 # Error text from ClickHouse may echo the statement: log only its class/code.
                 code = getattr(exc, "code", None)
                 raise MigrationError(
@@ -266,13 +266,24 @@ class Migrator:
         duration_ms = int((time.monotonic() - started) * 1000)
         self.client.insert(
             "extorq.schema_migrations",
-            [[migration.version, migration.name, migration.checksum, datetime.now(UTC),
-              duration_ms, self.applied_by]],
-            column_names=["version", "name", "checksum", "applied_at", "duration_ms",
-                          "applied_by"],
+            [
+                [
+                    migration.version,
+                    migration.name,
+                    migration.checksum,
+                    datetime.now(UTC),
+                    duration_ms,
+                    self.applied_by,
+                ]
+            ],
+            column_names=["version", "name", "checksum", "applied_at", "duration_ms", "applied_by"],
         )
-        log.info("migration_applied", migration=migration.label, statements=len(statements),
-                 duration_ms=duration_ms)
+        log.info(
+            "migration_applied",
+            migration=migration.label,
+            statements=len(statements),
+            duration_ms=duration_ms,
+        )
 
     def sync_passwords(self, hashes: dict[str, PasswordHash]) -> int:
         existing = {
@@ -288,11 +299,16 @@ class Migrator:
                 log.warning("service_user_missing", user=user)
                 continue
             value = hashes[user]
-            if not (_HEX64.match(value.sha256) and _HEX32.match(value.salt)):
+            if not (
+                _HEX64.fullmatch(value.sha256)
+                and _HEX32.fullmatch(value.salt)
+                and user in SERVICE_USERS
+            ):
                 raise MigrationError(f"invalid password hash for {user}")
-            # Identifier comes from a fixed allow-list; hash/salt are validated hex.
-            self.client.command(
-                f"ALTER USER {user} IDENTIFIED WITH sha256_hash "  # noqa: S608
+            # ClickHouse cannot bind parameters in ALTER USER: the identifier comes from the
+            # fixed SERVICE_USERS allow-list and hash/salt are fullmatch-validated hex (F-04).
+            self.client.command(  # extorq: sql-reviewed allow-listed user + fullmatch-validated hex
+                f"ALTER USER {user} IDENTIFIED WITH sha256_hash "
                 f"BY '{value.sha256}' SALT '{value.salt}'"
             )
             synced += 1
@@ -310,8 +326,11 @@ class Migrator:
             if migration.version in applied:
                 continue
             if migration.version < highest_applied:
-                log.warning("migration_out_of_order", migration=migration.label,
-                            highest_applied=highest_applied)
+                log.warning(
+                    "migration_out_of_order",
+                    migration=migration.label,
+                    highest_applied=highest_applied,
+                )
             self.apply(migration, hashes)
             newly_applied.append(migration.label)
         synced = self.sync_passwords(hashes)
@@ -323,7 +342,10 @@ class Migrator:
 
 
 def connect_admin(
-    settings: Settings, *, attempts: int = 30, delay: float = 2.0,
+    settings: Settings,
+    *,
+    attempts: int = 30,
+    delay: float = 2.0,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Any:
     """Connect as extorq_admin with bounded retries (ClickHouse may still be starting)."""
@@ -345,11 +367,18 @@ def connect_admin(
                     f"ClickHouse admin connection failed: {type(exc).__name__}"
                     f" code={getattr(exc, 'code', None)}"
                 ) from None
-            log.info("clickhouse_not_ready", attempt=attempt, attempts=attempts,
-                     error=type(exc).__name__, code=getattr(exc, "code", None))
+            log.info(
+                "clickhouse_not_ready",
+                attempt=attempt,
+                attempts=attempts,
+                error=type(exc).__name__,
+                code=getattr(exc, "code", None),
+            )
             sleep(delay)
-    raise MigrationError(f"ClickHouse not reachable after {attempts} attempts: "
-                         f"{type(last).__name__ if last else 'unknown'}")
+    raise MigrationError(
+        f"ClickHouse not reachable after {attempts} attempts: "
+        f"{type(last).__name__ if last else 'unknown'}"
+    )
 
 
 def main(*, status_only: bool = False) -> int:
@@ -361,8 +390,12 @@ def main(*, status_only: bool = False) -> int:
     migrations_dir = settings.resolve(settings.migrations_dir)
     try:
         client = connect_admin(settings)
-        migrator = Migrator(client, migrations_dir, password_dir,
-                            applied_by=f"extorq-migrate@{settings.instance_name}")
+        migrator = Migrator(
+            client,
+            migrations_dir,
+            password_dir,
+            applied_by=f"extorq-migrate@{settings.instance_name}",
+        )
         if status_only:
             migrator.ensure_bookkeeping()
             applied = migrator.applied_checksums()
@@ -375,6 +408,10 @@ def main(*, status_only: bool = False) -> int:
     except MigrationError as exc:
         log.error("migration_failed", error=str(exc))
         return 1
-    log.info("migrations_complete", applied=report.applied,
-             already_applied=report.already_applied, passwords_synced=report.passwords_synced)
+    log.info(
+        "migrations_complete",
+        applied=report.applied,
+        already_applied=report.already_applied,
+        passwords_synced=report.passwords_synced,
+    )
     return 0

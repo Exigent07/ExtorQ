@@ -7,6 +7,11 @@ Every command the macOS collector runs goes through :func:`run_command`:
   ``log`` is also a zsh builtin, which is irrelevant here because no shell runs);
 * arguments are an explicit list (never ``shell=True``) and are validated
   (strings, no NUL bytes, bounded length and count);
+* executables that *can* change system state are restricted to their read-only
+  sub-commands by :func:`check_read_only_policy` (for example ``launchctl`` may
+  only ``print``/``print-disabled``: never ``load``, ``bootstrap``, ``enable``,
+  ``kickstart`` ...; ``defaults`` may only ``read``/``export``; ``sysctl`` may
+  only read named keys);
 * the child gets a minimal fixed environment, ``stdin`` is ``/dev/null``, the
   working directory is ``/`` and it runs in its own session so the whole process
   group can be killed;
@@ -20,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import selectors
 import signal
 import subprocess
@@ -46,8 +52,56 @@ ALLOWED_EXECUTABLES: frozenset[str] = frozenset(
         "/usr/sbin/lsof",
         "/bin/ps",
         "/usr/sbin/system_profiler",
+        "/bin/launchctl",
     }
 )
+
+_SOCKETFILTERFW_READS = frozenset(
+    {"--getglobalstate", "--getstealthmode", "--getallowsigned", "--getblockall"}
+)
+_SYSCTL_READABLE = frozenset({"hw.model", "hw.machine", "kern.osversion", "kern.boottime"})
+#: launchctl targets: a domain (system, gui/<uid>, user/<uid>) optionally followed by a label.
+_LAUNCHCTL_TARGET = re.compile(
+    r"^(?:system|gui/\d{1,10}|user/\d{1,10})(?:/[A-Za-z0-9._-]{1,255})?$"
+)
+
+
+def check_read_only_policy(argv: Sequence[str]) -> None:
+    """Refuse every sub-command that could change state (defence in depth).
+
+    The collector only ever builds the argument lists below; this check makes a
+    programming error (or a future change) fail closed instead of running, for
+    example, ``launchctl load`` or ``defaults write``.
+    """
+    exe, args = argv[0], list(argv[1:])
+    ok = True
+    if exe == "/bin/launchctl":
+        ok = (
+            len(args) == 2
+            and args[0] in ("print", "print-disabled")
+            and bool(_LAUNCHCTL_TARGET.match(args[1]))
+        )
+    elif exe == "/usr/bin/log":
+        ok = bool(args) and args[0] == "show"
+    elif exe == "/usr/bin/defaults":
+        ok = len(args) >= 2 and args[0] in ("read", "export")
+    elif exe == "/usr/bin/dscl":
+        ok = len(args) >= 3 and args[0] == "." and args[1] in ("-read", "-search", "-list")
+    elif exe == "/usr/sbin/sysctl":
+        ok = len(args) >= 2 and args[0] == "-n" and all(a in _SYSCTL_READABLE for a in args[1:])
+    elif exe == "/usr/bin/fdesetup":
+        ok = args == ["status"]
+    elif exe == "/usr/bin/csrutil":
+        ok = args in (["status"], ["authenticated-root", "status"])
+    elif exe == "/usr/libexec/ApplicationFirewall/socketfilterfw":
+        ok = len(args) == 1 and args[0] in _SOCKETFILTERFW_READS
+    elif exe == "/usr/sbin/spctl":
+        ok = args == ["--status"]
+    if not ok:
+        raise CommandValidationError(
+            f"arguments refused by the read-only policy for {os.path.basename(exe)}"
+        )
+
 
 #: Fixed child environment: no inherited secrets, deterministic (non-localised) output.
 SAFE_ENV: dict[str, str] = {
@@ -140,6 +194,7 @@ def validate_argv(argv: Sequence[str]) -> tuple[str, ...]:
             raise CommandValidationError("argument too long")
     if argv[0] not in ALLOWED_EXECUTABLES:
         raise CommandValidationError(f"executable not allow-listed: {argv[0]!r}")
+    check_read_only_policy(argv)
     return tuple(argv)
 
 

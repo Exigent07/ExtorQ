@@ -1,0 +1,72 @@
+rule_id: APP-001
+version: 1.0.0
+title: Burst of failed web application logins
+description: >-
+  An instrumented web application reports repeated failed logins: at least 5 for one user
+  name within five minutes (password guessing against one account), or at least 5 from one
+  source address across at least 3 user names (password spraying). Evidence is the
+  application's own structured authentication events (the lab portal on the Linux VM and
+  in Kubernetes), not inferred from HTTP status codes.
+severity: medium
+status: experimental
+mitre_techniques: [T1110.001, T1110.003]
+asset_types: [linux_host, kubernetes_cluster]
+requires:
+  - source_type: linux.app
+    event_types: [app.auth.login_failed]
+  - source_type: k8s.container_log
+    event_types: [app.auth.login_failed]
+    optional: true
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 900
+  late_tolerance_seconds: 300
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 300
+group_by: [asset_id, app, variant, user_or_src_ip]
+params:
+  window_seconds: 300
+  min_failures: 5
+  min_spray_users: 3
+  shared_nat_ips: ["10.0.2.2", "172.18.0.1", "10.244.0.1", "127.0.0.1", "::1"]
+false_positives:
+  - A user who forgot a password and retries, or a client with stale saved credentials.
+  - >-
+    Automated tests or monitoring that log in with a wrong or rotated credential.
+  - >-
+    Behind a shared NAT/proxy address many users share one source (spraying variant,
+    confidence medium); in this lab every request from the Mac shares one address.
+blind_spots:
+  - Applications that do not emit structured authentication events (only the lab app does).
+  - >-
+    Slow guessing below 5 attempts per 5 minutes per user, and spraying with fewer than 3
+    user names per source.
+  - User names are attacker-supplied text; guessing with many distinct names from many
+    sources is only visible as HTTP-level activity.
+references:
+  - https://attack.mitre.org/techniques/T1110/001/
+  - https://attack.mitre.org/techniques/T1110/003/
+query: APP-001.sql
+summary_template: >-
+  {failed_logins} failed logins ({variant}) to {app} on {asset_id}: users {users}; sources
+  {src_ips}; reasons {reasons}; shared NAT source: {src_ip_shared_nat}
+tests:
+  - name: guessing-like-b1-scenario
+    description: Shape of B1's http_probe.sh, 5 failed logins for lab-admin via 10.0.2.2.
+    fixture: tests/APP-001/positive_guessing_nat_sim.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    entities: {variant: guessing, user: lab-admin}
+  - name: spraying-from-external-source
+    description: Six user names tried from one documentation-range address in a Kubernetes app.
+    fixture: tests/APP-001/positive_spraying_k8s.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {variant: spraying, src_ip: 203.0.113.80}
+  - name: below-threshold-and-slow
+    description: Four failures in one minute, and six failures spread over half an hour.
+    fixture: tests/APP-001/negative_below_and_slow.jsonl
+    expect: no_alert

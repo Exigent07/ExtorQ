@@ -34,6 +34,7 @@ from extorq.contracts import (
     Provenance,
     Resource,
     SecurityEvent,
+    ServiceRef,
     Severity,
     SimulationTag,
     SourceInfo,
@@ -94,6 +95,23 @@ def simulation_tag(*texts: str | None) -> SimulationTag | None:
         if not text:
             continue
         match = _SIM_MARKER.search(text)
+        if match:
+            return SimulationTag(run_id=match.group(1))
+    return None
+
+
+#: Reverse-DNS spelling of the marker for launchd labels / plist names (MAC-001):
+#: ``com.extorq.sim.<run_id>`` (launchd labels conventionally avoid ``extorq-sim-``).
+_SIM_LAUNCHD_LABEL = re.compile(r"com\.extorq\.sim\.([a-z0-9]{8,32})(?:\.plist)?")
+
+
+def launchd_simulation_tag(path: str | None, label: str | None) -> SimulationTag | None:
+    """Simulation tag for a launchd item: the generic marker, or the exact label form."""
+    tag = simulation_tag(path, label)
+    if tag is not None:
+        return tag
+    for text in (label, path.rsplit("/", 1)[-1] if path else None):
+        match = _SIM_LAUNCHD_LABEL.fullmatch(text or "")
         if match:
             return SimulationTag(run_id=match.group(1))
     return None
@@ -169,6 +187,7 @@ def make_event(
     redaction_count: int = 0,
     truncated: bool = False,
     source_native_id: str | None = None,
+    service: ServiceRef | None = None,
 ) -> SecurityEvent:
     """Build a validated :class:`SecurityEvent` (raises on catalog violations)."""
     spec = EVENT_CATALOG.get(event_type)
@@ -204,6 +223,7 @@ def make_event(
         resource=resource,
         network=network,
         process=process,
+        service=service,
         message=clean_message,
         attributes=bounded_attributes(attributes or {}),
         labels=dict(labels or {}),

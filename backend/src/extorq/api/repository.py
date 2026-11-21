@@ -97,6 +97,8 @@ class AlertFilters:
     statuses: tuple[str, ...] = ()
     open_only: bool = False
     simulation_run_id: str = ""
+    #: Alerts whose ``service_ids`` contain this service id.
+    service_id: str = ""
     #: ``last_seen`` | ``first_seen`` | ``severity``
     sort: str = "last_seen"
 
@@ -114,6 +116,7 @@ class EventFilters:
     actor: str = ""
     src_ip: str = ""
     simulation_run_id: str = ""
+    service_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -123,6 +126,18 @@ class FindingFilters:
     scanner: str = ""
     category: str = ""
     states: tuple[str, ...] = field(default_factory=tuple)
+    #: Findings with at least one observation attributed to this service.
+    service_id: str = ""
+
+
+@dataclass(frozen=True)
+class ServiceFilters:
+    asset_id: str = ""
+    service_kind: str = ""
+    category: str = ""
+    adapter_support: str = ""
+    monitoring_status: str = ""
+    include_removed: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,6 +170,7 @@ class Repository(Protocol):
     def asset_last_events(self, asset_ids: Sequence[str]) -> list[Row]: ...
     def last_event_by_asset_type(self) -> list[Row]: ...
     def collectors(self, asset_id: str) -> list[Row]: ...
+    def asset_children(self, asset_id: str) -> list[Row]: ...
     def inventory_summary(self, asset_id: str) -> list[Row]: ...
     def event_counts_by_source(
         self, asset_id: str, since: datetime, until: datetime
@@ -166,6 +182,19 @@ class Repository(Protocol):
         self, filters: FindingFilters, limit: int, offset: int
     ) -> tuple[list[Row], int, bool]: ...
     def finding_severity_counts(self, asset_id: str) -> tuple[list[Row], bool]: ...
+    def finding_service_attribution(self, finding_ids: Sequence[str]) -> dict[str, str]: ...
+
+    # services (schema 1.1)
+    def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]: ...
+    def get_service(self, service_id: str) -> Row | None: ...
+    def service_instances(self, service_id: str, limit: int) -> tuple[list[Row], int]: ...
+    def service_event_sources(
+        self, service_id: str, since: datetime, until: datetime
+    ) -> list[Row]: ...
+    def service_auth_summary(self, service_id: str, since: datetime, until: datetime) -> Row: ...
+    def service_auth_sources(
+        self, service_id: str, since: datetime, until: datetime, limit: int
+    ) -> list[Row]: ...
 
     # rules
     def rules_latest(self) -> list[Row]: ...
@@ -275,6 +304,14 @@ ORDER BY asset_id, collector_id
 LIMIT 1000
 """
 
+ASSET_CHILDREN_SQL = """
+SELECT asset_id, asset_type, name, display_name, environment, criticality
+FROM extorq.assets FINAL
+WHERE parent_asset_id = {asset_id:String}
+ORDER BY asset_type, asset_id
+LIMIT 500
+"""
+
 INVENTORY_SUMMARY_SQL = """
 SELECT item_type, count() AS items, max(observed_at) AS last_observed_at
 FROM extorq.v_inventory_current
@@ -313,6 +350,9 @@ WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
   AND (empty({scanner:String}) OR scanner = {scanner:String})
   AND (empty({category:String}) OR category = {category:String})
   AND (empty({states:Array(String)}) OR has({states:Array(String)}, state))
+  AND (empty({service_id:String})
+       OR finding_id IN (SELECT finding_id FROM extorq.finding_observations
+                         WHERE service_id = {service_id:String}))
 ORDER BY multiIf(state = 'open', 0, state = 'unverified', 1, 2),
          multiIf(severity = 'critical', 4, severity = 'high', 3, severity = 'medium', 2,
                  severity = 'low', 1, 0) DESC,
@@ -330,6 +370,9 @@ WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
   AND (empty({scanner:String}) OR scanner = {scanner:String})
   AND (empty({category:String}) OR category = {category:String})
   AND (empty({states:Array(String)}) OR has({states:Array(String)}, state))
+  AND (empty({service_id:String})
+       OR finding_id IN (SELECT finding_id FROM extorq.finding_observations
+                         WHERE service_id = {service_id:String}))
 """
 
 FINDINGS_LC_SEVERITY_SQL = """
@@ -366,6 +409,9 @@ SELECT
     argMax(tuple(accepted_risk_reason), observed_at).1 AS f_accepted_risk_reason
 FROM extorq.finding_observations
 WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+  AND (empty({service_id:String})
+       OR finding_id IN (SELECT finding_id FROM extorq.finding_observations
+                         WHERE service_id = {service_id:String}))
 GROUP BY finding_id
 HAVING (empty({severities:Array(String)}) OR has({severities:Array(String)}, f_severity))
    AND (empty({scanner:String}) OR f_scanner = {scanner:String})
@@ -387,6 +433,9 @@ FROM
            argMax(severity, observed_at) AS f_severity
     FROM extorq.finding_observations
     WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+      AND (empty({service_id:String})
+           OR finding_id IN (SELECT finding_id FROM extorq.finding_observations
+                             WHERE service_id = {service_id:String}))
     GROUP BY finding_id
     HAVING (empty({severities:Array(String)}) OR has({severities:Array(String)}, f_severity))
        AND (empty({scanner:String}) OR f_scanner = {scanner:String})
@@ -404,6 +453,16 @@ FROM
     GROUP BY finding_id
 )
 GROUP BY severity
+"""
+
+# Latest non-null service attribution per finding (argMax skips NULL service_id values).
+FINDING_SERVICE_ATTRIBUTION_SQL = """
+SELECT finding_id, argMax(service_id, observed_at) AS attributed_service_id
+FROM extorq.finding_observations
+WHERE finding_id IN {finding_ids:Array(String)}
+  AND service_id IS NOT NULL
+GROUP BY finding_id
+LIMIT 1000
 """
 
 RULES_LATEST_SQL = """
@@ -490,7 +549,8 @@ SELECT
     a.updated_at AS updated_at,
     if(ifNull(s.alert_id, '') = '', 'new', s.status) AS analyst_status,
     ifNull(s.alert_id, '') != '' AS analyst_state_recorded,
-    s.assignee AS assignee
+    s.assignee AS assignee,
+    a.service_ids AS service_ids
 FROM extorq.alerts AS a FINAL
 LEFT JOIN
 (
@@ -505,6 +565,7 @@ WHERE a.last_seen >= {since:DateTime64(3, 'UTC')}
   AND ({open_only:UInt8} = 0 OR analyst_status NOT IN ('closed_true_positive', 'closed_benign',
                                                        'closed_false_positive'))
   AND (empty({simulation_run_id:String}) OR has(a.simulation_run_ids, {simulation_run_id:String}))
+  AND (empty({service_id:String}) OR has(a.service_ids, {service_id:String}))
 ORDER BY
     if({sort:String} = 'severity',
        multiIf(a.severity = 'critical', 4, a.severity = 'high', 3, a.severity = 'medium', 2,
@@ -533,6 +594,7 @@ FROM
       AND (empty({severities:Array(String)}) OR has({severities:Array(String)}, a.severity))
       AND (empty({simulation_run_id:String})
            OR has(a.simulation_run_ids, {simulation_run_id:String}))
+      AND (empty({service_id:String}) OR has(a.service_ids, {service_id:String}))
 )
 WHERE (empty({statuses:Array(String)}) OR has({statuses:Array(String)}, analyst_status))
   AND ({open_only:UInt8} = 0 OR analyst_status NOT IN ('closed_true_positive', 'closed_benign',
@@ -543,7 +605,8 @@ ALERT_GET_SQL = """
 SELECT alert_id, schema_version, rule_id, rule_version, rule_title, severity, confidence,
        asset_id, asset_type, group_key, entities, summary, first_seen, last_seen, window_start,
        window_end, event_count, evidence_event_ids, evidence_truncated, features,
-       mitre_techniques, simulation_run_ids, created_at, updated_at, detector_version
+       mitre_techniques, simulation_run_ids, created_at, updated_at, detector_version,
+       service_ids
 FROM extorq.alerts FINAL
 WHERE alert_id = {alert_id:String}
 LIMIT 1
@@ -603,10 +666,11 @@ SELECT event_id, event_type, category, asset_id, asset_type, source_type, collec
        event_time, observed_time, ingested_time, action, outcome, severity_hint, actor_type,
        actor_name, actor_id, src_ip, src_port, dst_ip, dst_port, resource_type, resource_name,
        resource_namespace, resource_path, process_name, process_pid, http_method, http_route,
-       http_status, http_request_id, k8s_namespace, k8s_pod_name, k8s_verb, k8s_resource,
-       k8s_object_name, k8s_response_code, k8s_user, k8s_audit_id, gh_repository, gh_commit_sha,
-       gh_workflow_path, gh_workflow_run_id, gh_actor_login, simulation_run_id, scenario_id,
-       message, attributes
+       http_status, http_request_id, k8s_cluster, k8s_namespace, k8s_node, k8s_pod_name,
+       k8s_pod_uid, k8s_container, k8s_container_id, k8s_verb, k8s_resource, k8s_object_name,
+       k8s_response_code, k8s_user, k8s_audit_id, gh_repository, gh_commit_sha,
+       gh_workflow_path, gh_workflow_run_id, gh_actor_login, service_id, service_name,
+       service_instance_id, adapter_id, simulation_run_id, scenario_id, message, attributes
 FROM extorq.events
 WHERE event_id IN {event_ids:Array(String)}
 ORDER BY event_id, ingested_time DESC
@@ -619,10 +683,11 @@ SELECT event_id, event_type, category, asset_id, asset_type, source_type, collec
        event_time, observed_time, ingested_time, action, outcome, severity_hint, actor_type,
        actor_name, actor_id, src_ip, src_port, dst_ip, dst_port, resource_type, resource_name,
        resource_namespace, resource_path, process_name, process_pid, http_method, http_route,
-       http_status, http_request_id, k8s_namespace, k8s_pod_name, k8s_verb, k8s_resource,
-       k8s_object_name, k8s_response_code, k8s_user, k8s_audit_id, gh_repository, gh_commit_sha,
-       gh_workflow_path, gh_workflow_run_id, gh_actor_login, simulation_run_id, scenario_id,
-       message
+       http_status, http_request_id, k8s_cluster, k8s_namespace, k8s_node, k8s_pod_name,
+       k8s_pod_uid, k8s_container, k8s_container_id, k8s_verb, k8s_resource, k8s_object_name,
+       k8s_response_code, k8s_user, k8s_audit_id, gh_repository, gh_commit_sha,
+       gh_workflow_path, gh_workflow_run_id, gh_actor_login, service_id, service_name,
+       service_instance_id, adapter_id, simulation_run_id, scenario_id, message
 FROM extorq.events
 WHERE event_time >= {since:DateTime64(3, 'UTC')}
   AND event_time < {until:DateTime64(3, 'UTC')}
@@ -638,6 +703,7 @@ WHERE event_time >= {since:DateTime64(3, 'UTC')}
        OR gh_actor_login = {actor:String})
   AND (empty({src_ip:String}) OR src_ip = {src_ip:String} OR has(k8s_source_ips, {src_ip:String}))
   AND (empty({simulation_run_id:String}) OR simulation_run_id = {simulation_run_id:String})
+  AND (empty({service_id:String}) OR service_id = {service_id:String})
 ORDER BY event_time DESC, event_id
 LIMIT 1 BY event_id
 LIMIT {limit:UInt32} OFFSET {offset:UInt32}
@@ -761,6 +827,97 @@ ORDER BY bucket_start, grp
 LIMIT {max_rows:UInt32}
 """
 
+# ── Services (0004: v_services = services FINAL, v_service_instances_current) ─────────
+
+SERVICES_LIST_SQL = """
+SELECT service_id, asset_id, service_kind, service_key, name, category, product, version,
+       discovered_via, adapter_id, adapter_support, monitoring_status, coverage_note,
+       telemetry_sources, endpoints, config_refs, instance_count, last_telemetry_at,
+       first_seen, last_seen, present, observed_by
+FROM extorq.v_services
+WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+  AND (empty({service_kind:String}) OR service_kind = {service_kind:String})
+  AND (empty({category:String}) OR category = {category:String})
+  AND (empty({adapter_support:String}) OR adapter_support = {adapter_support:String})
+  AND (empty({monitoring_status:String}) OR monitoring_status = {monitoring_status:String})
+  AND ({include_removed:UInt8} = 1 OR present = 1)
+ORDER BY asset_id, service_kind, name, service_id
+LIMIT {max_rows:UInt32}
+"""
+
+SERVICE_GET_SQL = """
+SELECT service_id, asset_id, service_kind, service_key, name, category, product, version,
+       discovered_via, adapter_id, adapter_support, monitoring_status, coverage_note,
+       telemetry_sources, endpoints, config_refs, instance_count, last_telemetry_at,
+       first_seen, last_seen, present, observed_by, attributes
+FROM extorq.v_services
+WHERE service_id = {service_id:String}
+ORDER BY last_seen DESC
+LIMIT 1
+"""
+
+SERVICE_INSTANCES_SQL = """
+SELECT instance_id, service_id, asset_id, instance_kind, instance_key, parent_instance_id, state,
+       pid, process_name, process_user, namespace, pod_name, pod_uid, container_name,
+       container_id, image, node_name, workload_kind, workload_name, started_at, observed_at,
+       observed_by, attributes
+FROM extorq.v_service_instances_current
+WHERE service_id = {service_id:String}
+ORDER BY observed_at DESC, instance_id
+LIMIT {limit:UInt32}
+"""
+
+SERVICE_INSTANCES_COUNT_SQL = """
+SELECT count() AS total
+FROM extorq.v_service_instances_current
+WHERE service_id = {service_id:String}
+"""
+
+SERVICE_EVENT_SOURCES_SQL = """
+SELECT source_type,
+       uniqExact(event_id) AS events,
+       max(event_time) AS last_event_at,
+       max(ingested_time) AS last_ingested_at
+FROM extorq.events
+WHERE service_id = {service_id:String}
+  AND event_time >= {since:DateTime64(3, 'UTC')}
+  AND event_time < {until:DateTime64(3, 'UTC')}
+GROUP BY source_type
+ORDER BY source_type
+LIMIT 100
+"""
+
+SERVICE_AUTH_SUMMARY_SQL = """
+SELECT uniqExact(event_id) AS total,
+       uniqExactIf(event_id, outcome = 'success') AS success,
+       uniqExactIf(event_id, outcome = 'failure') AS failure,
+       uniqExactIf(event_id, outcome = 'denied') AS denied,
+       uniqExactIf(event_id, outcome = 'unknown') AS unknown,
+       uniqExact(actor_name) AS distinct_actors,
+       uniqExact(src_ip) AS distinct_sources
+FROM extorq.events
+WHERE service_id = {service_id:String}
+  AND category = 'authentication'
+  AND event_time >= {since:DateTime64(3, 'UTC')}
+  AND event_time < {until:DateTime64(3, 'UTC')}
+"""
+
+SERVICE_AUTH_SOURCES_SQL = """
+SELECT assumeNotNull(src_ip) AS source_ip,
+       uniqExact(event_id) AS events,
+       uniqExactIf(event_id, outcome IN ('failure', 'denied')) AS failures,
+       max(event_time) AS last_seen
+FROM extorq.events
+WHERE service_id = {service_id:String}
+  AND category = 'authentication'
+  AND src_ip IS NOT NULL
+  AND event_time >= {since:DateTime64(3, 'UTC')}
+  AND event_time < {until:DateTime64(3, 'UTC')}
+GROUP BY source_ip
+ORDER BY failures DESC, events DESC, source_ip
+LIMIT {limit:UInt32}
+"""
+
 ANALYST_ACTION_COLUMNS: tuple[str, ...] = (
     "action_id",
     "occurred_at",
@@ -806,6 +963,7 @@ ALL_SELECT_SQL: tuple[str, ...] = (
     ASSET_LAST_EVENTS_SQL,
     LAST_EVENT_BY_ASSET_TYPE_SQL,
     COLLECTORS_SQL,
+    ASSET_CHILDREN_SQL,
     INVENTORY_SUMMARY_SQL,
     EVENT_COUNTS_BY_SOURCE_SQL,
     FINDINGS_LC_LIST_SQL,
@@ -814,6 +972,7 @@ ALL_SELECT_SQL: tuple[str, ...] = (
     FINDINGS_OBS_LIST_SQL,
     FINDINGS_OBS_COUNT_SQL,
     FINDINGS_OBS_SEVERITY_SQL,
+    FINDING_SERVICE_ATTRIBUTION_SQL,
     RULES_LATEST_SQL,
     RULE_LATEST_RUNS_SQL,
     RULE_VERSIONS_SQL,
@@ -841,6 +1000,13 @@ ALL_SELECT_SQL: tuple[str, ...] = (
     INGEST_AUDIT_DECISIONS_SQL,
     ALERT_SERIES_SQL,
     EVENT_SERIES_SQL,
+    SERVICES_LIST_SQL,
+    SERVICE_GET_SQL,
+    SERVICE_INSTANCES_SQL,
+    SERVICE_INSTANCES_COUNT_SQL,
+    SERVICE_EVENT_SOURCES_SQL,
+    SERVICE_AUTH_SUMMARY_SQL,
+    SERVICE_AUTH_SOURCES_SQL,
 )
 
 
@@ -931,6 +1097,9 @@ class ClickHouseRepository:
     def collectors(self, asset_id: str) -> list[Row]:
         return self._query(COLLECTORS_SQL, {"asset_id": asset_id})
 
+    def asset_children(self, asset_id: str) -> list[Row]:
+        return self._query(ASSET_CHILDREN_SQL, {"asset_id": asset_id})
+
     def inventory_summary(self, asset_id: str) -> list[Row]:
         return self._query(INVENTORY_SUMMARY_SQL, {"asset_id": asset_id})
 
@@ -967,6 +1136,7 @@ class ClickHouseRepository:
             "severities": list(filters.severities),
             "scanner": filters.scanner,
             "category": filters.category,
+            "service_id": filters.service_id,
         }
         if self.findings_lifecycle_available():
             lc_params = {**params, "states": list(filters.states)}
@@ -990,6 +1160,59 @@ class ClickHouseRepository:
             except Exception as exc:  # noqa: BLE001 - documented fallback, flagged in response
                 self._lifecycle_failed(exc)
         return self._query(FINDINGS_OBS_SEVERITY_SQL, {"asset_id": asset_id}), False
+
+    def finding_service_attribution(self, finding_ids: Sequence[str]) -> dict[str, str]:
+        """``finding_id -> service_id`` for findings with an attributed observation."""
+        if not finding_ids:
+            return {}
+        rows = self._query(FINDING_SERVICE_ATTRIBUTION_SQL, {"finding_ids": list(finding_ids)})
+        return {
+            str(row["finding_id"]): str(row["attributed_service_id"])
+            for row in rows
+            if row.get("attributed_service_id")
+        }
+
+    # -- services --
+
+    def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]:
+        params = {
+            "asset_id": filters.asset_id,
+            "service_kind": filters.service_kind,
+            "category": filters.category,
+            "adapter_support": filters.adapter_support,
+            "monitoring_status": filters.monitoring_status,
+            "include_removed": 1 if filters.include_removed else 0,
+            "max_rows": max_rows,
+        }
+        return self._query(SERVICES_LIST_SQL, params)
+
+    def get_service(self, service_id: str) -> Row | None:
+        rows = self._query(SERVICE_GET_SQL, {"service_id": service_id})
+        return rows[0] if rows else None
+
+    def service_instances(self, service_id: str, limit: int) -> tuple[list[Row], int]:
+        rows = self._query(SERVICE_INSTANCES_SQL, {"service_id": service_id, "limit": limit})
+        total = self._scalar(SERVICE_INSTANCES_COUNT_SQL, {"service_id": service_id}, "total")
+        return rows, total
+
+    def service_event_sources(self, service_id: str, since: datetime, until: datetime) -> list[Row]:
+        return self._query(
+            SERVICE_EVENT_SOURCES_SQL, {"service_id": service_id, "since": since, "until": until}
+        )
+
+    def service_auth_summary(self, service_id: str, since: datetime, until: datetime) -> Row:
+        rows = self._query(
+            SERVICE_AUTH_SUMMARY_SQL, {"service_id": service_id, "since": since, "until": until}
+        )
+        return rows[0] if rows else {}
+
+    def service_auth_sources(
+        self, service_id: str, since: datetime, until: datetime, limit: int
+    ) -> list[Row]:
+        return self._query(
+            SERVICE_AUTH_SOURCES_SQL,
+            {"service_id": service_id, "since": since, "until": until, "limit": limit},
+        )
 
     # -- rules --
 
@@ -1026,6 +1249,7 @@ class ClickHouseRepository:
             "statuses": list(filters.statuses),
             "open_only": 1 if filters.open_only else 0,
             "simulation_run_id": filters.simulation_run_id,
+            "service_id": filters.service_id,
         }
 
     def list_alerts(self, filters: AlertFilters, limit: int, offset: int) -> list[Row]:
@@ -1088,6 +1312,7 @@ class ClickHouseRepository:
             "actor": filters.actor,
             "src_ip": filters.src_ip,
             "simulation_run_id": filters.simulation_run_id,
+            "service_id": filters.service_id,
             "limit": limit,
             "offset": offset,
         }

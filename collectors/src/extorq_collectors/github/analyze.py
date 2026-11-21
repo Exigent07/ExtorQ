@@ -36,12 +36,16 @@ def _load(path_arg: str, workflow_path: str) -> WorkflowAnalysis | None:
     if not file_path.is_file():
         raise SystemExit(f"error: {path_arg} is not a file")
     if file_path.stat().st_size > MAX_WORKFLOW_BYTES:
-        return WorkflowAnalysis(path=workflow_path, ok=False, error=f"workflow exceeds {MAX_WORKFLOW_BYTES} bytes")
+        return WorkflowAnalysis(
+            path=workflow_path, ok=False, error=f"workflow exceeds {MAX_WORKFLOW_BYTES} bytes"
+        )
     return analyse_workflow(workflow_path, file_path.read_text(encoding="utf-8", errors="replace"))
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="extorq-github-analyze", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        prog="extorq-github-analyze", description=__doc__.splitlines()[0]
+    )
     parser.add_argument("--path", required=True, help="repository path of the workflow")
     parser.add_argument("--before", required=True, help="file with the previous version, or 'none'")
     parser.add_argument("--after", required=True, help="file with the new version, or 'none'")
@@ -51,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
         default="unknown",
         help="repository default GITHUB_TOKEN permission (GET /actions/permissions/workflow)",
     )
-    parser.add_argument("--previous-path", default=None, help="old path when the workflow was renamed")
+    parser.add_argument(
+        "--previous-path", default=None, help="old path when the workflow was renamed"
+    )
     expectation = parser.add_mutually_exclusive_group()
     expectation.add_argument("--expect-escalation", action="store_true")
     expectation.add_argument("--expect-no-escalation", action="store_true")

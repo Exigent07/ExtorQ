@@ -30,10 +30,12 @@ from extorq.ai.synthetic import (
     VM_ASSET,
     CaseSpec,
     Ev,
+    SvcDef,
     cov,
     fake_sha,
     is_synthetic,
     make_context,
+    service_summary,
 )
 from extorq.contracts.alert import EvidenceConfidence
 from extorq.contracts.catalog import SourceType as S
@@ -41,6 +43,7 @@ from extorq.contracts.common import Criticality, HealthStatus, Outcome, Severity
 from extorq.contracts.context import FindingSummary
 from extorq.contracts.context import RelationshipBasis as B
 from extorq.contracts.context import RelationshipType as R
+from extorq.contracts.service import MonitoringStatus, ServiceCategory, ServiceKind
 
 PRIORITY = "priority_investigation"
 ROUTINE = "routine_review"
@@ -1539,6 +1542,20 @@ def k8s_cases() -> list[CaseSpec]:
             ],
             coverage=[cov(S.K8S_AUDIT), cov(S.K8S_API_INVENTORY), cov(S.K8S_EVENTS)],
             event_count=3,
+            services=[
+                # The DaemonSet's pods were never admitted: no instances, so no container logs.
+                service_summary(
+                    K8S_ASSET.asset_id,
+                    SvcDef(
+                        "lab-restricted/DaemonSet/otel-collector",
+                        "otel-collector",
+                        ServiceKind.K8S_WORKLOAD,
+                        ServiceCategory.OTHER,
+                    ),
+                    role="evidence",
+                    monitoring_status=MonitoringStatus.UNMONITORED,
+                )
+            ],
         )
     )
     helm = "Helm/3.16.2"
@@ -1602,6 +1619,29 @@ def k8s_cases() -> list[CaseSpec]:
                 "resources_created_same_minute": 14,
             },
             coverage=[cov(S.K8S_AUDIT), cov(S.K8S_API_INVENTORY)],
+            services=[
+                # A workload and the logical Kubernetes Service in front of it are distinct.
+                service_summary(
+                    K8S_ASSET.asset_id,
+                    SvcDef(
+                        "ingress-nginx/Deployment/ingress-nginx-controller",
+                        "ingress-nginx-controller",
+                        ServiceKind.K8S_WORKLOAD,
+                        ServiceCategory.HTTP_SERVER,
+                    ),
+                    role="related",
+                ),
+                service_summary(
+                    K8S_ASSET.asset_id,
+                    SvcDef(
+                        "ingress-nginx/ingress-nginx-controller",
+                        "ingress-nginx-controller",
+                        ServiceKind.K8S_SERVICE,
+                        ServiceCategory.HTTP_SERVER,
+                    ),
+                    role="related",
+                ),
+            ],
         )
     )
     cases.append(

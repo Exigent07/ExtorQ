@@ -14,6 +14,7 @@ stop the container) and is reported so the scan can never be ``succeeded``.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -23,17 +24,34 @@ import time
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
 
 from extorq.common.redaction import sanitize_untrusted
-
 from extorq_scanners.status import ProcessOutcome
 
 _CONTAINER_PATH = re.compile(r"^/[A-Za-z0-9_./-]{1,255}$")
+_REPOSITORY = re.compile(r"^[a-z0-9][a-z0-9./_-]{0,254}$")
+_TAG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
+_RFC3339 = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$")
 _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 #: docker run's own failure codes (daemon error / cannot invoke / not found).
 _DOCKER_START_CODES = {125, 126, 127}
+
+
+def parse_rfc3339(value: str) -> datetime | None:
+    """Parse Docker/Trivy RFC 3339 timestamps (nanoseconds are cut to microseconds)."""
+    match = _RFC3339.match(value)
+    if not match:
+        return None
+    frac = (match.group(2) or "")[:6]
+    zone = match.group(3).replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(f"{match.group(1)}{'.' + frac if frac else ''}{zone}")
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC)
 
 
 class DockerError(RuntimeError):
@@ -54,7 +72,7 @@ class ContainerSpec:
     mounts: list[Mount] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     network: str = "none"
-    workdir: str = "/tmp"
+    workdir: str = "/tmp"  # noqa: S108 - container path (private tmpfs)
     platform: str | None = None
     purpose: str = "scan"
 
@@ -152,19 +170,35 @@ class DockerRunner:
     def command(self, spec: ContainerSpec, name: str) -> list[str]:
         self._check_spec(spec)
         cmd = [
-            self.docker, "run", "--rm", "--name", name, "--pull", "never",
-            "--network", spec.network,
-            "--user", f"{os.getuid()}:{os.getgid()}",
+            self.docker,
+            "run",
+            "--rm",
+            "--name",
+            name,
+            "--pull",
+            "never",
+            "--network",
+            spec.network,
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
             "--read-only",
-            "--tmpfs", f"/tmp:rw,noexec,nosuid,nodev,size={self.tmpfs_mb}m",
-            "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges",
-            "--pids-limit", str(self.pids_limit),
-            "--memory", self.memory,
-            "--cpus", self.cpus,
-            "--workdir", spec.workdir,
-            "--label", "org.extorq.component=scanner-runner",
-        ]  # fmt: skip
+            "--tmpfs",
+            f"/tmp:rw,noexec,nosuid,nodev,size={self.tmpfs_mb}m",  # noqa: S108 - container tmpfs
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            str(self.pids_limit),
+            "--memory",
+            self.memory,
+            "--cpus",
+            self.cpus,
+            "--workdir",
+            spec.workdir,
+            "--label",
+            "org.extorq.component=scanner-runner",
+        ]
         if spec.platform:
             cmd += ["--platform", spec.platform]
         for mount in spec.mounts:
@@ -189,13 +223,47 @@ class DockerRunner:
             return False
         return proc.returncode == 0
 
-    def _remove(self, name: str) -> None:
+    def newest_image(self, repository: str, max_candidates: int = 50) -> str | None:
+        """``repository:tag`` of the most recently created local image of ``repository``."""
+        if not self.available or not _REPOSITORY.match(repository):
+            return None
         try:
+            listed = subprocess.run(
+                [self.docker, "image", "ls", "--format", "{{.Repository}}:{{.Tag}}", repository],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        refs = [
+            ref
+            for ref in listed.stdout.split()
+            if ref.startswith(f"{repository}:") and _TAG.match(ref[len(repository) + 1 :])
+        ][:max_candidates]
+        best: tuple[datetime, str] | None = None
+        for ref in refs:
+            try:
+                created = subprocess.run(
+                    [self.docker, "image", "inspect", "--format", "{{.Created}}", ref],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            stamp = parse_rfc3339(created.stdout.strip()) if created.returncode == 0 else None
+            if stamp is not None and (best is None or stamp > best[0]):
+                best = (stamp, ref)
+        return best[1] if best else None
+
+    def _remove(self, name: str) -> None:
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
             subprocess.run(
                 [self.docker, "rm", "--force", name], capture_output=True, timeout=60, check=False
             )
-        except (OSError, subprocess.SubprocessError):
-            pass
 
     def run(
         self,
@@ -206,7 +274,9 @@ class DockerRunner:
         max_stderr_bytes: int = 1_000_000,
     ) -> ContainerResult:
         if not self.available:
-            return ContainerResult(ProcessOutcome(None, start_error="docker CLI not found"), b"", "")
+            return ContainerResult(
+                ProcessOutcome(None, start_error="docker CLI not found"), b"", ""
+            )
         name = f"{self.name_prefix}-{spec.purpose}-{uuid.uuid4().hex[:10]}"
         try:
             cmd = self.command(spec, name)

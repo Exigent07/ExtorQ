@@ -47,6 +47,19 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${d} d ${h % 24} h`;
 }
 
+/** A schedule interval: "every 60 s", "every 5 min", "every 24 h". */
+export function formatInterval(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return DASH;
+  if (seconds % 3600 === 0) return `every ${seconds / 3600} h`;
+  if (seconds % 60 === 0 && seconds >= 300) return `every ${seconds / 60} min`;
+  return `every ${Math.round(seconds)} s`;
+}
+
+/** A version token: semver-looking values get a "v" prefix, anything else is shown as is. */
+export function formatVersion(version: string): string {
+  return /^\d/.test(version) ? `v${version}` : version;
+}
+
 /** "4 min ago" relative to `now` (pass the fetch time to keep server and client equal). */
 export function formatRelative(iso: string | null | undefined, now: Date | string): string {
   if (!iso) return DASH;
@@ -86,6 +99,7 @@ export const ASSET_TYPE_LABEL: Record<string, string> = {
   macos_host: "macOS host",
   linux_host: "Linux VM",
   kubernetes_cluster: "Kubernetes cluster",
+  kubernetes_node: "Kubernetes node",
   kubernetes_namespace: "Kubernetes namespace",
   kubernetes_workload: "Kubernetes workload",
   github_account: "GitHub account",

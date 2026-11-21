@@ -1,0 +1,750 @@
+{
+  "uid": "extorq-kubernetes",
+  "title": "ExtorQ - Kubernetes Investigation",
+  "description": "Kubernetes API audit (verbs, resources, denials, RBAC changes), workload authentication failures and the node / workload / Service hierarchy.",
+  "tags": [
+    "extorq"
+  ],
+  "timezone": "utc",
+  "editable": false,
+  "graphTooltip": 1,
+  "liveNow": false,
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "ExtorQ dashboards",
+      "tags": [
+        "extorq"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "API audit",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "API requests by verb",
+      "description": "Audited API requests (audit policy decides which requests are logged).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, ifNull(k8s_verb, 'unknown') AS verb,\n       uniqExact(event_id) AS requests\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND event_type = 'k8s.api.request'\nGROUP BY time, verb\nORDER BY time, verb"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Denied requests (403) by user",
+      "description": "Requests rejected with HTTP 403 (RBAC or Pod Security admission).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, ifNull(k8s_user, 'unknown') AS user,\n       uniqExact(event_id) AS denied\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND event_type = 'k8s.api.request'\n  AND k8s_response_code = 403\nGROUP BY time, user\nORDER BY time, user"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Resources by verb",
+      "description": "Audited requests per (resource, verb).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT ifNull(k8s_resource, 'unknown') AS resource, ifNull(k8s_verb, 'unknown') AS verb,\n       uniqExact(event_id) AS requests,\n       uniqExactIf(event_id, k8s_response_code = 403) AS denied,\n       uniqExact(k8s_user) AS users\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND event_type = 'k8s.api.request'\nGROUP BY resource, verb\nORDER BY requests DESC\nLIMIT 100"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Denied requests",
+      "description": "403 responses incl. Pod Security violations (K8S-001 inputs).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 14,
+        "x": 10,
+        "y": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT event_time, k8s_user AS user, k8s_verb AS verb, k8s_resource AS resource,\n       k8s_namespace AS namespace, k8s_object_name AS object, k8s_response_code AS code,\n       arrayStringConcat(k8s_source_ips, ', ') AS source_ips,\n       JSONExtractString(attributes, 'pod_security_violation') AS pod_security_violation\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND event_type = 'k8s.api.request'\n  AND k8s_response_code = 403\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "RBAC changes",
+      "description": "Role/binding changes from the audit log and from inventory diffs with risk flags (K8S-002 inputs). risk_flags empty when none were computed.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT event_time, event_type, k8s_user AS user, k8s_verb AS verb,\n       ifNull(k8s_resource, resource_type) AS resource,\n       ifNull(k8s_namespace, resource_namespace) AS namespace,\n       ifNull(k8s_object_name, resource_name) AS object, k8s_response_code AS code, outcome,\n       arrayStringConcat(JSONExtract(attributes, 'risk_flags', 'Array(String)'), ', ')\n           AS risk_flags\nFROM extorq.events\nWHERE $__timeFilter(event_time)\n  AND ((event_type = 'k8s.api.request' AND k8s_resource IN ('roles', 'rolebindings', 'clusterroles', 'clusterrolebindings')\n        AND k8s_verb IN ('create', 'update', 'patch', 'delete'))\n       OR (event_type IN ('k8s.resource.created', 'k8s.resource.updated',\n                          'k8s.resource.deleted')\n           AND lower(ifNull(resource_type, '')) IN ('role', 'rolebinding', 'clusterrole',\n               'clusterrolebinding', 'roles', 'rolebindings', 'clusterroles', 'clusterrolebindings')))\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Workloads",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "panels": []
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Workload authentication failures",
+      "description": "Structured authentication failures in container logs (lab application).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time,\n       concat(ifNull(k8s_namespace, '?'), '/', ifNull(k8s_pod_name, '?')) AS pod,\n       uniqExact(event_id) AS failures\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND source_type = 'k8s.container_log'\n  AND category = 'authentication' AND outcome IN ('failure', 'denied')\nGROUP BY time, pod\nORDER BY time, pod"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Container log volume by namespace",
+      "description": "Container log events collected by the OTel DaemonSet.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, ifNull(k8s_namespace, 'unknown') AS namespace,\n       uniqExact(event_id) AS lines\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND source_type = 'k8s.container_log'\nGROUP BY time, namespace\nORDER BY time, namespace"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Hierarchy: nodes, workloads, Kubernetes Services, Pods",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Kubernetes nodes",
+      "description": "Node assets (k8s:<cluster>/node/<name>), current state.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT asset_id, name, parent_asset_id AS cluster, last_seen, observed_by\nFROM extorq.v_assets\nWHERE asset_type = 'kubernetes_node'\nORDER BY asset_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Workloads and Kubernetes Services",
+      "description": "Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source. k8s_workload = controller or bare Pod; k8s_service = logical Service object (virtual IP/ports), never a host OS service.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT asset_id, service_kind AS kind, service_key AS key, name, category,\n       adapter_id AS adapter, multiIf(adapter_support = 'none', 'unsupported', adapter_support = 'planned', 'planned', monitoring_status = 'unmonitored', 'unmonitored', monitoring_status = 'degraded', 'degraded', last_seen < now() - INTERVAL 1 HOUR, 'degraded (stale record)', 'monitored') AS coverage, arrayStringConcat(arrayMap(e -> concat(JSONExtractString(e, 'protocol'), '/', toString(JSONExtractUInt(e, 'port')), ' ', JSONExtractString(e, 'exposure'), ' (', JSONExtractString(e, 'attribution'), ')'), JSONExtractArrayRaw(endpoints)), ', ') AS endpoints,\n       instance_count, last_seen AS discovery_refreshed\nFROM extorq.v_services\nWHERE present = 1 AND service_kind IN ('k8s_workload', 'k8s_service')\nORDER BY asset_id, kind, key\nLIMIT 500"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Pods and containers",
+      "description": "Current Pod/container instances of Kubernetes workloads (v_service_instances_current: latest version, present only).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT i.namespace AS namespace, i.pod_name AS pod, i.container_name AS container,\n       i.instance_kind AS kind, i.state AS state, i.node_name AS node,\n       i.workload_kind AS workload_kind, i.workload_name AS workload, i.image AS image,\n       i.pod_uid AS pod_uid, i.container_id AS container_id, i.observed_at AS observed_at\nFROM extorq.v_service_instances_current AS i\nWHERE i.instance_kind IN ('pod', 'container')\nORDER BY namespace, pod, container\nLIMIT 500"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    }
+  ]
+}

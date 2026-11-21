@@ -31,7 +31,7 @@ import math
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal, Protocol, cast
 
@@ -57,6 +57,9 @@ INSUFFICIENT_BELOW = 0.3
 CONFIDENT_ABOVE = 0.7
 #: HTTP statuses retried by the SDK (bounded by retries and the total retry budget).
 RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 529})
+#: Pinned API root. Passed explicitly so the SDK's ``TYPESAFE_BASE_URL`` environment
+#: variable can never redirect requests (and the API key) to another host.
+JEV_BASE_URL = "https://api.typesafe.ai"
 
 _log = get_logger("extorq.ai.jev")
 
@@ -173,8 +176,8 @@ def question_set(domain: Domain) -> QuestionSet:
             "The state shows what happened, who or what performed it, on which asset, and enough "
             "surrounding activity or context to judge whether it is expected.",
             "Important information is missing or unreliable (for example telemetry gaps, stale "
-            "sources, an unknown actor, or no surrounding context), so a judgment would be "
-            "guesswork.",
+            "sources, unmonitored services involved in the activity, an unknown actor, or no "
+            "surrounding context), so a judgment would be guesswork.",
         ),
         _priority("priority_a", domain, ORDER_A),
         _priority("priority_b", domain, ORDER_B),
@@ -408,6 +411,7 @@ def _default_client_factory(api_key: str, settings: AISettings) -> JevClient:
         model=settings.jev_model,
         retry=retry,
         timeout=settings.jev_timeout_seconds,
+        base_url=JEV_BASE_URL,
     )
     return cast(JevClient, client)
 
@@ -510,9 +514,13 @@ class JevTriageProvider:
         return True, "enabled"
 
     def build_state(self, ctx: InvestigationContext) -> tuple[Projection, QuestionSet]:
+        # The projection shrinks itself to the configured state cap (never above JEV_LIMITS).
+        limits = replace(
+            JEV_LIMITS, max_chars=min(JEV_LIMITS.max_chars, self._settings.jev_max_state_chars)
+        )
         projection = project_context(
             ctx,
-            JEV_LIMITS,
+            limits,
             known_secrets=self._secrets(),
             include_excerpts=self._settings.ai_include_excerpts,
             include_simulation_marker=False,

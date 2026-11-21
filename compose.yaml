@@ -205,11 +205,20 @@ services:
     <<: *backend
     profiles: [full]
     command: ["ai-worker"]
+    # read_only must be false here: compose materialises `environment:`-sourced secrets
+    # (the AI key from the user's .env) by copying them into /run/secrets, which a
+    # read-only root filesystem refuses ("`file` is the sole supported option"). The
+    # image's code and virtualenv are root-owned and the service runs as uid 10001, so
+    # it still cannot modify its own code; /tmp stays a size-limited tmpfs.
+    read_only: false
     networks: [data, edge]
     environment:
       <<: *backend-env
       EXTORQ_INSTANCE_NAME: ai-worker
       JEV_API_KEY_FILE: /run/secrets/jev_api_key
+      # AI is advisory and OFF unless the operator opts in (E-IC-1): EXTORQ_JEV_ENABLED=true.
+      EXTORQ_JEV_ENABLED: ${EXTORQ_JEV_ENABLED:-false}
+      EXTORQ_AI_DOTENV: ""
     secrets:
       - extorq_ai_password
       - jev_api_key
@@ -221,6 +230,12 @@ services:
     <<: *backend
     profiles: [full]
     command: ["api"]
+    # read_only must be false here: compose materialises `environment:`-sourced secrets
+    # (the AI key from the user's .env) by copying them into /run/secrets, which a
+    # read-only root filesystem refuses ("`file` is the sole supported option"). The
+    # image's code and virtualenv are root-owned and the service runs as uid 10001, so
+    # it still cannot modify its own code; /tmp stays a size-limited tmpfs.
+    read_only: false
     networks: [data, edge]
     ports:
       - "127.0.0.1:8000:8000"
@@ -231,6 +246,9 @@ services:
       EXTORQ_API_PORT: "8000"
       EXTORQ_API_SERVICE_TOKEN_FILE: /run/secrets/api_service_token
       GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      # On-demand Gemini summaries are OFF unless the operator opts in (E-IC-1).
+      EXTORQ_GEMINI_ENABLED: ${EXTORQ_GEMINI_ENABLED:-false}
+      EXTORQ_AI_DOTENV: ""
     secrets:
       - extorq_api_ro_password
       - extorq_api_writer_password

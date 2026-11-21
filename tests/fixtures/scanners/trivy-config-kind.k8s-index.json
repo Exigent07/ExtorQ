@@ -1,0 +1,126 @@
+{
+ "infra/kind/manifests/00-namespaces.yaml": [
+  {
+   "end_line": 25,
+   "kind": "Namespace",
+   "name": "extorq-system",
+   "namespace": null,
+   "start_line": 9
+  },
+  {
+   "end_line": 39,
+   "kind": "Namespace",
+   "name": "extorq-apps",
+   "namespace": null,
+   "start_line": 28
+  },
+  {
+   "end_line": 53,
+   "kind": "Namespace",
+   "name": "extorq-restricted",
+   "namespace": null,
+   "start_line": 42
+  },
+  {
+   "end_line": 69,
+   "kind": "Namespace",
+   "name": "extorq-posture-lab",
+   "namespace": null,
+   "start_line": 58
+  }
+ ],
+ "infra/kind/manifests/10-inventory-rbac.yaml": [
+  {
+   "end_line": 16,
+   "kind": "ServiceAccount",
+   "name": "extorq-inventory",
+   "namespace": "extorq-system",
+   "start_line": 8
+  },
+  {
+   "end_line": 46,
+   "kind": "ClusterRole",
+   "name": "extorq-inventory-reader",
+   "namespace": null,
+   "start_line": 18
+  },
+  {
+   "end_line": 62,
+   "kind": "ClusterRoleBinding",
+   "name": "extorq-inventory-reader",
+   "namespace": null,
+   "start_line": 48
+  }
+ ],
+ "infra/kind/manifests/20-otel-rbac.yaml": [
+  {
+   "end_line": 12,
+   "kind": "ServiceAccount",
+   "name": "extorq-otel-collector",
+   "namespace": "extorq-system",
+   "start_line": 5
+  },
+  {
+   "end_line": 27,
+   "kind": "ClusterRole",
+   "name": "extorq-otel-k8sattributes",
+   "namespace": null,
+   "start_line": 14
+  },
+  {
+   "end_line": 43,
+   "kind": "ClusterRoleBinding",
+   "name": "extorq-otel-k8sattributes",
+   "namespace": null,
+   "start_line": 29
+  }
+ ],
+ "var/kind/21-otel-daemonset.yaml": [
+  {
+   "end_line": 143,
+   "kind": "DaemonSet",
+   "name": "extorq-otel-collector",
+   "namespace": "extorq-system",
+   "start_line": 13
+  }
+ ],
+ "var/kind/30-lab-portal.yaml": [
+  {
+   "end_line": 20,
+   "kind": "ServiceAccount",
+   "name": "lab-portal",
+   "namespace": "extorq-apps",
+   "start_line": 12
+  },
+  {
+   "end_line": 113,
+   "kind": "Deployment",
+   "name": "lab-portal",
+   "namespace": "extorq-apps",
+   "start_line": 22
+  },
+  {
+   "end_line": 132,
+   "kind": "Service",
+   "name": "lab-portal",
+   "namespace": "extorq-apps",
+   "start_line": 115
+  },
+  {
+   "end_line": 153,
+   "kind": "NetworkPolicy",
+   "name": "lab-portal",
+   "namespace": "extorq-apps",
+   "start_line": 136
+  }
+ ],
+ "var/kind/40-posture-lab.yaml": [
+  {
+   "end_line": 52,
+   "kind": "Deployment",
+   "name": "weak-log-reader",
+   "namespace": "extorq-posture-lab",
+   "start_line": 16
+  }
+ ]
+}

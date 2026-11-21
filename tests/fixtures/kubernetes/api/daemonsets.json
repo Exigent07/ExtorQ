@@ -1,0 +1,1191 @@
+{
+ "apiVersion": "apps/v1",
+ "items": [
+  {
+   "metadata": {
+    "annotations": {
+     "deprecated.daemonset.template.generation": "4",
+     "extorq.io/accepted-risk": "Node log collector: read-only hostPath /var/log/pods and /var/log/kubernetes/audit, writable hostPath /var/lib/extorq-otel (checkpoints); UID 0 required to read the root-owned 0600 audit log; all capabilities dropped, no privilege escalation, read-only root filesystem.",
+     "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"apps/v1\",\"kind\":\"DaemonSet\",\"metadata\":{\"annotations\":{\"extorq.io/accepted-risk\":\"Node log collector: read-only hostPath /var/log/pods and /var/log/kubernetes/audit, writable hostPath /var/lib/extorq-otel (checkpoints); UID 0 required to read the root-owned 0600 audit log; all capabilities dropped, no privilege escalation, read-only root filesystem.\"},\"labels\":{\"app.kubernetes.io/name\":\"extorq-otel-collector\",\"app.kubernetes.io/part-of\":\"extorq\"},\"name\":\"extorq-otel-collector\",\"namespace\":\"extorq-system\"},\"spec\":{\"selector\":{\"matchLabels\":{\"app.kubernetes.io/name\":\"extorq-otel-collector\"}},\"template\":{\"metadata\":{\"annotations\":{\"extorq.io/accepted-risk\":\"Node log collector: read-only hostPath log mounts, writable checkpoint hostPath, UID 0 for the root-owned audit log; capabilities dropped.\",\"extorq.io/config-sha256\":\"fddb1427306a601f\"},\"labels\":{\"app.kubernetes.io/name\":\"extorq-otel-collector\",\"app.kubernetes.io/part-of\":\"extorq\"}},\"spec\":{\"automountServiceAccountToken\":true,\"containers\":[{\"args\":[\"--config=/conf/collector.yaml\"],\"env\":[{\"name\":\"POD_IP\",\"valueFrom\":{\"fieldRef\":{\"fieldPath\":\"status.podIP\"}}},{\"name\":\"K8S_NODE_NAME\",\"valueFrom\":{\"fieldRef\":{\"fieldPath\":\"spec.nodeName\"}}},{\"name\":\"GOMEMLIMIT\",\"value\":\"180MiB\"}],\"image\":\"otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea\",\"imagePullPolicy\":\"IfNotPresent\",\"livenessProbe\":{\"httpGet\":{\"path\":\"/\",\"port\":\"health\"},\"initialDelaySeconds\":10,\"periodSeconds\":15},\"name\":\"otel-collector\",\"ports\":[{\"containerPort\":13133,\"name\":\"health\",\"protocol\":\"TCP\"}],\"readinessProbe\":{\"httpGet\":{\"path\":\"/\",\"port\":\"health\"},\"periodSeconds\":10},\"resources\":{\"limits\":{\"cpu\":\"500m\",\"memory\":\"256Mi\"},\"requests\":{\"cpu\":\"50m\",\"memory\":\"128Mi\"}},\"securityContext\":{\"allowPrivilegeEscalation\":false,\"capabilities\":{\"drop\":[\"ALL\"]},\"privileged\":false,\"readOnlyRootFilesystem\":true},\"volumeMounts\":[{\"mountPath\":\"/conf\",\"name\":\"config\",\"readOnly\":true},{\"mountPath\":\"/etc/extorq/gateway-ca\",\"name\":\"gateway-ca\",\"readOnly\":true},{\"mountPath\":\"/var/run/secrets/extorq/otel-token\",\"name\":\"otel-token\",\"readOnly\":true},{\"mountPath\":\"/var/log/pods\",\"name\":\"varlogpods\",\"readOnly\":true},{\"mountPath\":\"/var/log/kubernetes/audit\",\"name\":\"auditlog\",\"readOnly\":true},{\"mountPath\":\"/var/lib/extorq-otel\",\"name\":\"storage\"}]}],\"securityContext\":{\"runAsGroup\":0,\"runAsNonRoot\":false,\"runAsUser\":0,\"seccompProfile\":{\"type\":\"RuntimeDefault\"}},\"serviceAccountName\":\"extorq-otel-collector\",\"terminationGracePeriodSeconds\":30,\"tolerations\":[{\"effect\":\"NoSchedule\",\"key\":\"node-role.kubernetes.io/control-plane\",\"operator\":\"Exists\"}],\"volumes\":[{\"configMap\":{\"name\":\"extorq-otel-config\"},\"name\":\"config\"},{\"configMap\":{\"name\":\"extorq-gateway-ca\"},\"name\":\"gateway-ca\"},{\"name\":\"otel-token\",\"secret\":{\"defaultMode\":256,\"secretName\":\"extorq-otel-token\"}},{\"hostPath\":{\"path\":\"/var/log/pods\",\"type\":\"Directory\"},\"name\":\"varlogpods\"},{\"hostPath\":{\"path\":\"/var/log/kubernetes/audit\",\"type\":\"Directory\"},\"name\":\"auditlog\"},{\"hostPath\":{\"path\":\"/var/lib/extorq-otel\",\"type\":\"DirectoryOrCreate\"},\"name\":\"storage\"}]}},\"updateStrategy\":{\"rollingUpdate\":{\"maxUnavailable\":1},\"type\":\"RollingUpdate\"}}}\n"
+    },
+    "creationTimestamp": "2026-11-21T14:30:43Z",
+    "generation": 4,
+    "labels": {
+     "app.kubernetes.io/name": "extorq-otel-collector",
+     "app.kubernetes.io/part-of": "extorq"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:spec": {
+        "f:template": {
+         "f:metadata": {
+          "f:annotations": {
+           "f:kubectl.kubernetes.io/restartedAt": {}
+          }
+         }
+        }
+       }
+      },
+      "manager": "kubectl-rollout",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deprecated.daemonset.template.generation": {},
+         "f:extorq.io/accepted-risk": {},
+         "f:kubectl.kubernetes.io/last-applied-configuration": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/name": {},
+         "f:app.kubernetes.io/part-of": {}
+        }
+       },
+       "f:spec": {
+        "f:revisionHistoryLimit": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:annotations": {
+           ".": {},
+           "f:extorq.io/accepted-risk": {},
+           "f:extorq.io/config-sha256": {}
+          },
+          "f:labels": {
+           ".": {},
+           "f:app.kubernetes.io/name": {},
+           "f:app.kubernetes.io/part-of": {}
+          }
+         },
+         "f:spec": {
+          "f:automountServiceAccountToken": {},
+          "f:containers": {
+           "k:{\"name\":\"otel-collector\"}": {
+            ".": {},
+            "f:args": {},
+            "f:env": {
+             ".": {},
+             "k:{\"name\":\"GOMEMLIMIT\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"K8S_NODE_NAME\"}": {
+              ".": {},
+              "f:name": {},
+              "f:valueFrom": {
+               ".": {},
+               "f:fieldRef": {}
+              }
+             },
+             "k:{\"name\":\"POD_IP\"}": {
+              ".": {},
+              "f:name": {},
+              "f:valueFrom": {
+               ".": {},
+               "f:fieldRef": {}
+              }
+             }
+            },
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:livenessProbe": {
+             ".": {},
+             "f:failureThreshold": {},
+             "f:httpGet": {
+              ".": {},
+              "f:path": {},
+              "f:port": {},
+              "f:scheme": {}
+             },
+             "f:initialDelaySeconds": {},
+             "f:periodSeconds": {},
+             "f:successThreshold": {},
+             "f:timeoutSeconds": {}
+            },
+            "f:name": {},
+            "f:ports": {
+             ".": {},
+             "k:{\"containerPort\":13133,\"protocol\":\"TCP\"}": {
+              ".": {},
+              "f:containerPort": {},
+              "f:name": {},
+              "f:protocol": {}
+             }
+            },
+            "f:readinessProbe": {
+             ".": {},
+             "f:failureThreshold": {},
+             "f:httpGet": {
+              ".": {},
+              "f:path": {},
+              "f:port": {},
+              "f:scheme": {}
+             },
+             "f:periodSeconds": {},
+             "f:successThreshold": {},
+             "f:timeoutSeconds": {}
+            },
+            "f:resources": {
+             ".": {},
+             "f:limits": {
+              ".": {},
+              "f:cpu": {},
+              "f:memory": {}
+             },
+             "f:requests": {
+              ".": {},
+              "f:cpu": {},
+              "f:memory": {}
+             }
+            },
+            "f:securityContext": {
+             ".": {},
+             "f:allowPrivilegeEscalation": {},
+             "f:capabilities": {
+              ".": {},
+              "f:drop": {}
+             },
+             "f:privileged": {},
+             "f:readOnlyRootFilesystem": {}
+            },
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/conf\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             },
+             "k:{\"mountPath\":\"/etc/extorq/gateway-ca\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             },
+             "k:{\"mountPath\":\"/var/lib/extorq-otel\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {}
+             },
+             "k:{\"mountPath\":\"/var/log/kubernetes/audit\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             },
+             "k:{\"mountPath\":\"/var/log/pods\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             },
+             "k:{\"mountPath\":\"/var/run/secrets/extorq/otel-token\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {
+           ".": {},
+           "f:runAsGroup": {},
+           "f:runAsNonRoot": {},
+           "f:runAsUser": {},
+           "f:seccompProfile": {
+            ".": {},
+            "f:type": {}
+           }
+          },
+          "f:serviceAccount": {},
+          "f:serviceAccountName": {},
+          "f:terminationGracePeriodSeconds": {},
+          "f:tolerations": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"auditlog\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"config\"}": {
+            ".": {},
+            "f:configMap": {
+             ".": {},
+             "f:defaultMode": {},
+             "f:name": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"gateway-ca\"}": {
+            ".": {},
+            "f:configMap": {
+             ".": {},
+             "f:defaultMode": {},
+             "f:name": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"otel-token\"}": {
+            ".": {},
+            "f:name": {},
+            "f:secret": {
+             ".": {},
+             "f:defaultMode": {},
+             "f:secretName": {}
+            }
+           },
+           "k:{\"name\":\"storage\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"varlogpods\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           }
+          }
+         }
+        },
+        "f:updateStrategy": {
+         "f:rollingUpdate": {
+          ".": {},
+          "f:maxSurge": {},
+          "f:maxUnavailable": {}
+         },
+         "f:type": {}
+        }
+       }
+      },
+      "manager": "kubectl-client-side-apply",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:currentNumberScheduled": {},
+        "f:desiredNumberScheduled": {},
+        "f:numberAvailable": {},
+        "f:numberReady": {},
+        "f:observedGeneration": {},
+        "f:updatedNumberScheduled": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T14:37:01Z"
+     }
+    ],
+    "name": "extorq-otel-collector",
+    "namespace": "extorq-system",
+    "resourceVersion": "22797",
+    "uid": "54d718f9-54ce-4e00-b621-0e86ed7c0e10"
+   },
+   "spec": {
+    "revisionHistoryLimit": 10,
+    "selector": {
+     "matchLabels": {
+      "app.kubernetes.io/name": "extorq-otel-collector"
+     }
+    },
+    "template": {
+     "metadata": {
+      "annotations": {
+       "extorq.io/accepted-risk": "Node log collector: read-only hostPath log mounts, writable checkpoint hostPath, UID 0 for the root-owned audit log; capabilities dropped.",
+       "extorq.io/config-sha256": "fddb1427306a601f",
+       "kubectl.kubernetes.io/restartedAt": "2026-11-21T20:03:39+05:30"
+      },
+      "labels": {
+       "app.kubernetes.io/name": "extorq-otel-collector",
+       "app.kubernetes.io/part-of": "extorq"
+      }
+     },
+     "spec": {
+      "automountServiceAccountToken": true,
+      "containers": [
+       {
+        "args": [
+         "--config=/conf/collector.yaml"
+        ],
+        "env": [
+         {
+          "name": "POD_IP",
+          "valueFrom": {
+           "fieldRef": {
+            "apiVersion": "v1",
+            "fieldPath": "status.podIP"
+           }
+          }
+         },
+         {
+          "name": "K8S_NODE_NAME",
+          "valueFrom": {
+           "fieldRef": {
+            "apiVersion": "v1",
+            "fieldPath": "spec.nodeName"
+           }
+          }
+         },
+         {
+          "name": "GOMEMLIMIT",
+          "value": "180MiB"
+         }
+        ],
+        "image": "otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+        "imagePullPolicy": "IfNotPresent",
+        "livenessProbe": {
+         "failureThreshold": 3,
+         "httpGet": {
+          "path": "/",
+          "port": "health",
+          "scheme": "HTTP"
+         },
+         "initialDelaySeconds": 10,
+         "periodSeconds": 15,
+         "successThreshold": 1,
+         "timeoutSeconds": 1
+        },
+        "name": "otel-collector",
+        "ports": [
+         {
+          "containerPort": 13133,
+          "name": "health",
+          "protocol": "TCP"
+         }
+        ],
+        "readinessProbe": {
+         "failureThreshold": 3,
+         "httpGet": {
+          "path": "/",
+          "port": "health",
+          "scheme": "HTTP"
+         },
+         "periodSeconds": 10,
+         "successThreshold": 1,
+         "timeoutSeconds": 1
+        },
+        "resources": {
+         "limits": {
+          "cpu": "500m",
+          "memory": "256Mi"
+         },
+         "requests": {
+          "cpu": "50m",
+          "memory": "128Mi"
+         }
+        },
+        "securityContext": {
+         "allowPrivilegeEscalation": false,
+         "capabilities": {
+          "drop": [
+           "ALL"
+          ]
+         },
+         "privileged": false,
+         "readOnlyRootFilesystem": true
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/conf",
+          "name": "config",
+          "readOnly": true
+         },
+         {
+          "mountPath": "/etc/extorq/gateway-ca",
+          "name": "gateway-ca",
+          "readOnly": true
+         },
+         {
+          "mountPath": "/var/run/secrets/extorq/otel-token",
+          "name": "otel-token",
+          "readOnly": true
+         },
+         {
+          "mountPath": "/var/log/pods",
+          "name": "varlogpods",
+          "readOnly": true
+         },
+         {
+          "mountPath": "/var/log/kubernetes/audit",
+          "name": "auditlog",
+          "readOnly": true
+         },
+         {
+          "mountPath": "/var/lib/extorq-otel",
+          "name": "storage"
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {
+       "runAsGroup": 0,
+       "runAsNonRoot": false,
+       "runAsUser": 0,
+       "seccompProfile": {
+        "type": "RuntimeDefault"
+       }
+      },
+      "serviceAccount": "extorq-otel-collector",
+      "serviceAccountName": "extorq-otel-collector",
+      "terminationGracePeriodSeconds": 30,
+      "tolerations": [
+       {
+        "effect": "NoSchedule",
+        "key": "node-role.kubernetes.io/control-plane",
+        "operator": "Exists"
+       }
+      ],
+      "volumes": [
+       {
+        "configMap": {
+         "defaultMode": 420,
+         "name": "extorq-otel-config"
+        },
+        "name": "config"
+       },
+       {
+        "configMap": {
+         "defaultMode": 420,
+         "name": "extorq-gateway-ca"
+        },
+        "name": "gateway-ca"
+       },
+       {
+        "name": "otel-token",
+        "secret": {
+         "defaultMode": 256,
+         "secretName": "extorq-otel-token"
+        }
+       },
+       {
+        "hostPath": {
+         "path": "/var/log/pods",
+         "type": "Directory"
+        },
+        "name": "varlogpods"
+       },
+       {
+        "hostPath": {
+         "path": "/var/log/kubernetes/audit",
+         "type": "Directory"
+        },
+        "name": "auditlog"
+       },
+       {
+        "hostPath": {
+         "path": "/var/lib/extorq-otel",
+         "type": "DirectoryOrCreate"
+        },
+        "name": "storage"
+       }
+      ]
+     }
+    },
+    "updateStrategy": {
+     "rollingUpdate": {
+      "maxSurge": 0,
+      "maxUnavailable": 1
+     },
+     "type": "RollingUpdate"
+    }
+   },
+   "status": {
+    "currentNumberScheduled": 1,
+    "desiredNumberScheduled": 1,
+    "numberAvailable": 1,
+    "numberMisscheduled": 0,
+    "numberReady": 1,
+    "observedGeneration": 4,
+    "updatedNumberScheduled": 1
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "deprecated.daemonset.template.generation": "1"
+    },
+    "creationTimestamp": "2026-11-21T10:16:04Z",
+    "generation": 1,
+    "labels": {
+     "app": "kindnet",
+     "k8s-app": "kindnet",
+     "tier": "node"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deprecated.daemonset.template.generation": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app": {},
+         "f:k8s-app": {},
+         "f:tier": {}
+        }
+       },
+       "f:spec": {
+        "f:revisionHistoryLimit": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:labels": {
+           ".": {},
+           "f:app": {},
+           "f:k8s-app": {},
+           "f:tier": {}
+          }
+         },
+         "f:spec": {
+          "f:containers": {
+           "k:{\"name\":\"kindnet-cni\"}": {
+            ".": {},
+            "f:env": {
+             ".": {},
+             "k:{\"name\":\"CONTROL_PLANE_ENDPOINT\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             },
+             "k:{\"name\":\"HOST_IP\"}": {
+              ".": {},
+              "f:name": {},
+              "f:valueFrom": {
+               ".": {},
+               "f:fieldRef": {}
+              }
+             },
+             "k:{\"name\":\"POD_IP\"}": {
+              ".": {},
+              "f:name": {},
+              "f:valueFrom": {
+               ".": {},
+               "f:fieldRef": {}
+              }
+             },
+             "k:{\"name\":\"POD_SUBNET\"}": {
+              ".": {},
+              "f:name": {},
+              "f:value": {}
+             }
+            },
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:name": {},
+            "f:resources": {
+             ".": {},
+             "f:requests": {
+              ".": {},
+              "f:cpu": {},
+              "f:memory": {}
+             }
+            },
+            "f:securityContext": {
+             ".": {},
+             "f:capabilities": {
+              ".": {},
+              "f:add": {}
+             },
+             "f:privileged": {}
+            },
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/etc/cni/net.d\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {}
+             },
+             "k:{\"mountPath\":\"/lib/modules\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             },
+             "k:{\"mountPath\":\"/run/xtables.lock\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {}
+             },
+             "k:{\"mountPath\":\"/var/run/nri\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:hostNetwork": {},
+          "f:nodeSelector": {},
+          "f:priorityClassName": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {},
+          "f:serviceAccount": {},
+          "f:serviceAccountName": {},
+          "f:terminationGracePeriodSeconds": {},
+          "f:tolerations": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"cni-cfg\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"lib-modules\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"nri-plugin\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"xtables-lock\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           }
+          }
+         }
+        },
+        "f:updateStrategy": {
+         "f:rollingUpdate": {
+          ".": {},
+          "f:maxSurge": {},
+          "f:maxUnavailable": {}
+         },
+         "f:type": {}
+        }
+       }
+      },
+      "manager": "kubectl-create",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:04Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:currentNumberScheduled": {},
+        "f:desiredNumberScheduled": {},
+        "f:numberAvailable": {},
+        "f:numberReady": {},
+        "f:observedGeneration": {},
+        "f:updatedNumberScheduled": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T10:16:12Z"
+     }
+    ],
+    "name": "kindnet",
+    "namespace": "kube-system",
+    "resourceVersion": "454",
+    "uid": "f71bf66c-9fe1-4fdc-a4b8-8d14ed2a66b1"
+   },
+   "spec": {
+    "revisionHistoryLimit": 10,
+    "selector": {
+     "matchLabels": {
+      "app": "kindnet"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app": "kindnet",
+       "k8s-app": "kindnet",
+       "tier": "node"
+      }
+     },
+     "spec": {
+      "containers": [
+       {
+        "env": [
+         {
+          "name": "HOST_IP",
+          "valueFrom": {
+           "fieldRef": {
+            "apiVersion": "v1",
+            "fieldPath": "status.hostIP"
+           }
+          }
+         },
+         {
+          "name": "POD_IP",
+          "valueFrom": {
+           "fieldRef": {
+            "apiVersion": "v1",
+            "fieldPath": "status.podIP"
+           }
+          }
+         },
+         {
+          "name": "POD_SUBNET",
+          "value": "10.244.0.0/16"
+         },
+         {
+          "name": "CONTROL_PLANE_ENDPOINT",
+          "value": "extorq-lab-control-plane:6443"
+         }
+        ],
+        "image": "docker.io/kindest/kindnetd:v20260820-69b56db7",
+        "imagePullPolicy": "IfNotPresent",
+        "name": "kindnet-cni",
+        "resources": {
+         "requests": {
+          "cpu": "100m",
+          "memory": "50Mi"
+         }
+        },
+        "securityContext": {
+         "capabilities": {
+          "add": [
+           "NET_RAW",
+           "NET_ADMIN"
+          ]
+         },
+         "privileged": false
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/etc/cni/net.d",
+          "name": "cni-cfg"
+         },
+         {
+          "mountPath": "/run/xtables.lock",
+          "name": "xtables-lock"
+         },
+         {
+          "mountPath": "/lib/modules",
+          "name": "lib-modules",
+          "readOnly": true
+         },
+         {
+          "mountPath": "/var/run/nri",
+          "name": "nri-plugin"
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "hostNetwork": true,
+      "nodeSelector": {
+       "kubernetes.io/os": "linux"
+      },
+      "priorityClassName": "system-node-critical",
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {},
+      "serviceAccount": "kindnet",
+      "serviceAccountName": "kindnet",
+      "terminationGracePeriodSeconds": 30,
+      "tolerations": [
+       {
+        "operator": "Exists"
+       }
+      ],
+      "volumes": [
+       {
+        "hostPath": {
+         "path": "/etc/cni/net.d",
+         "type": ""
+        },
+        "name": "cni-cfg"
+       },
+       {
+        "hostPath": {
+         "path": "/run/xtables.lock",
+         "type": "FileOrCreate"
+        },
+        "name": "xtables-lock"
+       },
+       {
+        "hostPath": {
+         "path": "/lib/modules",
+         "type": ""
+        },
+        "name": "lib-modules"
+       },
+       {
+        "hostPath": {
+         "path": "/var/run/nri",
+         "type": ""
+        },
+        "name": "nri-plugin"
+       }
+      ]
+     }
+    },
+    "updateStrategy": {
+     "rollingUpdate": {
+      "maxSurge": 0,
+      "maxUnavailable": 1
+     },
+     "type": "RollingUpdate"
+    }
+   },
+   "status": {
+    "currentNumberScheduled": 1,
+    "desiredNumberScheduled": 1,
+    "numberAvailable": 1,
+    "numberMisscheduled": 0,
+    "numberReady": 1,
+    "observedGeneration": 1,
+    "updatedNumberScheduled": 1
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "deprecated.daemonset.template.generation": "1"
+    },
+    "creationTimestamp": "2026-11-21T10:16:03Z",
+    "generation": 1,
+    "labels": {
+     "k8s-app": "kube-proxy"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:deprecated.daemonset.template.generation": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:k8s-app": {}
+        }
+       },
+       "f:spec": {
+        "f:revisionHistoryLimit": {},
+        "f:selector": {},
+        "f:template": {
+         "f:metadata": {
+          "f:labels": {
+           ".": {},
+           "f:k8s-app": {}
+          }
+         },
+         "f:spec": {
+          "f:containers": {
+           "k:{\"name\":\"kube-proxy\"}": {
+            ".": {},
+            "f:command": {},
+            "f:env": {
+             ".": {},
+             "k:{\"name\":\"NODE_NAME\"}": {
+              ".": {},
+              "f:name": {},
+              "f:valueFrom": {
+               ".": {},
+               "f:fieldRef": {}
+              }
+             }
+            },
+            "f:image": {},
+            "f:imagePullPolicy": {},
+            "f:name": {},
+            "f:resources": {},
+            "f:securityContext": {
+             ".": {},
+             "f:privileged": {}
+            },
+            "f:terminationMessagePath": {},
+            "f:terminationMessagePolicy": {},
+            "f:volumeMounts": {
+             ".": {},
+             "k:{\"mountPath\":\"/lib/modules\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {},
+              "f:readOnly": {}
+             },
+             "k:{\"mountPath\":\"/run/xtables.lock\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {}
+             },
+             "k:{\"mountPath\":\"/var/lib/kube-proxy\"}": {
+              ".": {},
+              "f:mountPath": {},
+              "f:name": {}
+             }
+            }
+           }
+          },
+          "f:dnsPolicy": {},
+          "f:hostNetwork": {},
+          "f:nodeSelector": {},
+          "f:priorityClassName": {},
+          "f:restartPolicy": {},
+          "f:schedulerName": {},
+          "f:securityContext": {},
+          "f:serviceAccount": {},
+          "f:serviceAccountName": {},
+          "f:terminationGracePeriodSeconds": {},
+          "f:tolerations": {},
+          "f:volumes": {
+           ".": {},
+           "k:{\"name\":\"kube-proxy\"}": {
+            ".": {},
+            "f:configMap": {
+             ".": {},
+             "f:defaultMode": {},
+             "f:name": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"lib-modules\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           },
+           "k:{\"name\":\"xtables-lock\"}": {
+            ".": {},
+            "f:hostPath": {
+             ".": {},
+             "f:path": {},
+             "f:type": {}
+            },
+            "f:name": {}
+           }
+          }
+         }
+        },
+        "f:updateStrategy": {
+         "f:rollingUpdate": {
+          ".": {},
+          "f:maxSurge": {},
+          "f:maxUnavailable": {}
+         },
+         "f:type": {}
+        }
+       }
+      },
+      "manager": "kubeadm",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:03Z"
+     },
+     {
+      "apiVersion": "apps/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:status": {
+        "f:currentNumberScheduled": {},
+        "f:desiredNumberScheduled": {},
+        "f:numberAvailable": {},
+        "f:numberReady": {},
+        "f:observedGeneration": {},
+        "f:updatedNumberScheduled": {}
+       }
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "subresource": "status",
+      "time": "2026-11-21T10:16:12Z"
+     }
+    ],
+    "name": "kube-proxy",
+    "namespace": "kube-system",
+    "resourceVersion": "450",
+    "uid": "8ab7b356-6579-43a2-bf94-347538d4fc5b"
+   },
+   "spec": {
+    "revisionHistoryLimit": 10,
+    "selector": {
+     "matchLabels": {
+      "k8s-app": "kube-proxy"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "k8s-app": "kube-proxy"
+      }
+     },
+     "spec": {
+      "containers": [
+       {
+        "command": [
+         "/usr/local/bin/kube-proxy",
+         "--config=/var/lib/kube-proxy/config.conf",
+         "--hostname-override=$(NODE_NAME)"
+        ],
+        "env": [
+         {
+          "name": "NODE_NAME",
+          "valueFrom": {
+           "fieldRef": {
+            "apiVersion": "v1",
+            "fieldPath": "spec.nodeName"
+           }
+          }
+         }
+        ],
+        "image": "registry.k8s.io/kube-proxy:v1.37.0",
+        "imagePullPolicy": "IfNotPresent",
+        "name": "kube-proxy",
+        "resources": {},
+        "securityContext": {
+         "privileged": true
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+         {
+          "mountPath": "/var/lib/kube-proxy",
+          "name": "kube-proxy"
+         },
+         {
+          "mountPath": "/run/xtables.lock",
+          "name": "xtables-lock"
+         },
+         {
+          "mountPath": "/lib/modules",
+          "name": "lib-modules",
+          "readOnly": true
+         }
+        ]
+       }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "hostNetwork": true,
+      "nodeSelector": {
+       "kubernetes.io/os": "linux"
+      },
+      "priorityClassName": "system-node-critical",
+      "restartPolicy": "Always",
+      "schedulerName": "default-scheduler",
+      "securityContext": {},
+      "serviceAccount": "kube-proxy",
+      "serviceAccountName": "kube-proxy",
+      "terminationGracePeriodSeconds": 30,
+      "tolerations": [
+       {
+        "operator": "Exists"
+       }
+      ],
+      "volumes": [
+       {
+        "configMap": {
+         "defaultMode": 420,
+         "name": "kube-proxy"
+        },
+        "name": "kube-proxy"
+       },
+       {
+        "hostPath": {
+         "path": "/run/xtables.lock",
+         "type": "FileOrCreate"
+        },
+        "name": "xtables-lock"
+       },
+       {
+        "hostPath": {
+         "path": "/lib/modules",
+         "type": ""
+        },
+        "name": "lib-modules"
+       }
+      ]
+     }
+    },
+    "updateStrategy": {
+     "rollingUpdate": {
+      "maxSurge": 0,
+      "maxUnavailable": 1
+     },
+     "type": "RollingUpdate"
+    }
+   },
+   "status": {
+    "currentNumberScheduled": 1,
+    "desiredNumberScheduled": 1,
+    "numberAvailable": 1,
+    "numberMisscheduled": 0,
+    "numberReady": 1,
+    "observedGeneration": 1,
+    "updatedNumberScheduled": 1
+   }
+  }
+ ],
+ "kind": "DaemonSetList",
+ "metadata": {
+  "resourceVersion": "23216"
+ }
+}

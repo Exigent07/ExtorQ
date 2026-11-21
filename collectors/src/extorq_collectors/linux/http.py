@@ -34,7 +34,6 @@ from extorq.contracts import (
     Severity,
     SourceType,
 )
-
 from extorq_collectors.linux.common import (
     ParseContext,
     build_event,
@@ -131,52 +130,73 @@ def parse_nginx_access(entry: JournalEntry, ctx: ParseContext) -> list[SecurityE
     method = method_raw if isinstance(method_raw, str) and _METHOD.match(method_raw) else None
     route = _route(obj.get("uri"))
     request_id_raw = obj.get("request_id")
-    request_id = request_id_raw if isinstance(request_id_raw, str) and \
-        _REQUEST_ID.match(request_id_raw) else None
+    request_id = (
+        request_id_raw
+        if isinstance(request_id_raw, str) and _REQUEST_ID.match(request_id_raw)
+        else None
+    )
     user_agent = clean(obj.get("http_user_agent"), 2048) if obj.get("http_user_agent") else None
     request_time = _float(obj.get("request_time"), 0.0, 86400.0)
     msec = _float(obj.get("msec"), 1.0e9, 1.0e10)
-    event_time = from_epoch_s(msec) if msec is not None else (
-        parse_rfc3339(str(obj.get("time_iso8601", ""))) or entry.time)
+    event_time = (
+        from_epoch_s(msec)
+        if msec is not None
+        else (parse_rfc3339(str(obj.get("time_iso8601", ""))) or entry.time)
+    )
     src_ip = _ip(obj.get("remote_addr"))
-    attrs: dict[str, Any] = {"time_iso8601": clean(obj.get("time_iso8601"), 64),
-                             "boot_id": entry.boot_id}
+    attrs: dict[str, Any] = {
+        "time_iso8601": clean(obj.get("time_iso8601"), 64),
+        "boot_id": entry.boot_id,
+    }
     if trust is not Trust.VERIFIED:
         attrs["source_verified"] = False
-    return [build_event(
-        ctx,
-        event_type="http.request",
-        source_type=SourceType.LINUX_NGINX,
-        native_key=entry.cursor,
-        source_native_id=entry.cursor,
-        event_time=event_time,
-        parser=PARSER_NGINX,
-        action="http.request",
-        outcome=_http_outcome(status),
-        http=HttpInfo(
-            method=method,
-            route=route,
-            status_code=status,
-            request_id=request_id,
-            user_agent=user_agent,
-            host=clean(obj.get("host"), 256),
-            duration_ms=round(request_time * 1000.0, 3) if request_time is not None else None,
-            bytes_sent=_int(obj.get("body_bytes_sent"), 0, 2**53),
-        ),
-        network=Network(src_ip=src_ip, protocol="tcp", direction="inbound") if src_ip else None,
-        message=f"{method or '?'} {route or '?'} -> {status if status is not None else '?'}",
-        raw=entry.message,
-        attributes=attrs,
-        sim_texts=(user_agent, route),
-    )]
+    return [
+        build_event(
+            ctx,
+            event_type="http.request",
+            source_type=SourceType.LINUX_NGINX,
+            native_key=entry.cursor,
+            source_native_id=entry.cursor,
+            event_time=event_time,
+            parser=PARSER_NGINX,
+            action="http.request",
+            outcome=_http_outcome(status),
+            http=HttpInfo(
+                method=method,
+                route=route,
+                status_code=status,
+                request_id=request_id,
+                user_agent=user_agent,
+                host=clean(obj.get("host"), 256),
+                duration_ms=round(request_time * 1000.0, 3) if request_time is not None else None,
+                bytes_sent=_int(obj.get("body_bytes_sent"), 0, 2**53),
+            ),
+            network=Network(src_ip=src_ip, protocol="tcp", direction="inbound") if src_ip else None,
+            message=f"{method or '?'} {route or '?'} -> {status if status is not None else '?'}",
+            raw=entry.message,
+            attributes=attrs,
+            sim_texts=(user_agent, route),
+        )
+    ]
 
 
-def parse_lab_portal(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
-    trust = trust_unit(entry, APP_UNIT)
+def parse_lab_portal(
+    entry: JournalEntry,
+    ctx: ParseContext,
+    *,
+    expected_unit: str = APP_UNIT,
+    app_name: str = "lab-portal",
+) -> list[SecurityEvent]:
+    """Lines of the ``lab-portal.log.v1`` JSON schema (docs/team/interface-changes/B1.md).
+
+    ``expected_unit`` / ``app_name`` allow other applications that emit the same schema
+    (configured under ``adapters.webapp-json.apps`` in config/collectors/linux.yaml).
+    """
+    trust = trust_unit(entry, expected_unit)
     if trust is Trust.MISMATCH:
-        return [forged_identity_event(entry, ctx, "lab-portal")]
+        return [forged_identity_event(entry, ctx, entry.identifier or app_name)]
     obj = _load_json(entry.message)
-    if obj is None or obj.get("service") != "lab-portal":
+    if obj is None or obj.get("service") != app_name:
         return []  # startup diagnostics (stderr) share the stream; not events
     mapped = _APP_EVENTS.get(obj.get("event"))  # type: ignore[arg-type]
     if mapped is None:
@@ -202,32 +222,196 @@ def parse_lab_portal(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEve
         "reason": reason,
         "request_id_source": rid_source if rid_source in ("propagated", "generated") else None,
         "app_request_id": request_id if not propagated else None,
-        "service": "lab-portal",
+        "service": app_name,
         "level": level,
         "boot_id": entry.boot_id,
     }
     if trust is not Trust.VERIFIED:
         attrs["source_verified"] = False
     action = obj.get("event") if isinstance(obj.get("event"), str) else None
-    return [build_event(
-        ctx,
-        event_type=event_type,
-        source_type=SourceType.LINUX_APP,
-        native_key=entry.cursor,
-        source_native_id=entry.cursor,
-        event_time=parse_rfc3339(str(obj.get("ts", ""))) or entry.time,
-        parser=PARSER_APP,
-        action=action,
-        outcome=outcome,
-        severity_hint=_LEVEL_SEVERITY.get(level) if level else None,
-        actor=Actor(type=ActorType.USER, name=user) if user else None,
-        http=HttpInfo(method=method, route=route, status_code=status,
-                      request_id=request_id if propagated else None,
-                      user_agent=user_agent, duration_ms=duration),
-        network=Network(src_ip=src_ip, protocol="tcp", direction="inbound") if src_ip else None,
-        message=(f"lab-portal {action}: user={user or '-'} status={status} "
-                 f"reason={reason or '-'}"),
-        raw=entry.message,
-        attributes=attrs,
-        sim_texts=(user, user_agent, route),
-    )]
+    return [
+        build_event(
+            ctx,
+            event_type=event_type,
+            source_type=SourceType.LINUX_APP,
+            native_key=entry.cursor,
+            source_native_id=entry.cursor,
+            event_time=parse_rfc3339(str(obj.get("ts", ""))) or entry.time,
+            parser=PARSER_APP,
+            action=action,
+            outcome=outcome,
+            severity_hint=_LEVEL_SEVERITY.get(level) if level else None,
+            actor=Actor(type=ActorType.USER, name=user) if user else None,
+            http=HttpInfo(
+                method=method,
+                route=route,
+                status_code=status,
+                request_id=request_id if propagated else None,
+                user_agent=user_agent,
+                duration_ms=duration,
+            ),
+            network=Network(src_ip=src_ip, protocol="tcp", direction="inbound") if src_ip else None,
+            message=(
+                f"{app_name} {action}: user={user or '-'} status={status} reason={reason or '-'}"
+            ),
+            raw=entry.message,
+            attributes=attrs,
+            sim_texts=(user, user_agent, route),
+        )
+    ]
+
+
+# ── nginx error log (error_log syslog:...,tag=nginx_error) ───────────────────────
+
+PARSER_NGINX_ERROR = "linux-nginx-error"
+
+NGINX_ERROR_LINE = re.compile(
+    r"^(?P<stamp>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) \[(?P<level>[a-z]{3,6})\] "
+    r"(?P<pid>\d{1,10})#(?P<tid>\d{1,10}): (?:\*(?P<conn>\d{1,20}) )?(?P<text>.*)$"
+)
+#: Trailing context nginx appends: ", client: X, server: Y, request: "...", host: "..."".
+_NGINX_CTX = re.compile(
+    r", (?P<key>client|server|request|upstream|host|referrer|subrequest): "
+    r"(?P<value>\"(?:[^\"\\]|\\.)*\"|[^,]*)"
+)
+_REQUEST_LINE = re.compile(
+    r"^(?P<method>[A-Z]{1,16}) (?P<target>\S{1,8192})(?: (?P<proto>HTTP/[0-9.]{1,3}))?$"
+)
+_ERROR_CLASSES: tuple[tuple[str, str], ...] = (
+    ("client intended to send too large body", "request_body_too_large"),
+    ("while connecting to upstream", "upstream_connect_failed"),
+    ("upstream timed out", "upstream_timeout"),
+    ("upstream prematurely closed", "upstream_closed"),
+    ("no live upstreams", "upstream_unavailable"),
+    ("access forbidden by rule", "access_forbidden_by_rule"),
+    ("directory index of", "directory_index_forbidden"),
+    ("(2: No such file or directory)", "file_not_found"),
+    ("(13: Permission denied)", "permission_denied"),
+    ("limiting requests", "rate_limited"),
+    ("limiting connections", "connection_limited"),
+    ("client sent invalid", "invalid_request"),
+    ("client sent too long", "invalid_request"),
+    ("invalid host in request", "invalid_request"),
+    ("SSL_do_handshake() failed", "tls_handshake_failed"),
+    ("was not found in", "auth_basic_failure"),
+    ("password mismatch", "auth_basic_failure"),
+)
+_LEVEL_SEVERITY_NGINX = {
+    "debug": Severity.INFO,
+    "info": Severity.INFO,
+    "notice": Severity.INFO,
+    "warn": Severity.LOW,
+    "error": Severity.MEDIUM,
+    "crit": Severity.HIGH,
+    "alert": Severity.HIGH,
+    "emerg": Severity.CRITICAL,
+}
+
+
+def strip_query(target: str) -> tuple[str, bool]:
+    """Remove query string and fragment from a URL or request target (never stored)."""
+    cut = min((i for i in (target.find("?"), target.find("#")) if i >= 0), default=-1)
+    if cut < 0:
+        return target, False
+    return target[:cut], True
+
+
+def _strip_url_queries(text: str) -> tuple[str, bool]:
+    """Strip queries from every quoted request/URL value nginx appended to the message."""
+    stripped_any = False
+
+    def _quoted(match: re.Match[str]) -> str:
+        nonlocal stripped_any
+        value = match.group("value")
+        if not value.startswith('"'):
+            return match.group(0)
+        inner = value[1:-1]
+        if match.group("key") == "request":
+            parts = inner.split(" ")
+            if len(parts) >= 2:
+                parts[1], changed = strip_query(parts[1])
+                stripped_any = stripped_any or changed
+                inner = " ".join(parts)
+        elif match.group("key") in ("referrer", "upstream", "subrequest"):
+            inner, changed = strip_query(inner)
+            stripped_any = stripped_any or changed
+        return f', {match.group("key")}: "{inner}"'
+
+    return _NGINX_CTX.sub(_quoted, text), stripped_any
+
+
+def classify_nginx_error(text: str) -> str:
+    for needle, error_class in _ERROR_CLASSES:
+        if needle in text:
+            return error_class
+    return "other"
+
+
+def parse_nginx_error(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
+    """nginx error-log record -> ``http.server.error`` (linux.nginx).
+
+    The event time is journald's receive time (UTC); nginx's own timestamp is in server
+    local time without an offset and is kept only as ``attributes.source_stamp``.
+    """
+    trust = trust_unit(entry, NGINX_UNIT)
+    if trust is Trust.MISMATCH:
+        return [forged_identity_event(entry, ctx, "nginx_error")]
+    match = NGINX_ERROR_LINE.match(entry.message)
+    if not match:
+        return []
+    text = match.group("text")
+    head = _NGINX_CTX.split(text, maxsplit=1)[0] if _NGINX_CTX.search(text) else text
+    context = {m.group("key"): m.group("value").strip('"') for m in _NGINX_CTX.finditer(text)}
+    client = context.get("client")
+    src_ip = _ip(client) if client else None
+    method = route = None
+    query_stripped = False
+    request = context.get("request")
+    if request:
+        req = _REQUEST_LINE.match(request)
+        if req:
+            method = req.group("method")
+            route, query_stripped = strip_query(req.group("target"))
+    safe_line, url_stripped = _strip_url_queries(entry.message)
+    level = match.group("level")
+    attrs: dict[str, Any] = {
+        "error_class": classify_nginx_error(head),
+        "log_level": level,
+        "source_stamp": match.group("stamp"),
+        "nginx_pid": int(match.group("pid")),
+        "connection_serial": int(match.group("conn")) if match.group("conn") else None,
+        "server_name": clean(context.get("server"), 256),
+        "upstream": clean(strip_query(context["upstream"])[0], 512)
+        if context.get("upstream")
+        else None,
+        "query_stripped": True if (query_stripped or url_stripped) else None,
+        "boot_id": entry.boot_id,
+    }
+    if trust is not Trust.VERIFIED:
+        attrs["source_verified"] = False
+    return [
+        build_event(
+            ctx,
+            event_type="http.server.error",
+            source_type=SourceType.LINUX_NGINX,
+            native_key=entry.cursor,
+            source_native_id=entry.cursor,
+            event_time=entry.time,
+            parser=PARSER_NGINX_ERROR,
+            action=f"http.error.{attrs['error_class']}",
+            outcome=Outcome.FAILURE,
+            severity_hint=_LEVEL_SEVERITY_NGINX.get(level),
+            http=HttpInfo(
+                method=method,
+                route=clean(route, 2048) if route else None,
+                host=clean(context.get("host"), 256),
+            )
+            if (method or route)
+            else None,
+            network=Network(src_ip=src_ip, protocol="tcp", direction="inbound") if src_ip else None,
+            message=f"nginx {level}: {head}",
+            raw=safe_line,
+            attributes=attrs,
+            sim_texts=(route,),
+        )
+    ]

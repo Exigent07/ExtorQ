@@ -94,7 +94,9 @@ class SecretFileEnvSource(PydanticBaseSettingsSource):
                     ) from None
                 if not content:
                     raise ConfigError(f"{file_var} points to an empty file")
-                values[name] = content
+                # pydantic-settings matches source keys against a field's validation
+                # alias exactly; unaliased fields are keyed by their name.
+                values[env_name if field.validation_alias is not None else name] = content
                 break
         return values
 

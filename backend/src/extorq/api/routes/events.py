@@ -23,6 +23,7 @@ from extorq.api.routes.common import (
     Clock,
     EventIdPath,
     Repo,
+    ServiceIdQuery,
     Since,
     Until,
     normalise_ip,
@@ -71,6 +72,7 @@ def list_events(
         str | None, Query(max_length=64, description="Exact IP (also matches k8s source IPs).")
     ] = None,
     simulation_run_id: Annotated[str | None, Query(pattern=SIM_RUN_PATTERN)] = None,
+    service_id: ServiceIdQuery = None,
 ) -> s.EventListResponse:
     now = now_ms(clock)
     time_range = service.resolve_range(
@@ -93,6 +95,7 @@ def list_events(
         actor=actor or "",
         src_ip=normalise_ip(src_ip),
         simulation_run_id=simulation_run_id or "",
+        service_id=service_id or "",
     )
     rows = repo.list_events(filters, limit + 1, offset)
     has_more = len(rows) > limit
@@ -110,7 +113,7 @@ def list_events(
     "/events/{event_id}",
     response_model=s.EventDetailResponse,
     responses={404: {"model": s.ErrorResponse, "description": "Event not found"}},
-    summary="One stored SecurityEvent (contract schema 1.0) with ingest metadata",
+    summary="One stored SecurityEvent (contract schema 1.0/1.1) with ingest metadata",
 )
 def get_event(
     event_id: EventIdPath, principal: CurrentPrincipal, repo: Repo

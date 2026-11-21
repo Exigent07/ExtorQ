@@ -1,0 +1,87 @@
+rule_id: HTTP-001
+version: 1.0.0
+title: Web probing from one source
+description: >-
+  One source receives at least 10 client-error (4xx) responses from one asset within five
+  minutes (sliding window), and at least 5 of the requested routes are probe-like paths
+  (.env, .git, wp-login.php, phpmyadmin, server-status, admin consoles, ...). Evidence is
+  the web server or application access log (nginx/Apache/lab app on Linux hosts, lab
+  application container logs in Kubernetes).
+severity: low
+status: experimental
+mitre_techniques: [T1595.003]
+asset_types: [linux_host, kubernetes_cluster]
+requires:
+  # linux.apache and linux.app access lines are also accepted by the SQL when present.
+  - source_type: linux.nginx
+    event_types: [http.request]
+  - source_type: k8s.container_log
+    event_types: [http.request]
+    optional: true
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 900
+  late_tolerance_seconds: 300
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 300
+group_by: [asset_id, src_ip]
+params:
+  window_seconds: 300
+  min_requests: 10
+  min_probe_routes: 5
+  # Paths typically requested by scanners/exploit probes (RE2, case-insensitive).
+  probe_route_pattern: >-
+    (?i)(\.env|\.git|\.svn|\.aws|\.ssh|\.ht(access|passwd)|wp-|wordpress|phpmyadmin|xmlrpc|cgi-bin|server-status|actuator|/admin|/manager|/console|/shell|/backup|/config|/debug|/vendor/|/etc/passwd|\.\./|\.php|\.asp|\.jsp|/solr|/jenkins|/boaform|/hnap1|/owa|/remote/|/druid|/telescope)
+  shared_nat_ips: ["10.0.2.2", "172.18.0.1", "10.244.0.1", "127.0.0.1", "::1"]
+false_positives:
+  - >-
+    Authorised vulnerability scanners and uptime checkers that request well-known paths
+    (identify them by source address and user agent, and keep them on a documented list).
+  - >-
+    Broken links or a misconfigured client repeatedly requesting missing admin or config
+    paths; the probe-route list keeps ordinary 404s (favicon, assets) from counting.
+  - >-
+    Behind a shared NAT or proxy address (10.0.2.2 for the lab VM, 10.244.0.1 for kind
+    NodePort traffic) many clients share one source IP (confidence medium).
+blind_spots:
+  - >-
+    Slow or distributed probing below 10 client errors / 5 probe routes per 5 minutes per
+    source address.
+  - Probes that receive 2xx/3xx answers (an existing path) or 5xx errors are not counted.
+  - >-
+    Probe paths outside the pattern, query-string payloads (routes never include the query
+    string) and request bodies are not inspected.
+  - Web servers whose access logs are not collected.
+references:
+  - https://attack.mitre.org/techniques/T1595/003/
+  - https://owasp.org/www-project-web-security-testing-guide/
+query: HTTP-001.sql
+summary_template: >-
+  Web probing from {src_ip} on {asset_id}: {client_error_requests} client errors,
+  {probe_routes_distinct} probe-like routes ({probe_routes}) between {first_seen} and
+  {last_seen}; shared NAT source: {src_ip_shared_nat}
+tests:
+  - name: probe-from-external-source
+    description: Twelve probe-like paths from one documentation-range address, all 404.
+    fixture: tests/HTTP-001/positive_external_probe.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {src_ip: 203.0.113.70}
+  - name: probe-through-qemu-nat-like-b1-scenario
+    description: >-
+      Shape of B1's http_probe.sh: 6 probe paths and 5 failed POST /login from 10.0.2.2
+      (simulation-tagged user agent).
+    fixture: tests/HTTP-001/positive_nat_b1_shape_sim.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: ordinary-404s
+    description: Twelve 404s for assets and pages that are not probe-like paths.
+    fixture: tests/HTTP-001/negative_ordinary_404.jsonl
+    expect: no_alert
+  - name: slow-probe
+    description: Twelve probe paths spread over 30 minutes.
+    fixture: tests/HTTP-001/negative_slow_probe.jsonl
+    expect: no_alert

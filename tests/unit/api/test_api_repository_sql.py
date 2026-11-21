@@ -100,6 +100,15 @@ def _exercise(repo: r.ClickHouseRepository) -> None:
     repo.ingest_audit_decisions(since)
     repo.alert_series(series)
     repo.event_series(r.SeriesQuery(since=since, until=until, bucket_seconds=300))
+    repo.asset_children("k8s:extorq-lab")
+    repo.finding_service_attribution(["c" * 32])
+    repo.list_findings(r.FindingFilters(service_id="d" * 32), 10, 0)
+    repo.list_services(r.ServiceFilters(asset_id="linux:lab-vm-01", service_kind="k8s_service"), 9)
+    repo.get_service("d" * 32)
+    repo.service_instances("d" * 32, 10)
+    repo.service_event_sources("d" * 32, since, until)
+    repo.service_auth_summary("d" * 32, since, until)
+    repo.service_auth_sources("d" * 32, since, until, 10)
 
 
 def test_every_statement_is_static_and_fully_parameterised() -> None:

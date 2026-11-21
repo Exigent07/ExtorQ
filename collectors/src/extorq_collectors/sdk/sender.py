@@ -9,10 +9,16 @@ Rules:
 * Retryable failures (timeouts, 5xx, 429, 503) back off exponentially with
   jitter, honouring ``Retry-After``; nothing is dropped.
 * 401 keeps everything buffered (token problem) with a long backoff.
+* 400/404/405/415/422 are *systemic*: the SDK builds the envelope itself and
+  validated every record with the same contracts, so such an answer means
+  version skew or misconfiguration (e.g. a gateway that does not yet accept
+  schema 1.1), never one bad record. The batch stays buffered with a long
+  backoff and the error is surfaced in CollectorHealth; nothing is dropped.
 * 403 (unauthorized records) bisects the batch so authorized records still
   flow; a single unauthorized record moves to ``outbox_dead``. 413 splits the
-  batch. 409 (batch id clash) re-issues ids. 400/415/422 move the batch to
-  ``outbox_dead`` (the SDK validated the records, so this is a bug to inspect).
+  batch. 409 (batch id clash) re-issues ids. Any other 4xx moves the batch to
+  ``outbox_dead`` for inspection (``extorq-collect flush --requeue-dead``
+  re-queues dead letters after the cause is fixed).
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ MAX_BATCH_BYTES = 3_500_000
 BACKOFF_INITIAL = 1.0
 BACKOFF_MAX = 60.0
 AUTH_BACKOFF = 60.0
+SYSTEMIC_REJECTIONS = frozenset({400, 404, 405, 415, 422})
 
 
 def sanitize(text: str, limit: int = 1024) -> str:
@@ -58,8 +65,14 @@ class SenderState:
     next_attempt_at: float = 0.0
     last_success_at: float | None = None
     last_error: str | None = None
-    totals: dict[str, int] = field(default_factory=lambda: {
-        "accepted": 0, "duplicates": 0, "quarantined": 0, "dead_lettered": 0})
+    totals: dict[str, int] = field(
+        default_factory=lambda: {
+            "accepted": 0,
+            "duplicates": 0,
+            "quarantined": 0,
+            "dead_lettered": 0,
+        }
+    )
 
 
 class Sender:
@@ -94,8 +107,9 @@ class Sender:
     def ready(self) -> bool:
         return self.clock() >= self.state.next_attempt_at
 
-    def send_pending(self, *, deadline: float | None = None, max_batches: int | None = None
-                     ) -> SendReport:
+    def send_pending(
+        self, *, deadline: float | None = None, max_batches: int | None = None
+    ) -> SendReport:
         """Send batches until the outbox is empty, an error occurs or the deadline passes."""
         report = SendReport()
         if not self.ready():
@@ -129,8 +143,9 @@ class Sender:
                 report.error = self.state.last_error
                 break
             except RejectedError as exc:
-                self._handle_rejection(batch_id, len(rows), exc, report)
-                continue
+                if self._handle_rejection(batch_id, len(rows), exc, report):
+                    continue
+                break
             self.store.ack(batch_id)
             report.accepted += result.accepted
             report.duplicates += result.duplicates
@@ -150,19 +165,26 @@ class Sender:
         self.state.last_error = sanitize(error)
         self.state.next_attempt_at = self.clock() + self.backoff(retry_after)
 
-    def _handle_rejection(self, batch_id: str, size: int, exc: RejectedError,
-                          report: SendReport) -> None:
+    def _handle_rejection(
+        self, batch_id: str, size: int, exc: RejectedError, report: SendReport
+    ) -> bool:
+        """Apply the rejection policy; return False when sending must stop (systemic)."""
         status = exc.status_code
+        if status in SYSTEMIC_REJECTIONS:
+            self._fail(str(exc), AUTH_BACKOFF)
+            report.error = self.state.last_error
+            return False
         if status == 403 and size > 1:
             self.store.reassign(batch_id, split=True)
-            return
+            return True
         if status == 413 and size > 1:
             self.store.reassign(batch_id, split=True)
-            return
+            return True
         if status == 409:
             self.store.reassign(batch_id, split=False)
-            return
+            return True
         moved = self.store.dead_letter(batch_id, status, sanitize(str(exc)))
         report.dead_lettered += moved
         self.state.totals["dead_lettered"] += moved
         self.state.last_error = sanitize(str(exc))
+        return True

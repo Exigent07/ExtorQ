@@ -1,0 +1,1350 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "k8s.container.restart_count",
+      "value": {
+       "stringValue": "0"
+      }
+     },
+     {
+      "key": "k8s.namespace.name",
+      "value": {
+       "stringValue": "kube-system"
+      }
+     },
+     {
+      "key": "k8s.pod.name",
+      "value": {
+       "stringValue": "kube-controller-manager-extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "k8s.pod.uid",
+      "value": {
+       "stringValue": "ce9207e8c00c50e59e500e6e0e4b3119"
+      }
+     },
+     {
+      "key": "k8s.container.name",
+      "value": {
+       "stringValue": "kube-controller-manager"
+      }
+     },
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "container"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1795271535959562214",
+       "observedTimeUnixNano": "1795271537351999215",
+       "body": {
+        "stringValue": "E1121 14:32:15.959391       1 daemon_controller.go:411] \"Unhandled Error\" err=\"extorq-system/extorq-otel-collector failed with : read version: 22306 is not as new as written version: 22311 for group resource daemonsets.apps\" logger=\"UnhandledError\""
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/kube-system_kube-controller-manager-extorq-lab-control-plane_ce9207e8c00c50e59e500e6e0e4b3119/kube-controller-manager/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stderr"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "k8s.namespace.name",
+      "value": {
+       "stringValue": "kube-system"
+      }
+     },
+     {
+      "key": "k8s.pod.name",
+      "value": {
+       "stringValue": "kindnet-rnwmc"
+      }
+     },
+     {
+      "key": "k8s.pod.uid",
+      "value": {
+       "stringValue": "ae3845e4-80c6-4057-a99d-ff680b1a8510"
+      }
+     },
+     {
+      "key": "k8s.container.name",
+      "value": {
+       "stringValue": "kindnet-cni"
+      }
+     },
+     {
+      "key": "k8s.container.restart_count",
+      "value": {
+       "stringValue": "0"
+      }
+     },
+     {
+      "key": "k8s.pod.start_time",
+      "value": {
+       "stringValue": "2026-11-21T10:16:12Z"
+      }
+     },
+     {
+      "key": "k8s.daemonset.name",
+      "value": {
+       "stringValue": "kindnet"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "container.image.name",
+      "value": {
+       "stringValue": "docker.io/kindest/kindnetd"
+      }
+     },
+     {
+      "key": "container.image.tags",
+      "value": {
+       "arrayValue": {
+        "values": [
+         {
+          "stringValue": "v20260820-69b56db7"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "key": "container.id",
+      "value": {
+       "stringValue": "431eef9b05d55616a33d9b1b8b4a05147991a8653952be7a951fd917ecba8e18"
+      }
+     },
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "container"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1795271542990983426",
+       "observedTimeUnixNano": "1795271543351456801",
+       "body": {
+        "stringValue": "I1121 14:32:22.990787       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]"
+       },
+       "attributes": [
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stderr"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/kube-system_kindnet-rnwmc_ae3845e4-80c6-4057-a99d-ff680b1a8510/kindnet-cni/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271542991021759",
+       "observedTimeUnixNano": "1795271543354748676",
+       "body": {
+        "stringValue": "I1121 14:32:22.990879       1 main.go:324] handling current node"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/kube-system_kindnet-rnwmc_ae3845e4-80c6-4057-a99d-ff680b1a8510/kindnet-cni/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stderr"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "k8s.namespace.name",
+      "value": {
+       "stringValue": "extorq-apps"
+      }
+     },
+     {
+      "key": "k8s.pod.name",
+      "value": {
+       "stringValue": "lab-portal-b7fcd5dc9-c8g4n"
+      }
+     },
+     {
+      "key": "k8s.pod.uid",
+      "value": {
+       "stringValue": "f1e96337-4cff-459a-9d1c-8e28b7a747f5"
+      }
+     },
+     {
+      "key": "k8s.container.name",
+      "value": {
+       "stringValue": "lab-portal"
+      }
+     },
+     {
+      "key": "k8s.container.restart_count",
+      "value": {
+       "stringValue": "0"
+      }
+     },
+     {
+      "key": "k8s.pod.start_time",
+      "value": {
+       "stringValue": "2026-11-21T10:34:07Z"
+      }
+     },
+     {
+      "key": "k8s.replicaset.name",
+      "value": {
+       "stringValue": "lab-portal-b7fcd5dc9"
+      }
+     },
+     {
+      "key": "k8s.deployment.name",
+      "value": {
+       "stringValue": "lab-portal"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "container.image.name",
+      "value": {
+       "stringValue": "extorq/lab-portal"
+      }
+     },
+     {
+      "key": "container.image.tags",
+      "value": {
+       "arrayValue": {
+        "values": [
+         {
+          "stringValue": "2aa9e4797693"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "key": "container.id",
+      "value": {
+       "stringValue": "9a26595a7720f95398dbb763f3fd4974636295d1eebf0d9890d40b44512680ac"
+      }
+     },
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "container"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1795271557471291085",
+       "observedTimeUnixNano": "1795271557850915377",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:37.468Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"4401dd19eba14f93b94c294882b3029e\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"invalid_password\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":246.044}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271557471796627",
+       "observedTimeUnixNano": "1795271557850925002",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:37.471Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"4401dd19eba14f93b94c294882b3029e\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":248.191}"
+       },
+       "attributes": [
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271557768554711",
+       "observedTimeUnixNano": "1795271557850926336",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:37.768Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"4f02a2dff14941d39aaa47e796a0c2e3\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"invalid_password\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":287.843}"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271557768686919",
+       "observedTimeUnixNano": "1795271557850926669",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:37.768Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"4f02a2dff14941d39aaa47e796a0c2e3\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":288.058}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "k8s.pod.uid",
+      "value": {
+       "stringValue": "f1e96337-4cff-459a-9d1c-8e28b7a747f5"
+      }
+     },
+     {
+      "key": "k8s.container.name",
+      "value": {
+       "stringValue": "lab-portal"
+      }
+     },
+     {
+      "key": "k8s.container.restart_count",
+      "value": {
+       "stringValue": "0"
+      }
+     },
+     {
+      "key": "k8s.namespace.name",
+      "value": {
+       "stringValue": "extorq-apps"
+      }
+     },
+     {
+      "key": "k8s.pod.name",
+      "value": {
+       "stringValue": "lab-portal-b7fcd5dc9-c8g4n"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "k8s.pod.start_time",
+      "value": {
+       "stringValue": "2026-11-21T10:34:07Z"
+      }
+     },
+     {
+      "key": "k8s.replicaset.name",
+      "value": {
+       "stringValue": "lab-portal-b7fcd5dc9"
+      }
+     },
+     {
+      "key": "k8s.deployment.name",
+      "value": {
+       "stringValue": "lab-portal"
+      }
+     },
+     {
+      "key": "container.image.name",
+      "value": {
+       "stringValue": "extorq/lab-portal"
+      }
+     },
+     {
+      "key": "container.image.tags",
+      "value": {
+       "arrayValue": {
+        "values": [
+         {
+          "stringValue": "2aa9e4797693"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "key": "container.id",
+      "value": {
+       "stringValue": "9a26595a7720f95398dbb763f3fd4974636295d1eebf0d9890d40b44512680ac"
+      }
+     },
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "container"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1795271558044216086",
+       "observedTimeUnixNano": "1795271558351322127",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.044Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"8b30bcd3eff8473fb2173c5db0365eb2\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"invalid_password\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":266.157}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271558044353711",
+       "observedTimeUnixNano": "1795271558351324044",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.044Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"8b30bcd3eff8473fb2173c5db0365eb2\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":266.355}"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271558340536836",
+       "observedTimeUnixNano": "1795271558351324461",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.340Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"b2-fixture-nouser\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"fd970bd9401442b7a9edfcd3896d0527\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"unknown_user\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":286.987}"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271558340713044",
+       "observedTimeUnixNano": "1795271558351324794",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.340Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"b2-fixture-nouser\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"fd970bd9401442b7a9edfcd3896d0527\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":287.226}"
+       },
+       "attributes": [
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271558350520794",
+       "observedTimeUnixNano": "1795271558351325086",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.350Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"authz.denied\",\"user\":null,\"src_ip\":\"10.244.0.1\",\"request_id\":\"3d3814120a4d4ba4b27731dbad976604\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/admin\",\"status\":401,\"reason\":\"missing_session\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.024}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271558350622419",
+       "observedTimeUnixNano": "1795271558351326002",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.350Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":null,\"src_ip\":\"10.244.0.1\",\"request_id\":\"3d3814120a4d4ba4b27731dbad976604\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/admin\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.166}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "k8s.container.name",
+      "value": {
+       "stringValue": "lab-portal"
+      }
+     },
+     {
+      "key": "k8s.container.restart_count",
+      "value": {
+       "stringValue": "0"
+      }
+     },
+     {
+      "key": "k8s.namespace.name",
+      "value": {
+       "stringValue": "extorq-apps"
+      }
+     },
+     {
+      "key": "k8s.pod.name",
+      "value": {
+       "stringValue": "lab-portal-b7fcd5dc9-c8g4n"
+      }
+     },
+     {
+      "key": "k8s.pod.uid",
+      "value": {
+       "stringValue": "f1e96337-4cff-459a-9d1c-8e28b7a747f5"
+      }
+     },
+     {
+      "key": "k8s.pod.start_time",
+      "value": {
+       "stringValue": "2026-11-21T10:34:07Z"
+      }
+     },
+     {
+      "key": "k8s.replicaset.name",
+      "value": {
+       "stringValue": "lab-portal-b7fcd5dc9"
+      }
+     },
+     {
+      "key": "k8s.deployment.name",
+      "value": {
+       "stringValue": "lab-portal"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "container.image.name",
+      "value": {
+       "stringValue": "extorq/lab-portal"
+      }
+     },
+     {
+      "key": "container.image.tags",
+      "value": {
+       "arrayValue": {
+        "values": [
+         {
+          "stringValue": "2aa9e4797693"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "key": "container.id",
+      "value": {
+       "stringValue": "9a26595a7720f95398dbb763f3fd4974636295d1eebf0d9890d40b44512680ac"
+      }
+     },
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "container"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1795271558636168253",
+       "observedTimeUnixNano": "1795271558850960336",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.635Z\",\"level\":\"info\",\"service\":\"lab-portal\",\"event\":\"auth.login_succeeded\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"c7f0e470d49e4d9a9edfe22407df8c96\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":200,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":237.543}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271558636488669",
+       "observedTimeUnixNano": "1795271558851004378",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.636Z\",\"level\":\"info\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"c7f0e470d49e4d9a9edfe22407df8c96\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":200,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":237.953}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271558645898919",
+       "observedTimeUnixNano": "1795271558851004919",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.645Z\",\"level\":\"info\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"2c3ca17cd0954d9d9e4601057be94016\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/admin\",\"status\":200,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.158}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795271558653696378",
+       "observedTimeUnixNano": "1795271558851005419",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T14:32:38.653Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":null,\"src_ip\":\"10.244.0.1\",\"request_id\":\"af803e4c3d684ff089871f290d203447\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/b2-fixture-missing\",\"status\":404,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.092}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "audit"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "observedTimeUnixNano": "1795271567853446174",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"0f142b08-4ab6-422a-83b6-ef84d31f5ad4\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods/b2-fixture-barepod\",\"verb\":\"get\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"status\":\"Failure\",\"message\":\"pods \\\"b2-fixture-barepod\\\" not found\",\"reason\":\"NotFound\",\"details\":{\"name\":\"b2-fixture-barepod\",\"kind\":\"pods\"},\"code\":404},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.413127Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.414083Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853448132",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"d94c6bd3-0ae7-43de-9ba8-9a81a5edb72f\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps\",\"verb\":\"get\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"namespaces\",\"namespace\":\"extorq-apps\",\"name\":\"extorq-apps\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.414697Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.415512Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853448465",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Request\",\"auditID\":\"f9f03307-0755-45f7-9fba-bfddb734986c\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods?fieldManager=kubectl-client-side-apply\\u0026fieldValidation=Strict\",\"verb\":\"create\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":201},\"requestObject\":{\"kind\":\"Pod\",\"apiVersion\":\"v1\",\"metadata\":{\"name\":\"b2-fixture-barepod\",\"namespace\":\"extorq-apps\",\"labels\":{\"app.kubernetes.io/name\":\"b2-fixture-barepod\",\"extorq.io/purpose\":\"fixture-capture\"},\"annotations\":{\"kubectl.kubernetes.io/last-applied-configuration\":\"{\\\"apiVersion\\\":\\\"v1\\\",\\\"kind\\\":\\\"Pod\\\",\\\"metadata\\\":{\\\"annotations\\\":{},\\\"labels\\\":{\\\"app.kubernetes.io/name\\\":\\\"b2-fixture-barepod\\\",\\\"extorq.io/purpose\\\":\\\"fixture-capture\\\"},\\\"name\\\":\\\"b2-fixture-barepod\\\",\\\"namespace\\\":\\\"extorq-apps\\\"},\\\"spec\\\":{\\\"automountServiceAccountToken\\\":false,\\\"containers\\\":[{\\\"command\\\":[\\\"python3\\\",\\\"-I\\\",\\\"-c\\\",\\\"import time; print('SYNTHETIC FIXTURE: bare pod stdout line (B2 normaliser test)', flush=True); time.sleep(20)\\\"],\\\"image\\\":\\\"python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b\\\",\\\"imagePullPolicy\\\":\\\"IfNotPresent\\\",\\\"name\\\":\\\"printer\\\",\\\"resources\\\":{\\\"limits\\\":{\\\"cpu\\\":\\\"100m\\\",\\\"memory\\\":\\\"64Mi\\\"},\\\"requests\\\":{\\\"cpu\\\":\\\"10m\\\",\\\"memory\\\":\\\"16Mi\\\"}},\\\"securityContext\\\":{\\\"allowPrivilegeEscalation\\\":false,\\\"capabilities\\\":{\\\"drop\\\":[\\\"ALL\\\"]},\\\"readOnlyRootFilesystem\\\":true,\\\"runAsNonRoot\\\":true}}],\\\"enableServiceLinks\\\":false,\\\"restartPolicy\\\":\\\"Never\\\",\\\"securityContext\\\":{\\\"runAsGroup\\\":10001,\\\"runAsNonRoot\\\":true,\\\"runAsUser\\\":10001,\\\"seccompProfile\\\":{\\\"type\\\":\\\"RuntimeDefault\\\"}}}}\\n\"}},\"spec\":{\"containers\":[{\"name\":\"printer\",\"image\":\"python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b\",\"command\":[\"python3\",\"-I\",\"-c\",\"import time; print('SYNTHETIC FIXTURE: bare pod stdout line (B2 normaliser test)', flush=True); time.sleep(20)\"],\"resources\":{\"limits\":{\"cpu\":\"100m\",\"memory\":\"64Mi\"},\"requests\":{\"cpu\":\"10m\",\"memory\":\"16Mi\"}},\"terminationMessagePath\":\"/dev/termination-log\",\"terminationMessagePolicy\":\"File\",\"imagePullPolicy\":\"IfNotPresent\",\"securityContext\":{\"capabilities\":{\"drop\":[\"ALL\"]},\"runAsNonRoot\":true,\"readOnlyRootFilesystem\":true,\"allowPrivilegeEscalation\":false}}],\"restartPolicy\":\"Never\",\"terminationGracePeriodSeconds\":30,\"dnsPolicy\":\"ClusterFirst\",\"automountServiceAccountToken\":false,\"securityContext\":{\"runAsUser\":10001,\"runAsGroup\":10001,\"runAsNonRoot\":true,\"seccompProfile\":{\"type\":\"RuntimeDefault\"}},\"schedulerName\":\"default-scheduler\",\"enableServiceLinks\":false},\"status\":{}},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.416293Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.418922Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\",\"pod-security.kubernetes.io/enforce-policy\":\"baseline:latest\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853448674",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"54db94c1-5352-424a-8ebd-bd6a34061740\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods/b2-fixture-barepod/binding\",\"verb\":\"create\",\"user\":{\"username\":\"system:kube-scheduler\",\"groups\":[\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=7ee499d773d36fc498a8d45b3ba6459ccdbaa41ab15c5a3c51951f5d07bd6cce\"]}},\"sourceIPs\":[\"172.18.0.3\"],\"userAgent\":\"kube-scheduler/v1.37.0 (linux/arm64) kubernetes/f54c212/scheduler\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"uid\":\"e82a1eba-4e1e-4112-ad2b-5499ad38ba0c\",\"apiVersion\":\"v1\",\"subresource\":\"binding\"},\"responseStatus\":{\"metadata\":{},\"status\":\"Success\",\"code\":201},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.420101Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.421780Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"system:kube-scheduler\\\" of ClusterRole \\\"system:kube-scheduler\\\" to User \\\"system:kube-scheduler\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853449174",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"be62d360-d226-497d-85dc-065db217ff12\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods/b2-fixture-barepod/status\",\"verb\":\"patch\",\"user\":{\"username\":\"system:node:extorq-lab-control-plane\",\"groups\":[\"system:nodes\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=c9b973c9b0cb8f28a8201748b7166a71eaca7667beb46e12e99947a60928d9f4\"]}},\"sourceIPs\":[\"172.18.0.3\"],\"userAgent\":\"kubelet/v1.37.0 (linux/arm64) kubernetes/f54c212\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\",\"subresource\":\"status\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.426760Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.429811Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853449465",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"86553d4f-6656-4f21-ad32-f1713831cb19\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods/b2-fixture-barepod\",\"verb\":\"get\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.453314Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.454549Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853449674",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"e2537fd8-78b9-4053-8460-7ddbe1446a51\",\"stage\":\"ResponseStarted\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods?allowWatchBookmarks=true\\u0026fieldSelector=metadata.name%3Db2-fixture-barepod\\u0026resourceVersionMatch=NotOlderThan\\u0026sendInitialEvents=true\\u0026timeoutSeconds=528\\u0026watch=true\",\"verb\":\"watch\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.456249Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.456913Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853449924",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"f6d7644e-9865-40e4-917f-bbf4bf03f7d3\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods/b2-fixture-barepod/status\",\"verb\":\"patch\",\"user\":{\"username\":\"system:node:extorq-lab-control-plane\",\"groups\":[\"system:nodes\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=c9b973c9b0cb8f28a8201748b7166a71eaca7667beb46e12e99947a60928d9f4\"]}},\"sourceIPs\":[\"172.18.0.3\"],\"userAgent\":\"kubelet/v1.37.0 (linux/arm64) kubernetes/f54c212\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\",\"subresource\":\"status\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.501561Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.504061Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853450215",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"c9a83f17-234f-47b6-8d2d-02de65031196\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods/b2-fixture-barepod/status\",\"verb\":\"patch\",\"user\":{\"username\":\"system:node:extorq-lab-control-plane\",\"groups\":[\"system:nodes\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=c9b973c9b0cb8f28a8201748b7166a71eaca7667beb46e12e99947a60928d9f4\"]}},\"sourceIPs\":[\"172.18.0.3\"],\"userAgent\":\"kubelet/v1.37.0 (linux/arm64) kubernetes/f54c212\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\",\"subresource\":\"status\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.699994Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.702865Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853450340",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"e2537fd8-78b9-4053-8460-7ddbe1446a51\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods?allowWatchBookmarks=true\\u0026fieldSelector=metadata.name%3Db2-fixture-barepod\\u0026resourceVersionMatch=NotOlderThan\\u0026sendInitialEvents=true\\u0026timeoutSeconds=528\\u0026watch=true\",\"verb\":\"watch\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.456249Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.703992Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795271567853450757",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"006c2768-4c0c-4b31-acc1-5485a9e2345c\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods/b2-fixture-barepod\",\"verb\":\"get\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:32:47.735063Z\",\"stageTimestamp\":\"2026-11-21T14:32:47.736007Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "k8s.container.name",
+      "value": {
+       "stringValue": "printer"
+      }
+     },
+     {
+      "key": "k8s.container.restart_count",
+      "value": {
+       "stringValue": "0"
+      }
+     },
+     {
+      "key": "k8s.namespace.name",
+      "value": {
+       "stringValue": "extorq-apps"
+      }
+     },
+     {
+      "key": "k8s.pod.name",
+      "value": {
+       "stringValue": "b2-fixture-barepod"
+      }
+     },
+     {
+      "key": "k8s.pod.uid",
+      "value": {
+       "stringValue": "e82a1eba-4e1e-4112-ad2b-5499ad38ba0c"
+      }
+     },
+     {
+      "key": "k8s.pod.start_time",
+      "value": {
+       "stringValue": "2026-11-21T14:32:47Z"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "container.image.name",
+      "value": {
+       "stringValue": "python"
+      }
+     },
+     {
+      "key": "container.image.tags",
+      "value": {
+       "arrayValue": {
+        "values": [
+         {
+          "stringValue": "3.12-slim"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "key": "container.id",
+      "value": {
+       "stringValue": "a7382438489a70d894c2a67a832c696050184e969adf9402b4dfea429b46ce57"
+      }
+     },
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "container"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1795271567790027007",
+       "observedTimeUnixNano": "1795271567854055632",
+       "body": {
+        "stringValue": "SYNTHETIC FIXTURE: bare pod stdout line (B2 normaliser test)"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_b2-fixture-barepod_e82a1eba-4e1e-4112-ad2b-5499ad38ba0c/printer/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "audit"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "observedTimeUnixNano": "1795271588853171086",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"1d289910-49b6-48fc-bb59-f2451f1fe589\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-apps/pods/b2-fixture-barepod/status\",\"verb\":\"patch\",\"user\":{\"username\":\"system:node:extorq-lab-control-plane\",\"groups\":[\"system:nodes\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=c9b973c9b0cb8f28a8201748b7166a71eaca7667beb46e12e99947a60928d9f4\"]}},\"sourceIPs\":[\"172.18.0.3\"],\"userAgent\":\"kubelet/v1.37.0 (linux/arm64) kubernetes/f54c212\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-apps\",\"name\":\"b2-fixture-barepod\",\"apiVersion\":\"v1\",\"subresource\":\"status\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T14:33:08.448826Z\",\"stageTimestamp\":\"2026-11-21T14:33:08.452890Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -17,6 +17,19 @@ outside its registration is misconfigured or compromised, and accepting the
 rest would let it probe its boundary silently. The batch stays in the
 producer's outbox, the gateway answers 403, and an ``ingest_audit`` row is
 written (docs/data-flow.md, "Authorization").
+
+Service and instance ids must derive from the record's own fields
+(``identity.service_id(asset_id, kind, key)`` / ``identity.instance_id(service_id,
+kind, key)``); a mismatch is quarantined (``identity_mismatch``, F-19) so a producer
+cannot publish rows under another asset's service id.
+
+Any unexpected exception while processing ONE record (identity, redaction,
+row mapping, serialisation) quarantines that record with the exception type as
+reason; it never fails the batch (no 500 for a poison record, F-IC-1).
+
+A ``service_instance`` without ``asset_id`` cannot be authorized against the
+producer's asset patterns, so it is quarantined (``asset_unattributable``)
+rather than accepted unchecked or treated as a forged record.
 """
 
 from __future__ import annotations
@@ -31,7 +44,13 @@ from pydantic import ValidationError
 from extorq.common.redaction import redact_text, sanitize_untrusted, truncate_bytes
 from extorq.contracts.catalog import validate_event_semantics
 from extorq.contracts.event import SecurityEvent
-from extorq.contracts.identity import canonical_json, sha256_hex, stable_id
+from extorq.contracts.identity import (
+    canonical_json,
+    instance_id,
+    service_id,
+    sha256_hex,
+    stable_id,
+)
 from extorq.contracts.ingest import (
     INGEST_RECORD_ADAPTER,
     MAX_RECORD_BYTES,
@@ -39,6 +58,7 @@ from extorq.contracts.ingest import (
     RecordKind,
     record_identity,
 )
+from extorq.contracts.service import Service, ServiceInstance
 from extorq.ingest.registry import ProducerEntry
 from extorq.storage.rows import RowError, to_row
 
@@ -56,6 +76,8 @@ _TIME_FIELDS: dict[str, tuple[str, ...]] = {
     "scan_run": ("started_at", "finished_at"),
     "collector_health": ("reported_at", "last_attempt_at", "last_success_at"),
     "simulation_run": ("started_at", "finished_at"),
+    "service": ("first_seen", "last_seen", "last_telemetry_at"),
+    "service_instance": ("observed_at", "started_at"),
 }
 
 
@@ -200,8 +222,12 @@ def redact_record_data(kind: str, data: dict[str, Any]) -> int:
             if r.truncated:
                 provenance["truncated"] = True
     elif kind == "finding":
-        for key, limit in (("title", 256), ("description", 2048), ("evidence", 2048),
-                           ("remediation", 2048)):
+        for key, limit in (
+            ("title", 256),
+            ("description", 2048),
+            ("evidence", 2048),
+            ("remediation", 2048),
+        ):
             r.text(data, key, limit)
         r.mapping(data.get("attributes"), 2048, 512)
     elif kind == "scan_run":
@@ -223,6 +249,14 @@ def redact_record_data(kind: str, data: dict[str, Any]) -> int:
         r.mapping(data.get("attributes"), 2048, 512)
         if kind == "asset":
             r.mapping(data.get("labels"), 256, 256)
+    elif kind == "service":
+        r.text(data, "coverage_note", 2048)
+        r.text_list(data, "config_refs", 2048)
+        r.mapping(data.get("attributes"), 2048, 512)
+        for endpoint in data.get("endpoints") or []:
+            r.text(endpoint, "attribution_basis", 256)
+    elif kind == "service_instance":
+        r.mapping(data.get("attributes"), 2048, 512)
     return r.count
 
 
@@ -246,6 +280,81 @@ def _time_problem(record: IngestRecord, now: datetime, limits: Limits) -> str | 
     return None
 
 
+def identity_problem(record: IngestRecord) -> str | None:
+    """Reason when a service/instance id does not derive from the record's own fields."""
+    data = record.data
+    if isinstance(data, Service):
+        expected = service_id(data.asset_id, data.service_kind.value, data.service_key)
+        if data.service_id != expected:
+            return (
+                "identity_mismatch: service_id != service_id(asset_id, service_kind, service_key)"
+            )
+    elif isinstance(data, ServiceInstance):
+        expected = instance_id(data.service_id, data.instance_kind.value, data.instance_key)
+        if data.instance_id != expected:
+            return (
+                "identity_mismatch: instance_id != "
+                "instance_id(service_id, instance_kind, instance_key)"
+            )
+    return None
+
+
+def _check_and_key(
+    index: int,
+    record: IngestRecord,
+    producer: ProducerEntry,
+    batch_id: str,
+    now: datetime,
+    limits: Limits,
+) -> tuple[Candidate, int] | str:
+    """Steps 4-8 for one authorized record: a Candidate (+ redactions) or a quarantine reason."""
+    kind = record.kind
+    # 3b. identity binding (F-19): ids are computable from public facts, so a producer could
+    # otherwise publish rows carrying another asset's service id. Recompute them.
+    problem = identity_problem(record)
+    if problem is not None:
+        return problem
+    # 4. catalog semantics
+    if isinstance(record.data, SecurityEvent):
+        event = record.data
+        problem = validate_event_semantics(
+            event.event_type, event.category.value, event.source.source_type.value
+        )
+        if problem is not None:
+            return f"semantics: {problem}"
+    # 5. time sanity
+    problem = _time_problem(record, now, limits)
+    if problem is not None:
+        return f"time: {problem}"
+    # 6. redaction (on the JSON form) + re-validation
+    data_json = record.data.model_dump(mode="json")
+    count = redact_record_data(kind, data_json)
+    if count:
+        try:
+            record = INGEST_RECORD_ADAPTER.validate_python({"kind": kind, "data": data_json})
+        except ValidationError as exc:
+            return f"redaction_invalidated_record: {summarize_validation_error(exc)}"
+        data_json = record.data.model_dump(mode="json")
+    # 7. storage compatibility
+    try:
+        to_row(
+            kind, record.data, producer_id=producer.producer_id, batch_id=batch_id, ingested_at=now
+        )
+    except RowError as exc:
+        return f"storage_constraint: {exc}"
+    # 8. identity + canonical payload (both may raise on values canonical JSON refuses)
+    try:
+        candidate = Candidate(
+            index=index,
+            kind=kind,
+            record_key=record_identity(record),
+            payload=canonical_json({"kind": kind, "data": data_json}),
+        )
+    except (TypeError, ValueError) as exc:
+        return f"record_not_serialisable:{type(exc).__name__}"
+    return candidate, count
+
+
 def prepare_batch(
     raw_records: list[Any],
     producer: ProducerEntry,
@@ -263,8 +372,13 @@ def prepare_batch(
     def quarantine(index: int, raw: Any, reason: str, kind: str | None = None) -> None:
         excerpt, digest = make_excerpt(raw)
         out.quarantined.append(
-            QuarantineEntry(index=index, kind=kind if kind is not None else _raw_kind(raw),
-                            reason=clean_reason(reason), excerpt=excerpt, payload_sha256=digest)
+            QuarantineEntry(
+                index=index,
+                kind=kind if kind is not None else _raw_kind(raw),
+                reason=clean_reason(reason),
+                excerpt=excerpt,
+                payload_sha256=digest,
+            )
         )
 
     for index, raw in enumerate(raw_records):
@@ -285,54 +399,37 @@ def prepare_batch(
             continue
         kind = record.kind
         # 3. authorization (denies the batch)
-        denial = producer.authorize(record)
+        try:
+            denial = producer.authorize(record)
+        except Exception as exc:  # noqa: BLE001 - fail closed for this record only
+            quarantine(index, raw, f"authorization_error:{type(exc).__name__}", kind)
+            continue
         if denial is not None:
             denied_count += 1
             if denied_count <= MAX_DENIALS_REPORTED:
                 out.denials.append(f"record {index}: {clean_reason(denial, 200)}")
             continue
-        # 4. catalog semantics
-        if isinstance(record.data, SecurityEvent):
-            event = record.data
-            problem = validate_event_semantics(
-                event.event_type, event.category.value, event.source.source_type.value
+        if isinstance(record.data, ServiceInstance) and record.data.asset_id is None:
+            # Kind is authorized but the asset cannot be checked: never accept unchecked.
+            quarantine(
+                index,
+                raw,
+                "asset_unattributable: service_instance without asset_id "
+                "cannot be authorized against the producer's assets",
+                kind,
             )
-            if problem is not None:
-                quarantine(index, raw, f"semantics: {problem}", kind)
-                continue
-        # 5. time sanity
-        problem = _time_problem(record, now, limits)
-        if problem is not None:
-            quarantine(index, raw, f"time: {problem}", kind)
             continue
-        # 6. redaction (on the JSON form) + re-validation
-        data_json = record.data.model_dump(mode="json")
-        count = redact_record_data(kind, data_json)
-        if count:
-            try:
-                record = INGEST_RECORD_ADAPTER.validate_python({"kind": kind, "data": data_json})
-            except ValidationError as exc:
-                quarantine(index, raw, f"redaction_invalidated_record: "
-                                       f"{summarize_validation_error(exc)}", kind)
-                continue
-            data_json = record.data.model_dump(mode="json")
-            out.redactions += count
-        # 7. storage compatibility
         try:
-            to_row(kind, record.data, producer_id=producer.producer_id, batch_id=batch_id,
-                   ingested_at=now)
-        except RowError as exc:
-            quarantine(index, raw, f"storage_constraint: {exc}", kind)
+            result = _check_and_key(index, record, producer, batch_id, now, limits)
+        except Exception as exc:  # noqa: BLE001 - one poison record never fails the batch
+            quarantine(index, raw, f"record_processing_error:{type(exc).__name__}", kind)
             continue
-        # 8. identity
-        out.candidates.append(
-            Candidate(
-                index=index,
-                kind=kind,
-                record_key=record_identity(record),
-                payload=canonical_json({"kind": kind, "data": data_json}),
-            )
-        )
+        if isinstance(result, str):
+            quarantine(index, raw, result, kind)
+            continue
+        candidate, redactions = result
+        out.redactions += redactions
+        out.candidates.append(candidate)
     if denied_count > MAX_DENIALS_REPORTED:
         out.denials.append(f"(+{denied_count - MAX_DENIALS_REPORTED} more denied records)")
     return out

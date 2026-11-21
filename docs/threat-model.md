@@ -1,8 +1,9 @@
 # ExtorQ Threat Model
 
 Owner: agent F (security assurance). Status: **living document**, baseline of
-2026-11-21. It describes the system as built at that date. Each mitigation is
-marked:
+2026-11-21 (review pass 1), updated the same evening for contract schema 1.1
+(service-aware monitoring, PLAN section 10) and review pass 2. It describes the
+system as built at that date. Each mitigation is marked:
 
 * **implemented**: F has read the code or configuration that does it (file given);
 * **verified**: implemented, and F ran a check that exercised it (command in
@@ -19,7 +20,12 @@ ExtorQ is a single-operator lab SIEM running on one Apple Silicon Mac. It
 collects telemetry from four asset classes (the Mac itself, an Ubuntu VM, a kind
 Kubernetes cluster, a GitHub repository), stores it in ClickHouse, runs
 versioned SQL detections, builds evidence bundles and optionally asks two AI
-providers for advisory output.
+providers for advisory output. Since schema 1.1 every host and node is further
+broken down into **services** (host services, applications, Kubernetes
+workloads and Kubernetes Service objects) and **service instances**
+(processes, containers, Pods), discovered from evidence and monitored through
+per-service telemetry adapters ([architecture section 5](architecture.md#5-service-model-schema-11)).
+Threats specific to that model are T21 to T24.
 
 Assumptions:
 
@@ -48,6 +54,7 @@ the lab).
 | Asset | Where | Why it matters |
 |---|---|---|
 | Telemetry and evidence integrity | ClickHouse `extorq.events`, SQLite spool | Alerts and investigations are only as good as the evidence |
+| Service inventory and coverage state | `extorq.services`, `extorq.service_instances` | Analysts decide what is watched from it; a wrong "monitored" hides blind spots |
 | Alerts (authoritative) | `extorq.alerts`, `alert_evidence` | Written only by the detector; AI and analysts must not alter them |
 | AI provider keys | `.env` (user-owned), compose file secrets | Billable, third-party account access |
 | ClickHouse passwords | `var/secrets/clickhouse/<user>_password` | Database read/write per service |
@@ -155,7 +162,10 @@ flowchart LR
 
 1. Collectors on the Mac pull from their sources (native commands, SSH
    dispatcher, Kubernetes API, GitHub API, scanner containers), normalise to
-   the schema 1.0 contracts and send batches to the gateway over TLS.
+   the schema 1.1 contracts and send batches to the gateway over TLS. Host and
+   Kubernetes collectors also discover services from evidence (units, launchd
+   jobs, processes, listening sockets, known configuration, Kubernetes objects)
+   and send `service` / `service_instance` records and `service.*` events.
 2. The gateway authenticates the producer, validates and authorises every
    record, redacts free text, quarantines bad records and commits accepted
    records to the SQLite spool before answering 202.
@@ -265,12 +275,16 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
     (implemented: `backend/src/extorq/pipeline/spool.py`).
   * Rule runs record `missing_sources`; InvestigationContext records coverage
     and `gap_during_window` (contracts implemented; producers partial).
-  * Collector outbox buffering while the gateway is down (planned: A's SDK).
+  * Collector outbox buffering while the gateway is down: records and their
+    checkpoints are committed in one SQLite transaction; a batch id is reused
+    on retry so a lost `202` is answered as a replay; permanently refused
+    records go to `outbox_dead` and are counted in health (implemented:
+    `collectors/src/extorq_collectors/sdk/state.py`, `sender.py`, `runner.py`).
 * **Residual risk.** Health shows that data stopped; it cannot tell a
   malicious stop from an outage. Root on an asset can suppress selectively
   (drop only some lines).
 * **Verification.** Planned (A): `tests/failure/**` (gateway restart,
-  ClickHouse outage, spool replay).
+  ClickHouse outage, spool replay). Not yet present at review pass 2.
 
 ### T04 Collector credential theft (S I)
 
@@ -325,8 +339,8 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   values; the inventory collector must not store them (to verify with B2).
   `extorq-system` and `extorq-posture-lab` enforce PSA `privileged` (hostPath
   needs it): anyone able to create pods there can reach the node; only
-  cluster-admin can today. The deliberately weak posture workload can read node
-  logs (F-10).
+  cluster-admin can today. The deliberately weak posture workload now mounts a
+  dedicated empty node directory instead of `/var/log` (F-10 resolved).
 * **Verification.** `uv run pytest tests/security/test_security_lab_boundaries.py -q`.
   Planned (B2): `kubectl auth can-i --list --as=system:serviceaccount:extorq-system:extorq-inventory`.
 
@@ -356,9 +370,9 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   host loopback (including the VM and kind pods, F-01) can reach the ClickHouse
   HTTP interface; a password is still required, and `HOST IP` does not help
   because connections arrive from the proxy's private Docker address.
-* **Verification.** Static tests above. Planned (F, needs `STACK READY`): live
-  probe that each service user is denied outside its grants (for example
-  `extorq_ai` INSERT into `alerts`).
+* **Verification.** Static tests above; live probe of every service identity
+  (verified 2026-11-21: `uv run pytest tests/security/test_security_clickhouse_rbac_live.py -m integration -q`,
+  32 passed: default user refused, each user denied outside PLAN 4.4).
 
 ### T07 Malicious GitHub API content (T D)
 
@@ -488,6 +502,17 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   producer identity; a denial rejects the batch with 403 and is logged to
   `ingest_audit` (implemented: `registry.py`, `processing.py`; verified by F
   probe).
+* **Service records (schema 1.1).** A `ServiceInstance` may carry
+  `asset_id = None` and references its parent only through `service_id`; a
+  `SecurityEvent.service` reference names a `service_id` that the gateway cannot
+  tie to the event's asset without a lookup. Service ids are deterministic and
+  computable from public facts (asset id, kind, unit name). A producer could
+  therefore attach instances or events to another asset's service. Required
+  controls (A, in progress; tracked as F-19): reject `service_instance` records
+  without `asset_id` and authorise that asset; recompute `service_id` from
+  `(asset_id, service_kind, service_key)` and `instance_id` from its parts at
+  the gateway; and have the API join instances and events to a service by
+  service id **and** asset scope (D1).
 * **Residual risk.** Wildcard patterns (`k8s:extorq-lab*`, `github:*`) also
   match look-alike asset ids. Finding and inventory content is not checked
   against the producer's domain beyond the asset id. `asset_type` is not
@@ -535,8 +560,9 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   * Ubuntu cloud image verified by OpenPGP signature and SHA-256 (implemented
     and verified by B1: `infra/vm/vm.sh`, `infra/vm/trust/`).
   * CI actions must be pinned to full commit SHAs with least-privilege
-    permissions (enforced by `tests/security/test_security_ci.py` once
-    workflows exist; planned: A).
+    permissions, credentials not persisted, gitleaks over history and Trivy
+    filesystem scans (implemented: `.github/workflows/ci.yml`; verified:
+    `tests/security/test_security_ci.py`).
 * **Residual risk.** Digests pin content, not provenance (no signature
   verification of images); ExtorQ's own images are not yet scanned (C3 scans
   lab assets).
@@ -546,8 +572,9 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
 
 * **Threat.** A secret is committed, baked into an image or printed in docs,
   logs or fixtures.
-* **Mitigations.** `.gitignore` covers `.env*`, `var/`, keys and tokens
-  (verified: `test_security_repo_hygiene.py`; gaps F-08); `.dockerignore`
+* **Mitigations.** `.gitignore` covers `.env*`, `var/`, keys and tokens, and
+  since F-IC-2 also SSH private keys and kubeconfigs outside `var/` (verified:
+  `test_security_repo_hygiene.py`, `git check-ignore`); `.dockerignore`
   excludes `.env` and `var/` from the root build context (verified); compose
   passes secrets as files (verified); gitleaks over committable files and
   history with a positive control (verified:
@@ -569,7 +596,9 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
 * **Residual risk.** None known at the database layer; ReplacingMergeTree
   semantics mean a detector bug could overwrite an alert row (by design the
   detector owns alerts).
-* **Verification.** Planned live RBAC probe (T06).
+* **Verification.** Live RBAC probe: `extorq_ai` and `extorq_api_writer` are
+  denied INSERT on `alerts` (verified:
+  `tests/security/test_security_clickhouse_rbac_live.py`, 32 checks passed).
 
 ### T18 Lab assets reaching platform services (S I E)
 
@@ -612,6 +641,159 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   B1/B2/C1/C2 scripts); GitHub pushes need the lead's approval (PLAN 7).
 * **Verification.** Code review of `kind.sh`.
 
+### T21 Service adapters collecting sensitive data (I)
+
+* **Threat.** Service telemetry is richer and more sensitive than host logs:
+  FTP transfer logs and file contents, database query logs (literal values,
+  personal data), HTTP `Authorization` headers, cookies and query-string tokens,
+  application credentials in process command lines and configuration files,
+  secrets printed into container logs, DNS query logs (privacy), and passwords
+  that users type into a user-name prompt (sshd then logs
+  `Invalid user <the password>`). Once collected, such data reaches ClickHouse,
+  Grafana, the console and (sanitised) the AI providers.
+* **Impact.** Credential exposure along the whole pipeline and to third
+  parties; personal data retained in `events` for its 90-day TTL (and in
+  backups or exports made meanwhile).
+* **Mitigations.**
+  * Contract: services carry configuration **paths** only (`config_refs`), and
+    `ServiceInstance` has no command-line field (implemented:
+    `backend/src/extorq/contracts/service.py`).
+  * Every adapter declares `never_collects`; planned adapters (ftp,
+    postgresql, mysql, dns, redis) accept nothing and cannot parse, so they can
+    never emit telemetry (implemented: `collectors/src/extorq_collectors/services/base.py`,
+    `planned.py`; verified: `tests/security/test_security_service_adapters.py`,
+    which also enforces per-category minimums: FTP file contents and
+    credentials, database query text and credentials, HTTP Authorization,
+    cache values and secrets, DNS keys).
+  * Minimisation at the source where ExtorQ controls configuration: the lab
+    nginx logs `$uri` (never `$request_uri`/`$request`, bodies, cookies or
+    Authorization) and the lab portal logs routes without query strings and
+    never passwords (implemented: `infra/vm/files/nginx/extorq-lab.conf`,
+    `lab/apps/lab-portal/app.py`; verified for log formats by
+    `test_lab_web_server_log_formats_minimise_data`).
+  * macOS process arguments are not collected unless explicitly enabled, and
+    then redacted (implemented: `collectors/src/extorq_collectors/macos/inventory.py`).
+  * Gateway redaction of every free-text field of every record kind, including
+    `service` and `service_instance` (implemented:
+    `backend/src/extorq/ingest/processing.py`; verified:
+    `tests/security/test_security_ingest_redaction.py`).
+  * AI projection limited to service names, kinds and coverage (planned: E).
+* **Residual risk.** The VM dispatcher returns the first 256 characters of
+  every process's argument vector (`collect_processes` in
+  `infra/vm/files/extorq-collect-dispatch`; Linux lets any user read
+  `/proc/<pid>/cmdline`), and the Linux collector stores them, pattern-redacted,
+  in process inventory items and service instances (F-17). Redaction now covers
+  `--password <x>`, mysql `-p<x>`, `sshpass -p` and Authorization schemes, but
+  not `--requirepass <x>`, `redis-cli -a <x>`, `curl -u user:pass` or
+  `PGPASSWORD=<x>` (F-06, verified). Mistyped passwords in user-name fields and
+  secrets in container logs cannot be recognised reliably. The nginx error-log
+  query-string issue (F-23) is resolved: B1's HTTP adapters strip queries and
+  Referer values.
+* **Verification.** Tests above; F probe of `redact_text` (F-06);
+  `tests/security/test_security_adapter_canaries.py` feeds the nginx (access
+  and error), Apache and lab-portal adapters synthetic records with secrets in
+  query strings and Referer values and asserts none reach emitted events (with
+  a positive control).
+
+### T22 Port mis-attribution and misleading coverage (R I)
+
+* **Threat.** A port is attributed to the wrong service or product, or a
+  service is shown as monitored when ExtorQ does not actually see its
+  telemetry. Causes: well-known-port assumptions (anything on 21 is "FTP");
+  port forwarders (on the Mac, `127.0.0.1:2222` and `127.0.0.1:8088` belong to
+  `qemu-system-aarch64`, the compose ports to Docker Desktop's proxy, the kind
+  NodePort to the kind node container); missing privileges to see socket owners
+  (the VM collector account is unprivileged, so `ss -p` cannot name the owner
+  of root's listeners; macOS `lsof` sees only the operator's processes); and
+  coverage computed per adapter rather than per instance (a second `sshd`
+  started outside `ssh.service` would match the ssh adapter while its logs
+  never reach the journald stream the adapter reads).
+* **Impact.** A "monitored" badge hides a blind spot; exposure is misreported
+  (the VM's SSH appears to be a Mac service).
+* **Mitigations.** `PortAttribution` (`confirmed` requires an observed socket
+  owner; `inferred`; `unknown`) with a stated basis; `ServiceAdapter.matches()`
+  never uses ports; exposure is derived from the bind address only;
+  `classify_coverage` is deterministic and never reports a planned or
+  unmatched service as monitored (implemented: `contracts/service.py`,
+  `services/base.py`; verified:
+  `tests/security/test_security_service_adapters.py`). Journald-based adapters
+  trust a line only when the kernel-attested `_SYSTEMD_UNIT`, `_EXE` and UID
+  agree with the claimed program (implemented:
+  `collectors/src/extorq_collectors/linux/journal.py`, `http.py`).
+* **Implemented since pass 1.** On the VM, discovery binds processes and
+  sockets to systemd units through kernel-attested cgroups (`/proc/<pid>/cgroup`,
+  `ss -e --cgroup`), so a socket created inside `nginx.service` is `confirmed`
+  without root and processes in user sessions never become host services
+  (`collectors/src/extorq_collectors/linux/discovery.py`). On macOS, a port is
+  `confirmed` only for the observed owning pid, so QEMU and Docker Desktop's
+  backend appear as the owners of the forwarded ports
+  (`collectors/src/extorq_collectors/macos/services.py`).
+* **Residual risk.** Listeners whose owner or cgroup cannot be determined stay
+  unattributed at asset level and must be shown (F-21). Forwarder-owned
+  endpoints should be labelled as such so they are not read as sshd or nginx on
+  the Mac (F-20, Info).
+* **Verification.** Review of B1/B3 discovery (pass 2, pending). Demo check:
+  root-owned VM listeners show `unknown`/`inferred` attribution.
+
+### T23 Discovery spoofing by a compromised host (S T R)
+
+* **Threat.** A compromised asset feeds discovery misleading evidence. With
+  root: fake or deleted unit files, hidden processes and sockets (rootkit,
+  `hidepid`), forged configuration. Even without root: process names and
+  `argv[0]` are user-controlled (`exec -a`, `prctl(PR_SET_NAME)`), so a user can
+  run `/tmp/sshd` or `/dev/shm/nginx` (masquerading, MITRE ATT&CK T1036);
+  churn services to flood `service.*` events; or put injection payloads in
+  unit descriptions, Kubernetes labels and annotations.
+* **Impact.** Fake services listed as supported or monitored, real services
+  hidden, noisy inventories that bury real changes.
+* **Mitigations.**
+  * Service identities are scoped by asset and the gateway authorises each
+    record's asset against the producer, so a compromised asset can lie only
+    about itself (T12, F-19).
+  * Evidence is recorded on every service (`discovered_via`), so a
+    process-only service is distinguishable from a unit-backed one; a port never
+    proves a product (implemented: `services/base.py`).
+  * sshd, nginx and lab-portal telemetry is trusted only when journald's
+    kernel-attested fields agree (implemented: `linux/journal.py`); systemd
+    persistence changes are detected independently of discovery (VM-002,
+    implemented: `rules/linux/VM-002.*`).
+  * Bounded collection: the dispatcher caps processes (2000), listeners (1000)
+    and argument length (256); contract list lengths are bounded (implemented).
+  * Untrusted strings are sanitised end to end (T08).
+* **Residual risk.** Root on the asset controls everything discovery can see
+  (assumption: T01), including cgroup placement. Discovery does not verify
+  executables against the package manager. On the VM, an unprivileged user's
+  look-alike process stays in `user.slice` and never becomes a host service, but
+  its listener is only visible as unattributed. Recommendation F-21 (B1, B3):
+  surface unattributed listeners, flag process-only services with unexpected
+  paths, and bound `service.*` event churn per asset and cycle.
+* **Verification.** Review of B1/B3 discovery (pending); planned (B1) unit test
+  with a masquerading process fixture.
+
+### T24 Correlation and hierarchy confusion (R)
+
+* **Threat.** Correlation reads causation into temporal proximity, merges
+  unrelated activity through the shared NAT address (`10.0.2.2` for everything
+  the Mac sends to the VM) or the Docker gateway address, links assets without
+  identity evidence, or confuses a Kubernetes `Service` object with a host
+  operating-system service of the same name.
+* **Impact.** Wrong investigation narratives, which AI summaries can amplify.
+* **Mitigations.** Relationship types `direct`/`candidate`/`unestablished`
+  with explicit bases, including `shared_nat_source_ip` and the 1.1
+  service-aware bases (implemented: `backend/src/extorq/contracts/context.py`);
+  PLAN 10.1 rule 5 (proximity is never causation; cross-asset links need
+  identity evidence); `service_id` includes the service kind, so a Kubernetes
+  Service and a host service with the same key never share an identity
+  (implemented: `contracts/identity.py`; verified:
+  `test_kubernetes_service_never_shares_identity_with_host_service`).
+  CORR-002 reports ordered co-occurrence across web server, sshd and systemd
+  and states that it establishes neither causation nor a single actor
+  (implemented: `rules/correlation/CORR-002.yaml`, status experimental).
+* **Residual risk.** Readers may still treat a sequence as a chain; the console
+  must show relationship type and basis next to every link (D2).
+* **Verification.** Planned (C2): CORR-002 fixtures, including a negative case
+  where the same sequence spans different hosts that share only the NAT address.
+
 ## 6. Accepted residual risks
 
 1. The Mac operator account is the trust anchor (assumption 1).
@@ -621,6 +803,11 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
 5. The OTel collector runs as UID 0 with read-only host log mounts (T05).
 6. AI providers receive sanitised lab telemetry when enabled (T09).
 7. Console sessions are stateless (T11).
+8. Discovery and coverage reflect what an asset reports and what the
+   collector's privileges can see; a compromised asset can misreport its own
+   services (T22, T23).
+9. Command lines and logs may contain secrets that pattern redaction cannot
+   recognise (T21).
 
 ## 7. Verification matrix
 
@@ -635,7 +822,11 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
 | Rule SQL is a single parameterised read-only SELECT | `tests/security/test_security_rule_sql.py` | F |
 | API authentication and analyst-only mutations | `tests/security/test_security_api_authz.py` | F |
 | Prompt-injection corpus and sanitiser contract | `tests/security/test_security_prompt_injection_corpus.py` | F |
-| Live per-user ClickHouse privileges | planned (needs `STACK READY`) | F |
+| Redaction of every free-text field of every record kind | `tests/security/test_security_ingest_redaction.py` | F |
+| Adapter data minimisation, planned adapters silent, no port-based product inference | `tests/security/test_security_service_adapters.py` | F |
+| HTTP adapters strip query-string and Referer secrets | `tests/security/test_security_adapter_canaries.py` | F |
+| Service identities bound to the authorised asset (F-19) | `tests/security/test_security_service_identity_binding.py` (`xfail` until A lands F-IC-6) | F, A |
+| Live per-user ClickHouse privileges | `tests/security/test_security_clickhouse_rbac_live.py` (`integration`, 32 checks passed 2026-11-21) | F |
 | Gateway 401/403 with `ingest_audit`, spool durability | planned `tests/integration/platform`, `tests/failure` | A |
 
 ## 8. Open items for the lead
@@ -646,12 +837,23 @@ Planned or partial mitigations that this model relies on:
 2. Writer bounded retries and dead letter (A) for T03/T13; failure tests.
 3. Gateway integration tests: 401/403 + `ingest_audit` (A).
 4. Stale/missing states in console and Grafana (D1/D2) for T14.
-5. CI workflow with least-privilege permissions and SHA-pinned actions (A).
-6. Live RBAC probe (F, after `STACK READY`).
-7. Proposals F-IC-1 (NaN), F-IC-2 (`.gitignore`) in
-   `docs/team/interface-changes/F.md`; findings F-02, F-03, F-04, F-05, F-06,
-   F-09, F-10 in `docs/team/status/F.md`.
+5. CI workflow with least-privilege permissions and SHA-pinned actions (A):
+   done (`.github/workflows/ci.yml`).
+6. Live RBAC probe (F): done, 32 checks passed
+   (`tests/security/test_security_clickhouse_rbac_live.py`).
+7. Proposals F-IC-1 (NaN) and F-IC-2 (`.gitignore`) were merged by the lead
+   (schema 1.1). Open findings in `docs/team/status/F.md`: F-02, F-03, F-04,
+   F-05, F-06, F-09, F-10, and from pass 2 F-16 onwards.
+8. Service model: identity recomputation and asset-scoped joins (F-19, A and
+   D1); command-line minimisation on the VM (F-17, B1); per-instance coverage
+   and forwarder-aware attribution (F-20, B1/B3); masquerading flags and churn
+   bounds (F-21, B1/B3); query-string stripping in the nginx error adapter
+   (F-23, B1); service summaries limited to names, kinds and coverage in the
+   AI projection (E).
 
 ## 9. Change log
 
 * 2026-11-21: baseline (agent F) after review pass 1.
+* 2026-11-21 (evening): schema 1.1 service model (T21 to T24, service records
+  in T12), status updates after review pass 2 (T03 outbox implemented, T16
+  `.gitignore` gaps closed), new verification rows.

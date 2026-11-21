@@ -25,7 +25,7 @@ export function AlertRows({
         <TableRow>
           <TableHead className="w-24">Severity</TableHead>
           <TableHead>Alert</TableHead>
-          {showAsset ? <TableHead className="hidden lg:table-cell">Asset</TableHead> : null}
+          {showAsset ? <TableHead className="hidden w-44 lg:table-cell">Asset</TableHead> : null}
           <TableHead className="text-right">Last seen</TableHead>
           <TableHead className="hidden text-right sm:table-cell">State</TableHead>
         </TableRow>
@@ -38,7 +38,7 @@ export function AlertRows({
               <TableCell className="align-top pt-3">
                 <SeverityTag severity={alert.severity} />
               </TableCell>
-              <TableCell className="max-w-0 py-2.5 whitespace-normal">
+              <TableCell className="min-w-64 py-2.5 whitespace-normal">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="font-mono text-xs text-muted-foreground">{alert.rule_id}</span>
                   {href ? (

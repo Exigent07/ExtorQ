@@ -1,5 +1,5 @@
 rule_id: VM-002
-version: 1.0.0
+version: 1.1.0
 title: New or modified systemd unit (persistence)
 description: >-
   A systemd unit file appeared or changed in a persistence location on a Linux host (or an
@@ -29,6 +29,8 @@ dedup:
 group_by: [asset_id, unit_path, sha256]
 params:
   audit_key: extorq_systemd
+  # auditd watch hits that remove the file (cleanup, uninstall) do not corroborate a write.
+  deletion_syscalls: [unlink, unlinkat, rmdir]
   # Exact unit file paths expected to change (e.g. managed by configuration management).
   allowlist_paths: []
   # Unit names whose enablement is expected.
@@ -43,7 +45,8 @@ blind_spots:
     auditd still records the write but this rule triggers on the inventory diff only.
   - Persistence through other mechanisms (cron, shell profiles, rc.local, timers outside
     watched directories, user units outside the collected paths).
-  - Allowlisting is path-based: an attacker able to write an allowlisted unit evades this
+  - >-
+    Allowlisting is path-based: an attacker able to write an allowlisted unit evades this
     rule (config.file.changed monitoring of that path is the compensating control).
   - Without auditd (missing_sources), the writer process is unknown and confidence is medium.
 references:
@@ -61,7 +64,9 @@ tests:
     alerts: 1
     confidence: high
   - name: unit-modified-inventory-only
-    description: Existing unit content changed; no auditd event (optional source absent).
+    description: >-
+      Existing unit content changed; the only auditd hit on the path is a deletion (unlinkat),
+      which does not corroborate the write.
     fixture: tests/VM-002/positive_modified_inventory_only.jsonl
     expect: alert
     alerts: 1

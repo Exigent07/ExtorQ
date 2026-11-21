@@ -168,11 +168,30 @@ class Spool:
         with self._lock:
             self._conn.close()
 
+    #: Read-only pragmas exposed for diagnostics/tests (explicit allow-list, F-05).
+    READABLE_PRAGMAS = frozenset(
+        {
+            "journal_mode",
+            "synchronous",
+            "busy_timeout",
+            "user_version",
+            "foreign_keys",
+            "page_count",
+            "page_size",
+            "freelist_count",
+        }
+    )
+
     def pragma(self, name: str) -> Any:
-        if not name.isidentifier():
-            raise ValueError("invalid pragma name")
+        if name not in self.READABLE_PRAGMAS:
+            raise ValueError("pragma not in the allow-list")
         with self._lock:
-            return self._conn.execute(f"PRAGMA {name}").fetchone()[0]
+            # SQLite cannot bind pragma names; name is from READABLE_PRAGMAS only.
+            sql = f"PRAGMA {name}"
+            cursor = self._conn.execute(  # extorq: sql-reviewed pragma name from allow-list
+                sql
+            )
+            return cursor.fetchone()[0]
 
     @staticmethod
     def _incr(conn: sqlite3.Connection, name: str, amount: int) -> None:
@@ -229,15 +248,17 @@ class Spool:
             ).fetchone()
             if existing is not None:
                 if existing[0] != content_sha256:
-                    return CommitOutcome(replayed=True, result=json.loads(existing[1]),
-                                         conflict=True)
+                    return CommitOutcome(
+                        replayed=True, result=json.loads(existing[1]), conflict=True
+                    )
                 self._incr(conn, "replayed_batches_total", 1)
                 return CommitOutcome(replayed=True, result=json.loads(existing[1]))
             accepted = duplicates = 0
             for rec in records:
                 if rec.dedup:
                     cur = conn.execute(
-                        "INSERT OR IGNORE INTO dedup(kind, record_key, first_seen) VALUES (?, ?, ?)",
+                        "INSERT OR IGNORE INTO dedup(kind, record_key, first_seen) "
+                        "VALUES (?, ?, ?)",
                         (rec.kind, rec.record_key, now),
                     )
                     if cur.rowcount == 0:
@@ -251,8 +272,13 @@ class Spool:
             conn.execute(
                 "INSERT INTO batches(producer_id, batch_id, content_sha256, received_ts, result) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (producer_id, batch_id, content_sha256, now,
-                 json.dumps(result, sort_keys=True, separators=(",", ":"))),
+                (
+                    producer_id,
+                    batch_id,
+                    content_sha256,
+                    now,
+                    json.dumps(result, sort_keys=True, separators=(",", ":")),
+                ),
             )
             self._incr(conn, "accepted_total", accepted)
             self._incr(conn, "duplicate_total", duplicates)
@@ -263,8 +289,12 @@ class Spool:
 
     @staticmethod
     def _insert_record(
-        conn: sqlite3.Connection, rec: NewRecord, producer_id: str, batch_id: str,
-        ingested_at: str, now: float,
+        conn: sqlite3.Connection,
+        rec: NewRecord,
+        producer_id: str,
+        batch_id: str,
+        ingested_at: str,
+        now: float,
     ) -> None:
         conn.execute(
             "INSERT INTO records(kind, record_key, producer_id, batch_id, ingested_at, "
@@ -339,8 +369,9 @@ class Spool:
 
     # ── writer side ───────────────────────────────────────────────────
 
-    def fetch_ready(self, limit: int, now: float | None = None,
-                    max_bytes: int = 16 * 1024 * 1024) -> list[SpoolRow]:
+    def fetch_ready(
+        self, limit: int, now: float | None = None, max_bytes: int = 16 * 1024 * 1024
+    ) -> list[SpoolRow]:
         """Oldest ready records: at most ``limit`` rows and ~``max_bytes`` of payload."""
         now = time.time() if now is None else now
         rows: list[SpoolRow] = []
@@ -365,8 +396,9 @@ class Spool:
             row = self._conn.execute("SELECT min(next_attempt_at) FROM records").fetchone()
         return None if row is None or row[0] is None else float(row[0])
 
-    def delete(self, seqs: Sequence[int], *, written: int | None = None,
-               last_write_ms: int | None = None) -> None:
+    def delete(
+        self, seqs: Sequence[int], *, written: int | None = None, last_write_ms: int | None = None
+    ) -> None:
         """Delete delivered records (call only after ClickHouse acknowledged them)."""
         if not seqs:
             return
@@ -388,8 +420,9 @@ class Spool:
             )
             self._incr(conn, "write_errors_total", 1)
 
-    def fail(self, rows: Sequence[SpoolRow], next_attempt_at: float, error: str,
-             max_attempts: int) -> int:
+    def fail(
+        self, rows: Sequence[SpoolRow], next_attempt_at: float, error: str, max_attempts: int
+    ) -> int:
         """Permanent-looking failure: consume an attempt; dead-letter when exhausted.
 
         Returns the number of records moved to the dead-letter table.
@@ -406,8 +439,18 @@ class Spool:
                         "INSERT INTO dead_letter(seq, kind, record_key, producer_id, batch_id, "
                         "ingested_at, payload, attempts, error, failed_ts) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (row.seq, row.kind, row.record_key, row.producer_id, row.batch_id,
-                         row.ingested_at, row.payload, attempts, error, now),
+                        (
+                            row.seq,
+                            row.kind,
+                            row.record_key,
+                            row.producer_id,
+                            row.batch_id,
+                            row.ingested_at,
+                            row.payload,
+                            attempts,
+                            error,
+                            now,
+                        ),
                     )
                     conn.execute("DELETE FROM records WHERE seq = ?", (row.seq,))
                     moved += 1

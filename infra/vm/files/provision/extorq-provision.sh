@@ -66,6 +66,17 @@ chown root:root /etc/ssh/authorized_keys /etc/ssh/authorized_keys/extorq-collect
 chmod 0755 /etc/ssh/authorized_keys
 chmod 0644 /etc/ssh/authorized_keys/extorq-collector
 
+# ── PAM: no dynamic MOTD for the collector account ──
+# pam_motd runs /etc/update-motd.d/* as root on every session open, which the
+# extorq_root_exec audit rule records (~40 execve per collector connection). The
+# collector never reads a MOTD, so the two pam_motd lines are skipped for it only.
+if ! grep -q 'extorq-collector: skip pam_motd' /etc/pam.d/sshd; then
+  sed -i '/^session[[:space:]]\+optional[[:space:]]\+pam_motd.so[[:space:]]\+motd=\/run\/motd.dynamic/i\
+# extorq-collector: skip pam_motd (ExtorQ provisioning)\
+session [success=2 default=ignore] pam_succeed_if.so quiet user = extorq-collector' /etc/pam.d/sshd
+  log "pam_motd skipped for extorq-collector"
+fi
+
 # ── sshd: drop-ins readable for posture checks (no secrets in them) ──
 chmod 0644 /etc/ssh/sshd_config.d/*.conf
 sshd -t

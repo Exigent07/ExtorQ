@@ -9,8 +9,11 @@ Sources (all non-privileged, read-only):
   launchd services therefore show ``launchd:1``. IPv6 addresses can be
   truncated in this output; such addresses are kept verbatim and flagged.
 * ``/bin/ps -axww -o pid=,ppid=,uid=,user=,lstart=,comm=``: process snapshot.
-  ``comm`` is the executable path. Full arguments are NOT collected by default
-  (privacy); ``include_process_args`` adds a redacted ``args`` column.
+  ``comm`` is argv[0] as the process set it (often, but not always, a path; it is
+  not verified). The collector adds the kernel-reported executable path from
+  ``proc_pidpath`` (:mod:`extorq_collectors.macos.procinfo`) when available.
+  Full arguments are NOT collected by default (privacy); ``include_process_args``
+  adds a redacted ``args`` column.
 * ``/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN`` / ``-iUDP`` (field output): fallback
   when netstat returns an empty socket table. On macOS 27 the kernel withholds
   the socket table from processes that have a live ad-hoc-signed ancestor (such
@@ -31,12 +34,14 @@ import ipaddress
 import json
 import os
 import re
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
 from extorq.contracts import (
+    Actor,
+    ActorType,
     InventoryItem,
     InventoryItemType,
     Network,
@@ -44,6 +49,7 @@ from extorq.contracts import (
     ProcessInfo,
     Resource,
     SecurityEvent,
+    ServiceRef,
     SourceType,
 )
 from extorq.contracts.identity import canonical_json, sha256_hex
@@ -447,8 +453,20 @@ class ProcessRow:
     uid: int
     user: str
     started_at: datetime | None
-    executable: str
+    #: ``ps -o comm``: argv[0] as chosen by the process itself (unverified).
+    command: str
+    #: Executable path reported by the kernel (``proc_pidpath``), when available.
+    path: str | None = None
     args: str | None = None
+
+    @property
+    def executable(self) -> str:
+        """Verified kernel path when known, else the (unverified) ps command."""
+        return self.path or self.command
+
+    @property
+    def verified(self) -> bool:
+        return self.path is not None
 
     @property
     def name(self) -> str:
@@ -468,12 +486,21 @@ class ProcessRow:
                 "user": self.user,
                 "name": self.name,
                 "executable": self.executable,
+                "executable_verified": self.verified,
+                "command": self.command if self.command != self.executable else None,
                 "started_at": self.started_at.isoformat().replace("+00:00", "Z")
                 if self.started_at
                 else None,
                 "args": self.args,
             }
         )
+
+
+def with_verified_paths(
+    rows: list[ProcessRow], resolve: Callable[[int], str | None]
+) -> list[ProcessRow]:
+    """Attach kernel-reported executable paths (see :mod:`extorq_collectors.macos.procinfo`)."""
+    return [replace(row, path=resolve(row.pid)) for row in rows]
 
 
 def parse_lstart(value: str) -> datetime | None:
@@ -498,7 +525,7 @@ def parse_ps(text: str) -> list[ProcessRow]:
                 uid=int(match.group("uid")),
                 user=match.group("user"),
                 started_at=parse_lstart(match.group("lstart")),
-                executable=match.group("comm"),
+                command=match.group("comm"),
             )
         )
         if len(rows) >= MAX_PROCESSES:
@@ -642,8 +669,14 @@ def listener_event(
     *,
     observed_at: datetime,
     snapshot: str,
+    service: ServiceRef | None = None,
+    extra_attributes: Mapping[str, Any] | None = None,
 ) -> SecurityEvent:
-    """``network.listener.opened`` (kind=opened) or ``network.listener.closed``."""
+    """``network.listener.opened`` (kind=opened) or ``network.listener.closed``.
+
+    ``service`` is set only when the socket owner (pid) was observed and belongs to
+    exactly one discovered service (PortAttribution ``confirmed``).
+    """
     if listener is not None:
         protocol, address, port = listener.protocol, listener.address, listener.port
         valid = listener.address_valid
@@ -687,6 +720,8 @@ def listener_event(
             executable=executables[0] if len(executables) == 1 else None,
         )
     event_type = "network.listener.opened" if kind == "opened" else "network.listener.closed"
+    if extra_attributes:
+        attrs = {**attrs, **{k: v for k, v in extra_attributes.items() if v is not None}}
     who = f" by {', '.join(names[:4])}" if names else ""
     return make_event(
         ctx=ctx,
@@ -703,8 +738,103 @@ def listener_event(
         network=network,
         process=process,
         attributes=attrs,
+        service=service,
     )
 
 
 def now_utc() -> datetime:  # pragma: no cover - trivial
     return datetime.now(UTC)
+
+
+# ── local accounts (dscl) ────────────────────────────────────────────
+
+DSCL_USERS_UID = ["/usr/bin/dscl", ".", "-list", "/Users", "UniqueID"]
+DSCL_USERS_SHELL = ["/usr/bin/dscl", ".", "-list", "/Users", "UserShell"]
+MAX_ACCOUNTS = 2000
+_NO_LOGIN_SHELLS = frozenset({"/usr/bin/false", "/bin/false", "/sbin/nologin", "/usr/sbin/nologin"})
+_ACCOUNT_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,254}$")
+
+
+def parse_dscl_list(text: str) -> dict[str, str]:
+    """``dscl . -list /Users <Attribute>`` -> {record name: value} (value may contain spaces)."""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2 or not _ACCOUNT_NAME.match(parts[0]):
+            continue
+        out[parts[0]] = parts[1].strip()
+        if len(out) >= MAX_ACCOUNTS:
+            break
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class Account:
+    """A local account: short name, UID and login shell only (RealName is never read)."""
+
+    name: str
+    uid: int | None
+    shell: str | None
+
+    @property
+    def system_account(self) -> bool:
+        return self.name.startswith("_") or (self.uid is not None and self.uid < 500)
+
+    @property
+    def can_login(self) -> bool | None:
+        if self.shell is None:
+            return None
+        return self.shell not in _NO_LOGIN_SHELLS
+
+    def attributes(self) -> dict[str, Any]:
+        return bounded_attributes(
+            {
+                "uid": self.uid,
+                "shell": self.shell,
+                "system_account": self.system_account,
+                "login_shell": self.can_login,
+            }
+        )
+
+    def summary(self) -> dict[str, Any]:
+        return {"uid": self.uid, "shell": self.shell}
+
+
+def accounts_from(uid_text: str, shell_text: str | None) -> dict[str, Account]:
+    uids = parse_dscl_list(uid_text)
+    shells = parse_dscl_list(shell_text) if shell_text is not None else {}
+    accounts: dict[str, Account] = {}
+    for name, uid_value in uids.items():
+        uid = int(uid_value) if re.fullmatch(r"-?\d{1,10}", uid_value) else None
+        accounts[name] = Account(name=name, uid=uid, shell=shells.get(name))
+    return accounts
+
+
+def account_event(
+    kind: str,
+    name: str,
+    data: Mapping[str, Any],
+    ctx: SourceContext,
+    *,
+    observed_at: datetime,
+    snapshot: str,
+) -> SecurityEvent:
+    """``account.user.created`` (kind=created) or ``account.user.deleted`` (snapshot diff)."""
+    uid = data.get("uid") if isinstance(data.get("uid"), int) else None
+    shell = data.get("shell") if isinstance(data.get("shell"), str) else None
+    account = Account(name=name, uid=uid, shell=shell)
+    return make_event(
+        ctx=ctx,
+        event_type=f"account.user.{kind}",
+        source_type=SOURCE,
+        native_key=f"account:{name}:{kind}:{uid}:{snapshot}",
+        event_time=observed_at,
+        observed_time=observed_at,
+        parser=PARSER,
+        message=f"local account {kind}: {name} (uid {uid if uid is not None else 'unknown'})",
+        action=f"account_{kind}",
+        outcome=Outcome.SUCCESS,
+        actor=Actor(type=ActorType.USER, name=name[:256], id=str(uid) if uid is not None else None),
+        resource=Resource(type="local_account", name=name[:256]),
+        attributes=account.attributes(),
+    )

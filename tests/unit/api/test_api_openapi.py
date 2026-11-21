@@ -28,6 +28,10 @@ EXPECTED_OPERATIONS = {
     ("get", "/api/v1/health"),
     ("get", "/api/v1/timeseries/alerts"),
     ("get", "/api/v1/timeseries/events"),
+    # Service-aware monitoring (PLAN section 10, schema 1.1)
+    ("get", "/api/v1/assets/{asset_id}/services"),
+    ("get", "/api/v1/services"),
+    ("get", "/api/v1/services/{service_id}"),
 }
 
 

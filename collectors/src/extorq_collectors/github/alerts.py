@@ -54,6 +54,16 @@ def _severity(value: object, default: Severity = Severity.MEDIUM) -> Severity:
     return default
 
 
+def _valid_cvss(value: object) -> bool:
+    """A usable CVSS base score: a real number in (0, 10] (bool excluded)."""
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and value == value  # not NaN
+        and 0 < value <= 10
+    )
+
+
 def _number(alert: Mapping[str, Any]) -> int | None:
     number = alert.get("number")
     return number if isinstance(number, int) and number >= 0 else None
@@ -77,20 +87,12 @@ def dependabot_finding(alert: Mapping[str, Any]) -> FindingDraft | None:
     severities = as_dict(advisory.get("cvss_severities"))
     for key in ("cvss_v4", "cvss_v3"):
         entry = severities.get(key)
-        if (
-            isinstance(entry, Mapping)
-            and isinstance(entry.get("score"), int | float)
-            and entry["score"] > 0
-        ):
+        if isinstance(entry, Mapping) and _valid_cvss(entry.get("score")):
             cvss = float(entry["score"])
             break
     if cvss is None:
         legacy = advisory.get("cvss")
-        if (
-            isinstance(legacy, Mapping)
-            and isinstance(legacy.get("score"), int | float)
-            and legacy["score"] > 0
-        ):
+        if isinstance(legacy, Mapping) and _valid_cvss(legacy.get("score")):
             cvss = float(legacy["score"])
     summary = _str(advisory.get("summary"), 200) or "Dependabot alert"
     return FindingDraft(

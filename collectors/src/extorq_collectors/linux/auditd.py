@@ -37,7 +37,6 @@ from extorq.contracts import (
     SecurityEvent,
     SourceType,
 )
-
 from extorq_collectors.linux.common import ParseContext, build_event, clean, redact_clean, to_ms
 
 PARSER_AUDIT = "linux-auditd"
@@ -56,8 +55,9 @@ _ARG_RE = re.compile(r"^a(?P<idx>\d{1,4})(?:\[(?P<part>\d{1,4})\])?$")
 _HEX_STRING_FIELDS = frozenset({"name", "exe", "comm", "cwd", "proctitle", "key"})
 #: Watch keys deployed by infra/vm/files/audit/extorq.rules (any other extorq_* key is
 #: treated as a watch as well).
-WATCH_KEYS = frozenset({"extorq_systemd", "extorq_sshd", "extorq_sudoers", "extorq_identity",
-                        "extorq_cron"})
+WATCH_KEYS = frozenset(
+    {"extorq_systemd", "extorq_sshd", "extorq_sudoers", "extorq_identity", "extorq_cron"}
+)
 EXEC_KEY = "extorq_root_exec"
 
 
@@ -91,7 +91,9 @@ class AuditRecord:
         raw = self.fields.get(key)
         if raw is None:
             return None
-        hex_ok = key in _HEX_STRING_FIELDS or (self.type == "EXECVE" and _ARG_RE.match(key) is not None)
+        hex_ok = key in _HEX_STRING_FIELDS or (
+            self.type == "EXECVE" and _ARG_RE.match(key) is not None
+        )
         return decode_value(key, raw, hex_allowed=hex_ok)
 
     def enriched_value(self, key: str) -> str | None:
@@ -108,9 +110,17 @@ def parse_record(line: str, offset: int = 0) -> AuditRecord | None:
     for kv in _KV_RE.finditer(body):
         fields.setdefault(kv.group("key"), kv.group("value"))
     enriched = {kv.group("key"): kv.group("value") for kv in _KV_RE.finditer(enriched_text)}
-    return AuditRecord(type=match.group("type"), sec=int(match.group("sec")), ms=int(match.group("ms")),
-                       serial=int(match.group("serial")), node=match.group("node"), fields=fields,
-                       enriched=enriched, offset=offset, line=line)
+    return AuditRecord(
+        type=match.group("type"),
+        sec=int(match.group("sec")),
+        ms=int(match.group("ms")),
+        serial=int(match.group("serial")),
+        node=match.group("node"),
+        fields=fields,
+        enriched=enriched,
+        offset=offset,
+        line=line,
+    )
 
 
 @dataclass
@@ -140,7 +150,7 @@ class AuditGroup:
     def complete(self) -> bool:
         return not self.is_syscall or self.first("PROCTITLE") is not None
 
-    def keys(self) -> list[str]:
+    def audit_keys(self) -> list[str]:
         syscall = self.first("SYSCALL")
         if syscall is None:
             return []
@@ -173,8 +183,13 @@ def group_records(lines: list[tuple[int, str]]) -> tuple[list[AuditGroup], int]:
         key = (record.node, record.sec, record.ms, record.serial)
         group = groups.get(key)
         if group is None:
-            group = AuditGroup(node=record.node, sec=record.sec, ms=record.ms,
-                               serial=record.serial, first_offset=offset)
+            group = AuditGroup(
+                node=record.node,
+                sec=record.sec,
+                ms=record.ms,
+                serial=record.serial,
+                first_offset=offset,
+            )
             groups[key] = group
         if len(group.records) < MAX_GROUP_RECORDS:
             group.records.append(record)
@@ -214,7 +229,8 @@ def _exec_args(record: AuditRecord) -> list[str]:
 def _common(group: AuditGroup, ctx: ParseContext) -> dict[str, Any]:
     """Fields shared by watch and exec events."""
     syscall = group.first("SYSCALL")
-    assert syscall is not None
+    if syscall is None:
+        raise ValueError("audit group without SYSCALL record")
     cwd_record = group.first("CWD")
     proctitle_record = group.first("PROCTITLE")
     auid = _int(syscall.get("auid"))
@@ -223,8 +239,11 @@ def _common(group: AuditGroup, ctx: ParseContext) -> dict[str, Any]:
     if auid is None or auid == AUID_UNSET:
         actor = Actor(type=ActorType.SYSTEM)
     else:
-        actor = Actor(type=ActorType.USER, id=str(auid),
-                      name=clean(auid_name) if auid_name and auid_name != "unset" else None)
+        actor = Actor(
+            type=ActorType.USER,
+            id=str(auid),
+            name=clean(auid_name) if auid_name and auid_name != "unset" else None,
+        )
     proctitle = proctitle_record.get("proctitle") if proctitle_record else None
     safe_title, _ = redact_clean(proctitle, 2048)
     success = syscall.get("success")
@@ -236,8 +255,11 @@ def _common(group: AuditGroup, ctx: ParseContext) -> dict[str, Any]:
         "cwd": cwd_record.get("cwd") if cwd_record else None,
         "proctitle": safe_title,
         "raw_title": proctitle,
-        "outcome": Outcome.SUCCESS if success == "yes" else
-        Outcome.FAILURE if success == "no" else Outcome.UNKNOWN,
+        "outcome": Outcome.SUCCESS
+        if success == "yes"
+        else Outcome.FAILURE
+        if success == "no"
+        else Outcome.UNKNOWN,
         "is_self": ctx.self_uid is not None and auid == ctx.self_uid,
         "process": ProcessInfo(
             pid=_int(syscall.get("pid")),
@@ -276,20 +298,25 @@ def _raw(group: AuditGroup) -> str:
 def watch_event(group: AuditGroup, key: str, ctx: ParseContext, *, complete: bool) -> SecurityEvent:
     common = _common(group, ctx)
     paths = group.all("PATH")
-    primary = next((p for p in paths if p.get("nametype") not in ("PARENT",)), None) or \
-        (paths[0] if paths else None)
+    primary = next((p for p in paths if p.get("nametype") not in ("PARENT",)), None) or (
+        paths[0] if paths else None
+    )
     path = _abs_path(primary.get("name"), common["cwd"]) if primary else None
-    path_list = [f"{p.get('nametype') or '?'}:{_abs_path(p.get('name'), common['cwd']) or '?'}"
-                 for p in paths][:16]
+    path_list = [
+        f"{p.get('nametype') or '?'}:{_abs_path(p.get('name'), common['cwd']) or '?'}"
+        for p in paths
+    ][:16]
     attrs = dict(common["base_attrs"])
-    attrs.update({
-        "audit_key": key,
-        "nametype": primary.get("nametype") if primary else None,
-        "inode": _int(primary.get("inode")) if primary else None,
-        "mode": primary.get("mode") if primary else None,
-        "paths": path_list,
-        "audit_complete": None if complete else False,
-    })
+    attrs.update(
+        {
+            "audit_key": key,
+            "nametype": primary.get("nametype") if primary else None,
+            "inode": _int(primary.get("inode")) if primary else None,
+            "mode": primary.get("mode") if primary else None,
+            "paths": path_list,
+            "audit_complete": None if complete else False,
+        }
+    )
     syscall_name = attrs.get("syscall")
     return build_event(
         ctx,
@@ -302,11 +329,14 @@ def watch_event(group: AuditGroup, key: str, ctx: ParseContext, *, complete: boo
         action=f"audit.{syscall_name}" if syscall_name else "audit.watch",
         outcome=common["outcome"],
         actor=common["actor"],
-        resource=Resource(type="file", path=clean(path, 2048),
-                          name=clean(path.rsplit("/", 1)[-1]) if path else None),
+        resource=Resource(
+            type="file",
+            path=clean(path, 2048),
+            name=clean(path.rsplit("/", 1)[-1]) if path else None,
+        ),
         process=common["process"],
         message=f"auditd {key}: {syscall_name or '?'} {path or '?'} by "
-                f"{common['actor'].name or attrs['auid']} via {common['process'].name or '?'}",
+        f"{common['actor'].name or attrs['auid']} via {common['process'].name or '?'}",
         raw=_raw(group),
         attributes=attrs,
         sim_texts=(path, common["raw_title"]),
@@ -321,11 +351,13 @@ def exec_event(group: AuditGroup, ctx: ParseContext, *, complete: bool) -> Secur
     command_line, _ = redact_clean(" ".join(args), 2048) if args else (common["proctitle"], 0)
     process = common["process"].model_copy(update={"command_line": command_line})
     attrs = dict(common["base_attrs"])
-    attrs.update({
-        "audit_key": EXEC_KEY,
-        "argc": _int(execve.get("argc")) if execve else None,
-        "audit_complete": None if complete else False,
-    })
+    attrs.update(
+        {
+            "audit_key": EXEC_KEY,
+            "argc": _int(execve.get("argc")) if execve else None,
+            "audit_complete": None if complete else False,
+        }
+    )
     return build_event(
         ctx,
         event_type="process.audit.exec",
@@ -339,11 +371,75 @@ def exec_event(group: AuditGroup, ctx: ParseContext, *, complete: bool) -> Secur
         actor=common["actor"],
         process=process,
         message=f"auditd exec as euid {attrs.get('euid')}: {command_line or '?'} "
-                f"(auid {common['actor'].name or attrs['auid']})",
+        f"(auid {common['actor'].name or attrs['auid']})",
         raw=_raw(group),
         attributes=attrs,
         sim_texts=(" ".join(args), common["raw_title"]),
         is_self=common["is_self"],
+    )
+
+
+#: Audit subsystem configuration records -> ``audit.config.changed`` (defence evasion signal).
+CONFIG_RECORD_TYPES = frozenset({"CONFIG_CHANGE", "DAEMON_END", "DAEMON_ABORT", "DAEMON_CONFIG"})
+_SETTING_RE = re.compile(r"^(?P<name>audit_[a-z_]{1,40}|enabled|backlog_[a-z_]{1,20})$")
+
+
+def config_event(group: AuditGroup, record: AuditRecord, ctx: ParseContext) -> SecurityEvent:
+    """``CONFIG_CHANGE`` (rule added/removed, setting changed) or audit daemon stop/abort."""
+    auid = _int(record.get("auid"))
+    auid_name = record.enriched_value("AUID")
+    if auid is None or auid == AUID_UNSET:
+        actor = Actor(type=ActorType.SYSTEM)
+    else:
+        actor = Actor(
+            type=ActorType.USER,
+            id=str(auid),
+            name=clean(auid_name) if auid_name and auid_name != "unset" else None,
+        )
+    op = record.get("op")
+    key = record.get("key")
+    res = record.get("res")
+    setting = old = new = None
+    for name, raw in record.fields.items():
+        if _SETTING_RE.match(name) and name != "audit_backlog_limit_reached":
+            setting, new, old = name, raw, record.get("old")
+            break
+    success = res in ("1", "success") if res is not None else None
+    attrs: dict[str, Any] = {
+        "audit_record_type": record.type,
+        "audit_op": clean(op, 64),
+        "audit_key": clean(key, 128),
+        "affects_extorq_rule": True if key and key.startswith("extorq_") else None,
+        "rule_list": _int(record.get("list")),
+        "setting": setting,
+        "previous_value": clean(old, 64) if setting else None,
+        "current_value": clean(new, 64) if setting else None,
+        "result": clean(res, 16),
+        "auid": "unset" if auid == AUID_UNSET else auid,
+        "session": record.get("ses") if record.get("ses") != "4294967295" else None,
+        "audit_serial": group.serial,
+        "audit_node": group.node,
+        "daemon_pid": _int(record.get("pid")) if record.type.startswith("DAEMON") else None,
+    }
+    what = op or record.type.lower()
+    target = f" {key}" if key else (f" {setting}={new}" if setting else "")
+    return build_event(
+        ctx,
+        event_type="audit.config.changed",
+        source_type=SourceType.LINUX_AUDITD,
+        native_key=f"{group.node or '-'}:{group.serial}:{group.sec}.{group.ms:03d}:{record.type}",
+        source_native_id=f"{group.sec}.{group.ms:03d}:{group.serial}",
+        event_time=group.time,
+        parser=PARSER_AUDIT,
+        action=f"audit.{what}",
+        outcome=Outcome.UNKNOWN
+        if success is None
+        else (Outcome.SUCCESS if success else Outcome.FAILURE),
+        actor=actor,
+        message=f"audit {record.type} {what}{target} by {actor.name or attrs['auid']}",
+        raw=_raw(group),
+        attributes=attrs,
+        is_self=ctx.self_uid is not None and auid == ctx.self_uid,
     )
 
 
@@ -368,12 +464,21 @@ def parse_audit_chunk(payload: bytes, base_offset: int, ctx: ParseContext) -> Au
     built: list[tuple[int, SecurityEvent]] = []
     held = incomplete = 0
     for group in groups:
-        keys = [k for k in group.keys() if k.startswith("extorq_")]
+        keys = [k for k in group.audit_keys() if k.startswith("extorq_")]
         if not keys:
+            # CONFIG_CHANGE arrives with the auditctl SYSCALL/SOCKADDR/PROCTITLE records of
+            # the same event; the CONFIG_CHANGE record alone carries everything needed.
+            record = next((r for r in group.records if r.type in CONFIG_RECORD_TYPES), None)
+            if record is not None:
+                built.append((group.first_offset, config_event(group, record, ctx)))
             continue
         complete = group.complete
-        if not complete and newest is not None and group.first_offset > base_offset and \
-                newest - (group.sec + group.ms / 1000.0) < HOLDBACK_SECONDS:
+        if (
+            not complete
+            and newest is not None
+            and group.first_offset > base_offset
+            and newest - (group.sec + group.ms / 1000.0) < HOLDBACK_SECONDS
+        ):
             resume = min(resume, group.first_offset)  # re-read next poll when complete
             held += 1
             continue

@@ -13,13 +13,16 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import ValidationError
 
 from extorq.api import schemas as s
 from extorq.api.errors import BadRequest, Conflict, TooManyRequests
 from extorq.api.logs import get_logger
 from extorq.api.repository import CLOSED_STATUSES, Row
 from extorq.api.settings import EXPECTED_ASSET_TYPES
+from extorq.contracts import ServiceEndpoint, ServiceKind
 
 log = get_logger("extorq.api.service")
 
@@ -257,6 +260,7 @@ def alert_item(row: Row) -> s.AlertListItem:
         analyst_status=row.get("analyst_status") or "new",
         analyst_state_recorded=as_bool(row.get("analyst_state_recorded")),
         assignee=row.get("assignee"),
+        service_ids=[str(x) for x in row.get("service_ids") or []],
     )
 
 
@@ -287,6 +291,7 @@ def alert_record(row: Row) -> s.AlertRecord:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         detector_version=str(row["detector_version"]),
+        service_ids=[str(x) for x in row.get("service_ids") or []],
     )
 
 
@@ -397,7 +402,10 @@ LIFECYCLE_UNAVAILABLE_NOTE = (
 )
 
 
-def finding_item(row: Row, lifecycle: bool) -> s.FindingItem:
+def finding_item(
+    row: Row, lifecycle: bool, attribution: dict[str, str] | None = None
+) -> s.FindingItem:
+    """Map a findings row; ``attribution`` maps finding_id -> attributed service_id."""
     state = row.get("state") if lifecycle else None
     return s.FindingItem(
         finding_id=str(row["finding_id"]),
@@ -422,6 +430,7 @@ def finding_item(row: Row, lifecycle: bool) -> s.FindingItem:
         cvss_score=opt_float(row.get("cvss_score")),
         remediation=row.get("remediation"),
         accepted_risk_reason=row.get("accepted_risk_reason"),
+        service_id=(attribution or {}).get(str(row["finding_id"])),
         scope_hash=(row.get("scope_hash") or None) if lifecycle else None,
         last_success_at=row.get("last_success_at") if lifecycle else None,
         latest_scan_status=row.get("latest_scan_status") if lifecycle else None,
@@ -719,6 +728,330 @@ def series_points(rows: Sequence[Row], grouped: bool) -> list[s.SeriesPoint]:
 
 def is_open(status: str) -> bool:
     return status not in CLOSED_STATUSES
+
+
+# ── Services (schema 1.1) ─────────────────────────────────────────────────────────
+
+SourceCollection = Literal["fresh", "stale", "no_collector_health"]
+COVERAGE_STATES: tuple[str, ...] = (
+    "monitored",
+    "degraded",
+    "unmonitored",
+    "planned",
+    "unsupported",
+)
+#: Widest first. ``unknown`` ranks above ``private`` because it also covers public binds.
+EXPOSURE_ORDER: tuple[str, ...] = ("any", "unknown", "private", "loopback")
+NO_SERVICES_NOTE = (
+    "no service discovery records exist for this scope yet; services are reported by the "
+    "host and Kubernetes collectors (absence is not proof that nothing runs)"
+)
+
+
+def collectors_for_asset(
+    asset_id: str, collectors: Sequence[s.CollectorStatus]
+) -> list[s.CollectorStatus]:
+    """Collectors of the asset itself or of an ancestor in the asset-id namespace.
+
+    Kubernetes node assets are ``k8s:<cluster>/node/<name>``: the cluster collector
+    (asset ``k8s:<cluster>``) covers them.
+    """
+    return [
+        c for c in collectors if c.asset_id == asset_id or asset_id.startswith(c.asset_id + "/")
+    ]
+
+
+def parse_endpoints(text: Any) -> tuple[list[s.ServiceEndpointView], int]:
+    """Stored endpoints JSON -> validated views, plus the number of invalid entries."""
+    if text is None or text == "":
+        return [], 0
+    value = parse_json(text)
+    if not isinstance(value, list):
+        return [], 1
+    views: list[s.ServiceEndpointView] = []
+    invalid = 0
+    for item in value[:64]:
+        try:
+            endpoint = ServiceEndpoint.model_validate(item)
+        except ValidationError:
+            invalid += 1
+            continue
+        views.append(
+            s.ServiceEndpointView(
+                protocol=endpoint.protocol,
+                address=endpoint.address,
+                port=endpoint.port,
+                exposure=endpoint.exposure,
+                attribution=endpoint.attribution,
+                attribution_basis=endpoint.attribution_basis,
+            )
+        )
+    return views, invalid + max(0, len(value) - 64)
+
+
+def effective_coverage(
+    adapter_support: str,
+    monitoring_status: str,
+    *,
+    report_stale: bool,
+    report_age: float,
+    stale_seconds: int,
+    stale_sources: dict[str, list[str]],
+) -> tuple[s.CoverageState, list[str]]:
+    """Effective coverage state at request time plus API-derived reasons.
+
+    Only an implemented adapter reported ``monitored`` can be downgraded (to
+    ``degraded``): when its discovery record is no longer refreshed, or when every
+    collector reporting one of its declared sources is stale. Nothing is upgraded.
+    """
+    reasons: list[str] = []
+    if report_stale:
+        reasons.append(
+            f"discovery has not refreshed this service for {int(report_age)}s "
+            f"(threshold {stale_seconds}s): current coverage cannot be confirmed"
+        )
+    for source, collector_ids in sorted(stale_sources.items()):
+        reasons.append(f"telemetry source {source}: collector {', '.join(collector_ids)} stale")
+    if adapter_support == "none":
+        return "unsupported", reasons
+    if adapter_support == "planned":
+        return "planned", reasons
+    if monitoring_status == "unmonitored":
+        return "unmonitored", reasons
+    if monitoring_status == "degraded":
+        return "degraded", reasons
+    return ("degraded" if reasons else "monitored"), reasons
+
+
+class ServiceEvaluator:
+    """Maps stored service rows to API items with effective coverage at ``now``."""
+
+    def __init__(
+        self, collectors: Sequence[s.CollectorStatus], now: datetime, stale_seconds: int
+    ) -> None:
+        self._collectors = list(collectors)
+        self._now = now
+        self._stale_seconds = stale_seconds
+
+    def source_collectors(self, asset_id: str, source_type: str) -> list[s.CollectorStatus]:
+        return [
+            c
+            for c in collectors_for_asset(asset_id, self._collectors)
+            if source_type in c.source_types
+        ]
+
+    def stale_sources(self, asset_id: str, sources: Sequence[str]) -> dict[str, list[str]]:
+        """Declared sources whose every reporting collector is stale (no collector: skipped)."""
+        result: dict[str, list[str]] = {}
+        for source in sources:
+            reporting = self.source_collectors(asset_id, source)
+            if reporting and all(c.stale for c in reporting):
+                result[source] = sorted(c.collector_id for c in reporting)
+        return result
+
+    def is_stale(self, observed: datetime) -> bool:
+        return (self._now - observed).total_seconds() > self._stale_seconds
+
+    def _fields(self, row: Row) -> dict[str, Any]:
+        last_seen: datetime = row["last_seen"]
+        report_age = (self._now - last_seen).total_seconds()
+        report_stale = report_age > self._stale_seconds
+        sources = [str(x) for x in row.get("telemetry_sources") or []]
+        asset_id = str(row["asset_id"])
+        state, reasons = effective_coverage(
+            str(row["adapter_support"]),
+            str(row["monitoring_status"]),
+            report_stale=report_stale,
+            report_age=report_age,
+            stale_seconds=self._stale_seconds,
+            stale_sources=self.stale_sources(asset_id, sources),
+        )
+        endpoints, invalid = parse_endpoints(row.get("endpoints"))
+        present_exposures = {e.exposure for e in endpoints}
+        return {
+            "service_id": str(row["service_id"]),
+            "asset_id": asset_id,
+            "service_kind": row["service_kind"],
+            "service_key": str(row["service_key"]),
+            "name": str(row["name"]),
+            "category": row["category"],
+            "product": row.get("product"),
+            "version": row.get("version"),
+            "discovered_via": [str(x) for x in row.get("discovered_via") or []],
+            "adapter_id": row.get("adapter_id"),
+            "adapter_support": row["adapter_support"],
+            "monitoring_status": row["monitoring_status"],
+            "coverage_state": state,
+            "coverage_note": row.get("coverage_note"),
+            "coverage_reasons": reasons,
+            "telemetry_sources": sources,
+            "endpoints": endpoints,
+            "exposures": [e for e in EXPOSURE_ORDER if e in present_exposures],
+            "config_refs": [str(x) for x in row.get("config_refs") or []],
+            "instance_count": opt_int(row.get("instance_count")),
+            "last_telemetry_at": row.get("last_telemetry_at"),
+            "first_seen": row["first_seen"],
+            "last_seen": last_seen,
+            "report_age_seconds": report_age,
+            "report_stale": report_stale,
+            "present": as_bool(row.get("present", 1)),
+            "observed_by": str(row.get("observed_by") or ""),
+            "_invalid_endpoints": invalid,
+        }
+
+    def item(self, row: Row) -> s.ServiceListItem:
+        fields = self._fields(row)
+        invalid = fields.pop("_invalid_endpoints")
+        if invalid:
+            log.warning("service_endpoints_invalid", service_id=fields["service_id"], count=invalid)
+        return s.ServiceListItem(**fields)
+
+    def record(self, row: Row) -> s.ServiceRecord:
+        fields = self._fields(row)
+        invalid = fields.pop("_invalid_endpoints")
+        return s.ServiceRecord(
+            **fields,
+            attributes=parse_json_object(row.get("attributes")),
+            invalid_endpoints=invalid,
+        )
+
+    def items(self, rows: Iterable[Row]) -> tuple[list[s.ServiceListItem], int]:
+        """Valid items plus the count of rows that failed validation (logged, not shown)."""
+        items: list[s.ServiceListItem] = []
+        invalid = 0
+        for row in rows:
+            try:
+                items.append(self.item(row))
+            except (ValidationError, KeyError, TypeError, ValueError):
+                invalid += 1
+        if invalid:
+            log.warning("stored_services_invalid", count=invalid)
+        return items, invalid
+
+    def instance(self, row: Row) -> s.ServiceInstanceItem:
+        observed: datetime = row["observed_at"]
+        return s.ServiceInstanceItem(
+            instance_id=str(row["instance_id"]),
+            service_id=str(row["service_id"]),
+            asset_id=row.get("asset_id"),
+            instance_kind=row["instance_kind"],
+            instance_key=str(row["instance_key"]),
+            parent_instance_id=row.get("parent_instance_id"),
+            state=row.get("state") or "unknown",
+            pid=opt_int(row.get("pid")),
+            process_name=row.get("process_name"),
+            user=row.get("process_user"),
+            namespace=row.get("namespace"),
+            pod_name=row.get("pod_name"),
+            pod_uid=row.get("pod_uid"),
+            container_name=row.get("container_name"),
+            container_id=row.get("container_id"),
+            image=row.get("image"),
+            node_name=row.get("node_name"),
+            workload_kind=row.get("workload_kind"),
+            workload_name=row.get("workload_name"),
+            started_at=row.get("started_at"),
+            observed_at=observed,
+            observed_by=str(row.get("observed_by") or ""),
+            stale=self.is_stale(observed),
+            attributes=parse_json_object(row.get("attributes")),
+        )
+
+    def telemetry(
+        self, service: s.ServiceListItem, event_rows: Sequence[Row]
+    ) -> list[s.ServiceTelemetrySource]:
+        """Declared sources (adapter order) then sources seen only in attributed events."""
+        by_source = {str(r["source_type"]): r for r in event_rows}
+        ordered = list(dict.fromkeys(service.telemetry_sources))
+        ordered += sorted(src for src in by_source if src not in ordered)
+        result: list[s.ServiceTelemetrySource] = []
+        for source in ordered:
+            reporting = self.source_collectors(service.asset_id, source)
+            collection: SourceCollection
+            if not reporting:
+                collection = "no_collector_health"
+            elif all(c.stale for c in reporting):
+                collection = "stale"
+            else:
+                collection = "fresh"
+            counts = by_source.get(source, {})
+            result.append(
+                s.ServiceTelemetrySource(
+                    source_type=source,
+                    declared=source in service.telemetry_sources,
+                    collectors=[
+                        s.ServiceSourceCollector(
+                            collector_id=c.collector_id,
+                            asset_id=c.asset_id,
+                            status=c.status,
+                            last_success_at=c.last_success_at,
+                            interval_seconds=c.interval_seconds,
+                            stale=c.stale,
+                            stale_reason=c.stale_reason,
+                        )
+                        for c in reporting
+                    ],
+                    collection=collection,
+                    events=int(counts.get("events") or 0),
+                    last_event_at=counts.get("last_event_at"),
+                    last_ingested_at=counts.get("last_ingested_at"),
+                )
+            )
+        return result
+
+
+def coverage_counts(items: Iterable[s.ServiceListItem]) -> s.ServiceCoverageCounts:
+    counts = dict.fromkeys(COVERAGE_STATES, 0)
+    for item in items:
+        counts[item.coverage_state] += 1
+    return s.ServiceCoverageCounts(**counts, total=sum(counts.values()))
+
+
+def services_summary(
+    items: Sequence[s.ServiceListItem], *, truncated: bool, note: str | None = None
+) -> s.ServicesSummary:
+    """Coverage over present services; tombstones are counted in ``removed`` only."""
+    present = [i for i in items if i.present]
+    by_kind = [
+        s.ServiceKindSummary(
+            service_kind=kind,
+            coverage=coverage_counts(i for i in present if i.service_kind == kind),
+        )
+        for kind in ServiceKind
+        if any(i.service_kind == kind for i in present)
+    ]
+    reported = bool(items)
+    return s.ServicesSummary(
+        reported=reported,
+        coverage=coverage_counts(present),
+        by_kind=by_kind,
+        removed=len(items) - len(present),
+        truncated=truncated,
+        note=note if note is not None else (None if reported else NO_SERVICES_NOTE),
+    )
+
+
+def auth_activity(
+    time_range: s.TimeRange, summary: Row, sources: Sequence[Row]
+) -> s.ServiceAuthActivity:
+    outcomes = ("success", "failure", "denied", "unknown")
+    by_outcome = {o: int(summary.get(o) or 0) for o in outcomes if int(summary.get(o) or 0)}
+    return s.ServiceAuthActivity(
+        range=time_range,
+        total=int(summary.get("total") or 0),
+        by_outcome=by_outcome,
+        distinct_actors=int(summary.get("distinct_actors") or 0),
+        distinct_sources=int(summary.get("distinct_sources") or 0),
+        top_sources=[
+            s.AuthSourceActivity(
+                src_ip=str(r["source_ip"]),
+                events=int(r["events"]),
+                failures=int(r["failures"]),
+                last_seen=r["last_seen"],
+            )
+            for r in sources
+        ],
+    )
 
 
 # ── Summary request gate (protects the AI budget from UI loops) ─────────────────────

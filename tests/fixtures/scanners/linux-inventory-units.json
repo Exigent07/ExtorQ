@@ -1,0 +1,2796 @@
+{
+ "systemd_units": [
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "dbus-org.freedesktop.ModemManager1.service",
+   "role": "unit",
+   "symlink_target": "/usr/lib/systemd/system/ModemManager.service",
+   "unit_dir": "/etc/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "dbus-org.freedesktop.resolve1.service",
+   "role": "unit",
+   "symlink_target": "/usr/lib/systemd/system/systemd-resolved.service",
+   "unit_dir": "/etc/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "dbus-org.freedesktop.timesync1.service",
+   "role": "unit",
+   "symlink_target": "/usr/lib/systemd/system/systemd-timesyncd.service",
+   "unit_dir": "/etc/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "iscsi.service",
+   "role": "unit",
+   "symlink_target": "/usr/lib/systemd/system/open-iscsi.service",
+   "unit_dir": "/etc/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "lab-portal.service",
+   "role": "unit",
+   "unit_dir": "/etc/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "syslog.service",
+   "role": "unit",
+   "symlink_target": "/usr/lib/systemd/system/rsyslog.service",
+   "unit_dir": "/etc/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "vmtoolsd.service",
+   "role": "unit",
+   "symlink_target": "/usr/lib/systemd/system/open-vm-tools.service",
+   "unit_dir": "/etc/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "netplan-ovs-cleanup.service",
+   "role": "unit",
+   "unit_dir": "/run/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-networkd-wait-online.service",
+   "role": "dropin",
+   "unit_dir": "/run/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ModemManager.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apparmor.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apport-autoreport.path",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apport-autoreport.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apport-autoreport.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apport-coredump-hook@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apport-forward.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apport-forward@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apport.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apt-daily-upgrade.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apt-daily-upgrade.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apt-daily.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apt-daily.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "apt-news.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "auditd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "autovt@.service",
+   "role": "unit",
+   "symlink_target": "getty@.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "basic.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "blk-availability.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "blockdev@.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "bluetooth.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "bolt.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "boot-complete.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cloud-config.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cloud-config.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cloud-final.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cloud-init-hotplugd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cloud-init-hotplugd.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cloud-init-local.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cloud-init.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cloud-init.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "console-getty.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "console-setup.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "container-getty@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cron.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "cryptdisks-early.service",
+   "role": "unit",
+   "symlink_target": "/dev/null",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "cryptdisks.service",
+   "role": "unit",
+   "symlink_target": "/dev/null",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cryptsetup-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "cryptsetup.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "ctrl-alt-del.target",
+   "role": "unit",
+   "symlink_target": "reboot.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "dbus-org.freedesktop.hostname1.service",
+   "role": "unit",
+   "symlink_target": "systemd-hostnamed.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "dbus-org.freedesktop.locale1.service",
+   "role": "unit",
+   "symlink_target": "systemd-localed.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "dbus-org.freedesktop.login1.service",
+   "role": "unit",
+   "symlink_target": "systemd-logind.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "dbus-org.freedesktop.timedate1.service",
+   "role": "unit",
+   "symlink_target": "systemd-timedated.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dbus.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dbus.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "debug-shell.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "default.target",
+   "role": "unit",
+   "symlink_target": "graphical.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dev-hugepages.mount",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dev-mqueue.mount",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dm-event.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dm-event.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dmesg.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dpkg-db-backup.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "dpkg-db-backup.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "e2scrub@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "e2scrub_all.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "e2scrub_all.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "e2scrub_fail@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "e2scrub_reap.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "emergency.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "emergency.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "esm-cache.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "exit.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "factory-reset.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "final.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "finalrd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "first-boot-complete.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "friendly-recovery.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "friendly-recovery.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "fstrim.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "fstrim.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "fwupd-refresh.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "fwupd-refresh.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "fwupd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "getty-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "getty-static.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "getty.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "getty@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "graphical.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "grub-common.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "grub-initrd-fallback.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "halt.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "hibernate.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "hwclock.service",
+   "role": "unit",
+   "symlink_target": "/dev/null",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "hybrid-sleep.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-cleanup.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-fs.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-parse-etc.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-root-device.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-root-fs.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-switch-root.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-switch-root.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-udevadm-cleanup-db.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd-usr-fs.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "initrd.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "integritysetup-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "integritysetup.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "iscsid.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "iscsid.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "kexec.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "keyboard-setup.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "kmod-static-nodes.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "kmod.service",
+   "role": "unit",
+   "symlink_target": "systemd-modules-load.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ldconfig.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "local-fs-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "local-fs.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "logrotate.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "logrotate.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "lvm2-lvmpolld.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "lvm2-lvmpolld.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "lvm2-monitor.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "lxd-agent.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "lxd-installer.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "lxd-installer@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "machine.slice",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "man-db.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "man-db.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdadm-grow-continue@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdadm-last-resort@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdadm-last-resort@.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdcheck_continue.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdcheck_continue.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdcheck_start.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdcheck_start.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdmon@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdmonitor-oneshot.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdmonitor-oneshot.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "mdmonitor.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "modprobe@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "motd-news.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "motd-news.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "multi-user.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "multipath-tools-boot.service",
+   "role": "unit",
+   "symlink_target": "/dev/null",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "multipath-tools.service",
+   "role": "unit",
+   "symlink_target": "multipathd.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "multipathd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "multipathd.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "network-online.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "network-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "network.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "networkd-dispatcher.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "nftables.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "nginx.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "nss-lookup.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "nss-user-lookup.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "open-iscsi.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "open-vm-tools.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "packagekit-offline-update.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "packagekit.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "pam_namespace.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "paths.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-halt.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-kexec.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "plymouth-log.service",
+   "role": "unit",
+   "symlink_target": "plymouth-read-write.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-poweroff.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-quit-wait.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-quit.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-read-write.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-reboot.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-start.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-switch-root-initramfs.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "plymouth-switch-root.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "plymouth.service",
+   "role": "unit",
+   "symlink_target": "plymouth-quit.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "polkit.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "pollinate.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "poweroff.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "printer.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "proc-sys-fs-binfmt_misc.automount",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "proc-sys-fs-binfmt_misc.mount",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "procps.service",
+   "role": "unit",
+   "symlink_target": "systemd-sysctl.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "quotaon.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "rc-local.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "rc-local.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "reboot.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "remote-cryptsetup.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "remote-fs-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "remote-fs.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "remote-veritysetup.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "rescue-ssh.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "rescue.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "rescue.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "rpcbind.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "rsync.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "rsyslog.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "runlevel0.target",
+   "role": "unit",
+   "symlink_target": "poweroff.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "runlevel1.target",
+   "role": "unit",
+   "symlink_target": "rescue.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "runlevel2.target",
+   "role": "unit",
+   "symlink_target": "multi-user.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "runlevel3.target",
+   "role": "unit",
+   "symlink_target": "multi-user.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "runlevel4.target",
+   "role": "unit",
+   "symlink_target": "multi-user.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "runlevel5.target",
+   "role": "unit",
+   "symlink_target": "graphical.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "runlevel6.target",
+   "role": "unit",
+   "symlink_target": "reboot.target",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "screen-cleanup.service",
+   "role": "unit",
+   "symlink_target": "/dev/null",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "secureboot-db.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "serial-getty@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "setvtrgb.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "shutdown.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sigpwr.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sleep.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "slices.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "smartcard.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.apparmor.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.autoimport.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.core-fixup.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.failure.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.gpio-chardev-setup.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.mounts-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.mounts.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.recovery-chooser-trigger.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.seeded.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.snap-repair.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.snap-repair.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "snapd.system-shutdown.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sockets.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "soft-reboot.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sound.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ssh.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ssh.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sshd-keygen@.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "storage-target-mode.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "sudo.service",
+   "role": "unit",
+   "symlink_target": "/dev/null",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "suspend-then-hibernate.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "suspend.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "swap.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sys-fs-fuse-connections.mount",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sys-kernel-config.mount",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sys-kernel-debug.mount",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sys-kernel-tracing.mount",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sysinit.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "syslog.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sysstat-collect.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sysstat-collect.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sysstat-summary.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sysstat-summary.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "sysstat.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "system-systemd\\x2dcryptsetup.slice",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "system-systemd\\x2dveritysetup.slice",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "system-update-cleanup.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "system-update-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "system-update.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-ask-password-console.path",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-ask-password-console.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-ask-password-plymouth.path",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-ask-password-plymouth.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-ask-password-wall.path",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-ask-password-wall.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-backlight@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-battery-check.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-binfmt.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-boot-check-no-failures.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-bsod.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-confext.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-coredump@.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-exit.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-firstboot.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-fsck-root.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-fsck@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-fsckd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-fsckd.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-growfs-root.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-growfs@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-halt.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-hibernate-resume.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-hibernate.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-hostnamed.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-hwdb-update.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-hybrid-sleep.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-initctl.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-initctl.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journal-catalog-update.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journal-flush.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journald-audit.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journald-dev-log.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journald-varlink@.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journald.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journald.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journald.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journald@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-journald@.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-kexec.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-localed.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-localed.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-logind.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-logind.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-machine-id-commit.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-modules-load.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-network-generator.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-networkd-wait-online.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-networkd-wait-online@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-networkd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-networkd.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrextend.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrextend@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrfs-root.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrfs@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrlock-file-system.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrlock-firmware-code.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrlock-firmware-config.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrlock-machine-id.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrlock-make-policy.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrlock-secureboot-authority.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrlock-secureboot-policy.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrmachine.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrphase-initrd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrphase-sysinit.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pcrphase.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-poweroff.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-pstore.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-quotacheck.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-random-seed.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-reboot.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-remount-fs.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-repart.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-resolved.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-rfkill.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-rfkill.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-soft-reboot.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-storagetm.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-suspend-then-hibernate.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-suspend.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysctl.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysext.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysext.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysext@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysupdate-reboot.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysupdate-reboot.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysupdate.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysupdate.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-sysusers.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-time-wait-sync.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-timedated.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-timesyncd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-tmpfiles-clean.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-tmpfiles-clean.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-tmpfiles-setup-dev-early.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-tmpfiles-setup-dev.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-tmpfiles-setup.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-tpm2-setup-early.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-tpm2-setup.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-udev-settle.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-udev-trigger.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-udevd-control.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-udevd-kernel.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-udevd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-udevd.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-update-done.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-update-utmp-runlevel.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-update-utmp.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-user-sessions.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "systemd-volatile-root.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "time-set.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "time-sync.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "timers.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ua-reboot-cmds.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ua-timer.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ua-timer.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ubuntu-advantage.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "udev.service",
+   "role": "unit",
+   "symlink_target": "systemd-udevd.service",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "udisks2.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "ufw.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "umount.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "unattended-upgrades.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "update-notifier-download.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "update-notifier-download.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "update-notifier-motd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "update-notifier-motd.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "usb-gadget.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "usb_modeswitch@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "user-.slice",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "user-runtime-dir@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "user.slice",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "user@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "user@.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "user@.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "user@0.service",
+   "role": "dropin",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "uuidd.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "uuidd.socket",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "veritysetup-pre.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "veritysetup.target",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "vgauth.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "symlink",
+   "name": "x11-common.service",
+   "role": "unit",
+   "symlink_target": "/dev/null",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "xfs_scrub@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "xfs_scrub_all.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "xfs_scrub_all.timer",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  },
+  {
+   "exists": true,
+   "kind": "file",
+   "name": "xfs_scrub_fail@.service",
+   "role": "unit",
+   "unit_dir": "/usr/lib/systemd/system"
+  }
+ ],
+ "type": "inventory"
+}

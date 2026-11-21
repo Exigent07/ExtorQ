@@ -5,8 +5,8 @@ import { cn } from "cn"
 import * as RechartsPrimitive from "recharts"
 import type { TooltipValueType } from "recharts"
 
-// Format: { THEME_NAME: CSS_SELECTOR }. The console is dark-only; see chartColorVars.
-const THEMES = { light: "", dark: ".dark" } as const
+// Theme names accepted in a ChartConfig. The console is dark-only; see chartColorVars.
+type ThemeName = "light" | "dark"
 
 const INITIAL_DIMENSION = { width: 320, height: 200 } as const
 type TooltipNameType = number | string
@@ -18,7 +18,7 @@ export type ChartConfig = Record<
     icon?: React.ComponentType
   } & (
     | { color?: string; theme?: never }
-    | { color?: never; theme: Record<keyof typeof THEMES, string> }
+    | { color?: never; theme: Record<ThemeName, string> }
   )
 >
 

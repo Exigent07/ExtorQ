@@ -15,6 +15,14 @@ Trust model of the projected payload:
   :func:`extorq.ai.sanitize.clean_untrusted`, truncated, and wrapped as
   ``{"untrusted": "<text>"}`` so it is unmistakably delimited data.
 * Raw evidence excerpts are dropped unless ``ai_include_excerpts`` is enabled.
+* Services (contract 1.1, ``InvestigationContext.services``) are projected as
+  name (untrusted text), kind, category, adapter support, monitoring status,
+  role and parent asset id only: never service attributes, configuration paths,
+  endpoints or versions. Each service gets a local alias (``svc-1``...) that
+  evidence events reference, so 32-hex service ids never appear in provider
+  input (they could be confused with citable evidence ids). Enumerated values
+  outside the contract enums become ``"unrecognised"``.
+* Related assets (cross-asset correlation, 1.1) carry id, type and criticality only.
 * The total serialised size is capped; lowest-priority related events, then
   middle evidence events, then findings and features are dropped first, and the
   number of omitted events is stated in the payload.
@@ -54,9 +62,11 @@ from extorq.contracts.context import (
     InvestigationContext,
     Relationship,
     RelationshipType,
+    ServiceSummary,
     TimelineEntry,
 )
 from extorq.contracts.identity import iso_utc
+from extorq.contracts.service import AdapterSupport, MonitoringStatus, ServiceCategory, ServiceKind
 
 
 class Domain(StrEnum):
@@ -69,10 +79,14 @@ class Domain(StrEnum):
 _GITHUB_ASSETS = {AssetType.GITHUB_REPOSITORY, AssetType.GITHUB_ACCOUNT}
 _K8S_ASSETS = {
     AssetType.KUBERNETES_CLUSTER,
+    AssetType.KUBERNETES_NODE,
     AssetType.KUBERNETES_NAMESPACE,
     AssetType.KUBERNETES_WORKLOAD,
 }
-_SSH_HTTP_RULES = {"VM-001", "HTTP-001", "CORR-001"}
+#: CORR-002 (PLAN 10.2): HTTP probing -> SSH auth failures -> systemd change on one host.
+_SSH_HTTP_RULES = {"VM-001", "HTTP-001", "CORR-001", "CORR-002"}
+#: Evidence on a Linux host with these event types uses the SSH + HTTP question variant.
+_SSH_HTTP_EVENT_PREFIXES = ("auth.ssh.", "http.", "app.auth.", "app.authz.")
 
 
 def _context_event_types(ctx: InvestigationContext) -> set[str]:
@@ -93,7 +107,7 @@ def classify_domain(ctx: InvestigationContext) -> Domain:
         return Domain.SSH_HTTP
     if asset_type is AssetType.LINUX_HOST:
         evidence_types = {e.event_type for e in ctx.evidence}
-        if any(t.startswith("auth.ssh.") for t in evidence_types):
+        if any(t.startswith(_SSH_HTTP_EVENT_PREFIXES) for t in evidence_types):
             return Domain.SSH_HTTP
     return Domain.GENERIC
 
@@ -107,6 +121,8 @@ class ProjectionLimits:
     max_list_items: int
     max_key_fields: int
     max_chars: int
+    max_services: int = 12
+    max_related_assets: int = 8
 
 
 JEV_LIMITS = ProjectionLimits(
@@ -117,6 +133,8 @@ JEV_LIMITS = ProjectionLimits(
     max_list_items=8,
     max_key_fields=16,
     max_chars=24_000,
+    max_services=12,
+    max_related_assets=8,
 )
 GEMINI_LIMITS = ProjectionLimits(
     max_evidence=25,
@@ -126,6 +144,8 @@ GEMINI_LIMITS = ProjectionLimits(
     max_list_items=10,
     max_key_fields=24,
     max_chars=60_000,
+    max_services=24,
+    max_related_assets=16,
 )
 
 
@@ -297,8 +317,10 @@ def _source_type(b: _Builder, value: str) -> Any:
     return value if value in _SOURCE_TYPES else b.untrusted(value, 64)
 
 
-def _evidence_event(b: _Builder, e: EventSummary, anchor: datetime) -> dict[str, Any]:
-    return {
+def _evidence_event(
+    b: _Builder, e: EventSummary, anchor: datetime, service_refs: Mapping[str, str]
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
         "event_id": e.event_id,
         "time": _iso(e.event_time),
         "offset_seconds": round((e.event_time - anchor).total_seconds(), 1),
@@ -310,6 +332,63 @@ def _evidence_event(b: _Builder, e: EventSummary, anchor: datetime) -> dict[str,
         "summary": b.untrusted(e.summary, LIMIT_SUMMARY),
         "fields": b.attributes(e.key_fields, b.limits.max_key_fields, allow=ALLOWED_KEY_FIELDS),
     }
+    if e.service_id is not None and e.service_id in service_refs:
+        item["service_ref"] = service_refs[e.service_id]
+    elif e.service_name is not None:
+        item["service_name"] = b.untrusted(e.service_name, LIMIT_SERVICE_NAME)
+    return item
+
+
+# ── services and related assets (contract 1.1) ───────────────────────
+
+LIMIT_SERVICE_NAME = 80
+_SERVICE_KINDS = frozenset(k.value for k in ServiceKind)
+_SERVICE_CATEGORIES = frozenset(c.value for c in ServiceCategory)
+_ADAPTER_SUPPORT = frozenset(a.value for a in AdapterSupport)
+_MONITORING_STATUS = frozenset(m.value for m in MonitoringStatus)
+UNRECOGNISED = "unrecognised"
+#: The correlation builder reports "unknown" when no service inventory record exists.
+UNKNOWN = "unknown"
+
+
+def _enum_token(value: str, allowed: frozenset[str]) -> str:
+    """Contract enum value or ``"unknown"``; anything else becomes ``"unrecognised"``.
+
+    ServiceSummary fields are free strings in the contract, so values are re-validated here.
+    """
+    return value if value in allowed or value == UNKNOWN else UNRECOGNISED
+
+
+def _project_services(
+    b: _Builder, services: list[ServiceSummary], cap: int
+) -> tuple[list[dict[str, Any]], dict[str, str], int]:
+    """Allow-listed service summaries, alias map (service_id -> svc-N), omitted count."""
+    unique: dict[str, ServiceSummary] = {}
+    for svc in services:
+        unique.setdefault(svc.service_id, svc)
+    # Evidence services first, then related; stable order by name and id.
+    ordered = sorted(
+        unique.values(), key=lambda s: (s.role != "evidence", s.name.lower(), s.service_id)
+    )
+    kept = ordered[:cap]
+    refs: dict[str, str] = {}
+    out: list[dict[str, Any]] = []
+    for index, svc in enumerate(kept, start=1):
+        alias = f"svc-{index}"
+        refs[svc.service_id] = alias
+        out.append(
+            {
+                "ref": alias,
+                "name": b.untrusted(svc.name, LIMIT_SERVICE_NAME),
+                "kind": _enum_token(svc.service_kind, _SERVICE_KINDS),
+                "category": _enum_token(svc.category, _SERVICE_CATEGORIES),
+                "adapter_support": _enum_token(svc.adapter_support, _ADAPTER_SUPPORT),
+                "monitoring_status": _enum_token(svc.monitoring_status, _MONITORING_STATUS),
+                "role": svc.role,
+                "asset_id": svc.asset_id,
+            }
+        )
+    return out, refs, len(ordered) - len(kept)
 
 
 _REL_RANK = {
@@ -397,6 +476,19 @@ def project_context(
         else:
             b.dropped_keys += 1
 
+    services, service_refs, omitted_services = _project_services(
+        b, list(ctx.services), limits.max_services
+    )
+    related_assets = [
+        {
+            "asset_id": a.asset_id,
+            "asset_type": a.asset_type.value,
+            "criticality": a.criticality.value,
+        }
+        for a in ctx.related_assets[: limits.max_related_assets]
+        if a.asset_id != ctx.asset.asset_id
+    ]
+
     payload: dict[str, Any] = {
         "alert": {
             "alert_id": alert.alert_id,
@@ -426,6 +518,9 @@ def project_context(
             "criticality": ctx.asset.criticality.value,
             "environment": ctx.asset.environment.value,
         },
+        "services": services,
+        "omitted_services": omitted_services,
+        "related_assets": related_assets,
         "detection_features": b.attributes(alert.features, limits.max_features, allow=None),
         "correlation_features": b.attributes(ctx.features, limits.max_features, allow=None),
         "correlation": {
@@ -433,7 +528,7 @@ def project_context(
             "related_candidate": counts[RelationshipType.CANDIDATE.value],
             "related_unestablished": counts[RelationshipType.UNESTABLISHED.value],
         },
-        "evidence_events": [_evidence_event(b, e, anchor) for e in evidence_sample],
+        "evidence_events": [_evidence_event(b, e, anchor, service_refs) for e in evidence_sample],
         "related_events": [_related_event(b, r, timeline_by_id.get(r.event_id)) for r in related],
         "omitted_events": omitted_evidence + omitted_related,
         "telemetry_coverage": [
@@ -510,6 +605,11 @@ def _shrink_to_fit(payload: dict[str, Any], max_chars: int) -> int:
         payload["rule"] = {"description": payload["rule"]["description"][:200]}
         for event in evidence:
             event["fields"] = {}
+    if _size(payload) > max_chars:
+        kept = [s for s in payload["services"] if s.get("role") == "evidence"]
+        payload["omitted_services"] += len(payload["services"]) - len(kept)
+        payload["services"] = kept
+        payload["related_assets"] = []
     if _size(payload) > max_chars:
         raise ValueError("provider input exceeds the configured size cap after minimisation")
     return dropped

@@ -1,0 +1,2522 @@
+{
+ "apiVersion": "v1",
+ "items": [
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:47Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "name": "b2-fixture-barepod",
+    "namespace": "extorq-apps",
+    "resourceVersion": "22375",
+    "uid": "e82a1eba-4e1e-4112-ad2b-5499ad38ba0c"
+   },
+   "lastTimestamp": "2026-11-21T14:32:47Z",
+   "message": "Successfully assigned extorq-apps/b2-fixture-barepod to extorq-lab-control-plane",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:47Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-scheduler",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:47Z"
+     }
+    ],
+    "name": "b2-fixture-barepod.18ea15fa938d7fec",
+    "namespace": "extorq-apps",
+    "resourceVersion": "22377",
+    "uid": "b992cbfe-1222-4a37-827e-7d64355a02ef"
+   },
+   "reason": "Scheduled",
+   "reportingComponent": "default-scheduler",
+   "reportingInstance": "",
+   "source": {
+    "component": "default-scheduler"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:47Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{printer}",
+    "kind": "Pod",
+    "name": "b2-fixture-barepod",
+    "namespace": "extorq-apps",
+    "resourceVersion": "22376",
+    "uid": "e82a1eba-4e1e-4112-ad2b-5499ad38ba0c"
+   },
+   "lastTimestamp": "2026-11-21T14:32:47Z",
+   "message": "Container image \"python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b\" already present on machine and can be accessed by the pod",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:47Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:47Z"
+     }
+    ],
+    "name": "b2-fixture-barepod.18ea15fa98332a9c",
+    "namespace": "extorq-apps",
+    "resourceVersion": "22379",
+    "uid": "25b44cd7-fe8b-40b1-b611-8ac7e4d8dbf9"
+   },
+   "reason": "Pulled",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:47Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{printer}",
+    "kind": "Pod",
+    "name": "b2-fixture-barepod",
+    "namespace": "extorq-apps",
+    "resourceVersion": "22376",
+    "uid": "e82a1eba-4e1e-4112-ad2b-5499ad38ba0c"
+   },
+   "lastTimestamp": "2026-11-21T14:32:47Z",
+   "message": "Container created",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:47Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:47Z"
+     }
+    ],
+    "name": "b2-fixture-barepod.18ea15fa98e655cc",
+    "namespace": "extorq-apps",
+    "resourceVersion": "22381",
+    "uid": "96323e75-0b58-4cba-9c04-38d7cd1116ad"
+   },
+   "reason": "Created",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:47Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{printer}",
+    "kind": "Pod",
+    "name": "b2-fixture-barepod",
+    "namespace": "extorq-apps",
+    "resourceVersion": "22376",
+    "uid": "e82a1eba-4e1e-4112-ad2b-5499ad38ba0c"
+   },
+   "lastTimestamp": "2026-11-21T14:32:47Z",
+   "message": "Container started",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:47Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:47Z"
+     }
+    ],
+    "name": "b2-fixture-barepod.18ea15faa3edee9e",
+    "namespace": "extorq-apps",
+    "resourceVersion": "22382",
+    "uid": "b4bd5bc4-7f32-4211-9fc3-63a2544b9d4c"
+   },
+   "reason": "Started",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:42Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{reader}",
+    "kind": "Pod",
+    "name": "weak-log-reader-759c4c7bb9-jqkh8",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "551",
+    "uid": "3025ea78-5903-465c-b80e-06165c09dfe5"
+   },
+   "lastTimestamp": "2026-11-21T14:30:42Z",
+   "message": "Stopping container reader",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:42Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:42Z"
+     }
+    ],
+    "name": "weak-log-reader-759c4c7bb9-jqkh8.18ea15dd67af35fa",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22141",
+    "uid": "a1d60352-0218-448e-a391-6c2ccff38dd5"
+   },
+   "reason": "Killing",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:42Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "ReplicaSet",
+    "name": "weak-log-reader-759c4c7bb9",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22137",
+    "uid": "ded93a70-1343-4d83-a6e0-3cae4f1fda30"
+   },
+   "lastTimestamp": "2026-11-21T14:30:42Z",
+   "message": "Deleted pod: weak-log-reader-759c4c7bb9-jqkh8",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:42Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:42Z"
+     }
+    ],
+    "name": "weak-log-reader-759c4c7bb9.18ea15dd67a61ff8",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22142",
+    "uid": "04d85dc4-65f1-41da-b2fa-b16a0f09fd3b"
+   },
+   "reason": "SuccessfulDelete",
+   "reportingComponent": "replicaset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "replicaset-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:41Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "name": "weak-log-reader-b99c886cd-n6cj8",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22122",
+    "uid": "796cc9ac-4184-4415-a5a2-54ca748bdf18"
+   },
+   "lastTimestamp": "2026-11-21T14:30:41Z",
+   "message": "Successfully assigned extorq-posture-lab/weak-log-reader-b99c886cd-n6cj8 to extorq-lab-control-plane",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:41Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-scheduler",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:41Z"
+     }
+    ],
+    "name": "weak-log-reader-b99c886cd-n6cj8.18ea15dd48b04b1c",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22128",
+    "uid": "7795317d-e127-4cfa-a385-16dc97d8461f"
+   },
+   "reason": "Scheduled",
+   "reportingComponent": "default-scheduler",
+   "reportingInstance": "",
+   "source": {
+    "component": "default-scheduler"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:42Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{reader}",
+    "kind": "Pod",
+    "name": "weak-log-reader-b99c886cd-n6cj8",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22126",
+    "uid": "796cc9ac-4184-4415-a5a2-54ca748bdf18"
+   },
+   "lastTimestamp": "2026-11-21T14:30:42Z",
+   "message": "Container image \"alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1\" already present on machine and can be accessed by the pod",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:42Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:42Z"
+     }
+    ],
+    "name": "weak-log-reader-b99c886cd-n6cj8.18ea15dd60cafed1",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22131",
+    "uid": "48788943-4fd7-4f92-8d59-6924d5f9cc06"
+   },
+   "reason": "Pulled",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:42Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{reader}",
+    "kind": "Pod",
+    "name": "weak-log-reader-b99c886cd-n6cj8",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22126",
+    "uid": "796cc9ac-4184-4415-a5a2-54ca748bdf18"
+   },
+   "lastTimestamp": "2026-11-21T14:30:42Z",
+   "message": "Container created",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:42Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:42Z"
+     }
+    ],
+    "name": "weak-log-reader-b99c886cd-n6cj8.18ea15dd624b11bc",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22133",
+    "uid": "a33e3e75-2bd5-436d-98b9-abe23f57ac0c"
+   },
+   "reason": "Created",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:42Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{reader}",
+    "kind": "Pod",
+    "name": "weak-log-reader-b99c886cd-n6cj8",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22126",
+    "uid": "796cc9ac-4184-4415-a5a2-54ca748bdf18"
+   },
+   "lastTimestamp": "2026-11-21T14:30:42Z",
+   "message": "Container started",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:42Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:42Z"
+     }
+    ],
+    "name": "weak-log-reader-b99c886cd-n6cj8.18ea15dd6671bea8",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22134",
+    "uid": "13840c97-0c84-498d-85a3-624698973327"
+   },
+   "reason": "Started",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:41Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "ReplicaSet",
+    "name": "weak-log-reader-b99c886cd",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22119",
+    "uid": "69f8f213-8df3-4ce2-a91c-92de24b4e71a"
+   },
+   "lastTimestamp": "2026-11-21T14:30:41Z",
+   "message": "Created pod: weak-log-reader-b99c886cd-n6cj8",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:41Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:41Z"
+     }
+    ],
+    "name": "weak-log-reader-b99c886cd.18ea15dd47c69b37",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22124",
+    "uid": "623a884b-140d-45ad-896f-0a1a30804e8e"
+   },
+   "reason": "SuccessfulCreate",
+   "reportingComponent": "replicaset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "replicaset-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:41Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "Deployment",
+    "name": "weak-log-reader",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22118",
+    "uid": "a16d3c61-d4a3-4f40-bfe1-686d225b4836"
+   },
+   "lastTimestamp": "2026-11-21T14:30:41Z",
+   "message": "Scaled up replica set weak-log-reader-b99c886cd from 0 to 1",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:41Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:41Z"
+     }
+    ],
+    "name": "weak-log-reader.18ea15dd46c0e966",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22121",
+    "uid": "3a4693fa-e030-49a5-9021-2ff17e64552a"
+   },
+   "reason": "ScalingReplicaSet",
+   "reportingComponent": "deployment-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "deployment-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:42Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "Deployment",
+    "name": "weak-log-reader",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22129",
+    "uid": "a16d3c61-d4a3-4f40-bfe1-686d225b4836"
+   },
+   "lastTimestamp": "2026-11-21T14:30:42Z",
+   "message": "Scaled down replica set weak-log-reader-759c4c7bb9 from 1 to 0",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:42Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:42Z"
+     }
+    ],
+    "name": "weak-log-reader.18ea15dd675e6ef1",
+    "namespace": "extorq-posture-lab",
+    "resourceVersion": "22138",
+    "uid": "9e88b07a-c269-4860-9d84-03162883db09"
+   },
+   "reason": "ScalingReplicaSet",
+   "reportingComponent": "deployment-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "deployment-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:28:35Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "name": "extorq-b2-netcheck",
+    "namespace": "extorq-system",
+    "resourceVersion": "21928",
+    "uid": "440b79f8-9e30-452a-af58-43e3540f1320"
+   },
+   "lastTimestamp": "2026-11-21T14:28:35Z",
+   "message": "Successfully assigned extorq-system/extorq-b2-netcheck to extorq-lab-control-plane",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:28:35Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-scheduler",
+      "operation": "Update",
+      "time": "2026-11-21T14:28:35Z"
+     }
+    ],
+    "name": "extorq-b2-netcheck.18ea15bffdb03130",
+    "namespace": "extorq-system",
+    "resourceVersion": "21931",
+    "uid": "ed42157f-0068-4f90-b601-520d55bf6677"
+   },
+   "reason": "Scheduled",
+   "reportingComponent": "default-scheduler",
+   "reportingInstance": "",
+   "source": {
+    "component": "default-scheduler"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:28:36Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{netcheck}",
+    "kind": "Pod",
+    "name": "extorq-b2-netcheck",
+    "namespace": "extorq-system",
+    "resourceVersion": "21930",
+    "uid": "440b79f8-9e30-452a-af58-43e3540f1320"
+   },
+   "lastTimestamp": "2026-11-21T14:28:36Z",
+   "message": "Container image \"python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b\" already present on machine and can be accessed by the pod",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:28:36Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:28:36Z"
+     }
+    ],
+    "name": "extorq-b2-netcheck.18ea15c017d76b8b",
+    "namespace": "extorq-system",
+    "resourceVersion": "21933",
+    "uid": "6ae3c1e3-65c9-4204-b8f3-b083adc49f70"
+   },
+   "reason": "Pulled",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:28:36Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{netcheck}",
+    "kind": "Pod",
+    "name": "extorq-b2-netcheck",
+    "namespace": "extorq-system",
+    "resourceVersion": "21930",
+    "uid": "440b79f8-9e30-452a-af58-43e3540f1320"
+   },
+   "lastTimestamp": "2026-11-21T14:28:36Z",
+   "message": "Container created",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:28:36Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:28:36Z"
+     }
+    ],
+    "name": "extorq-b2-netcheck.18ea15c018cb5693",
+    "namespace": "extorq-system",
+    "resourceVersion": "21935",
+    "uid": "24e9af89-8ad4-46bf-acb8-52648fe81b0a"
+   },
+   "reason": "Created",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:28:36Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{netcheck}",
+    "kind": "Pod",
+    "name": "extorq-b2-netcheck",
+    "namespace": "extorq-system",
+    "resourceVersion": "21930",
+    "uid": "440b79f8-9e30-452a-af58-43e3540f1320"
+   },
+   "lastTimestamp": "2026-11-21T14:28:36Z",
+   "message": "Container started",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:28:36Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:28:36Z"
+     }
+    ],
+    "name": "extorq-b2-netcheck.18ea15c01ba23584",
+    "namespace": "extorq-system",
+    "resourceVersion": "21936",
+    "uid": "efc029c1-950e-44dd-961d-69e8a2f3b9de"
+   },
+   "reason": "Started",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:36:51Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5k4dx",
+    "namespace": "extorq-system",
+    "resourceVersion": "22764",
+    "uid": "7879382e-4723-46e2-af7e-5562bf858f84"
+   },
+   "lastTimestamp": "2026-11-21T14:36:51Z",
+   "message": "Successfully assigned extorq-system/extorq-otel-collector-5k4dx to extorq-lab-control-plane",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:36:51Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-scheduler",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5k4dx.18ea163358dca891",
+    "namespace": "extorq-system",
+    "resourceVersion": "22768",
+    "uid": "aa50248a-7bbb-4998-b4d3-65e717c7d40f"
+   },
+   "reason": "Scheduled",
+   "reportingComponent": "default-scheduler",
+   "reportingInstance": "",
+   "source": {
+    "component": "default-scheduler"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:36:51Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5k4dx",
+    "namespace": "extorq-system",
+    "resourceVersion": "22767",
+    "uid": "7879382e-4723-46e2-af7e-5562bf858f84"
+   },
+   "lastTimestamp": "2026-11-21T14:36:51Z",
+   "message": "Container image \"otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea\" already present on machine and can be accessed by the pod",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:36:51Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5k4dx.18ea16336efdc4f5",
+    "namespace": "extorq-system",
+    "resourceVersion": "22770",
+    "uid": "10ff6060-412a-46da-9b87-6918aa89a320"
+   },
+   "reason": "Pulled",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:36:51Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5k4dx",
+    "namespace": "extorq-system",
+    "resourceVersion": "22767",
+    "uid": "7879382e-4723-46e2-af7e-5562bf858f84"
+   },
+   "lastTimestamp": "2026-11-21T14:36:51Z",
+   "message": "Container created",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:36:51Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5k4dx.18ea16336f883a99",
+    "namespace": "extorq-system",
+    "resourceVersion": "22772",
+    "uid": "5a1a39d6-bdcb-43a1-abed-2330bba0b1e2"
+   },
+   "reason": "Created",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:36:51Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5k4dx",
+    "namespace": "extorq-system",
+    "resourceVersion": "22767",
+    "uid": "7879382e-4723-46e2-af7e-5562bf858f84"
+   },
+   "lastTimestamp": "2026-11-21T14:36:51Z",
+   "message": "Container started",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:36:51Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5k4dx.18ea1633723d5819",
+    "namespace": "extorq-system",
+    "resourceVersion": "22775",
+    "uid": "51b501d9-793d-4ab5-b855-6501f2be7a71"
+   },
+   "reason": "Started",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 2,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:36:51Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5k4dx",
+    "namespace": "extorq-system",
+    "resourceVersion": "22767",
+    "uid": "7879382e-4723-46e2-af7e-5562bf858f84"
+   },
+   "lastTimestamp": "2026-11-21T14:36:51Z",
+   "message": "Readiness probe failed: Get \"http://10.244.0.19:13133/\": dial tcp 10.244.0.19:13133: connect: connection refused",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:36:51Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5k4dx.18ea163372640ca0",
+    "namespace": "extorq-system",
+    "resourceVersion": "22778",
+    "uid": "39523ea1-0d5b-4db8-be85-575483ff6989"
+   },
+   "reason": "Unhealthy",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Warning"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:33:39Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5zgh9",
+    "namespace": "extorq-system",
+    "resourceVersion": "22469",
+    "uid": "32639e69-580a-4fa9-90c0-f2167cfba5a9"
+   },
+   "lastTimestamp": "2026-11-21T14:33:39Z",
+   "message": "Successfully assigned extorq-system/extorq-otel-collector-5zgh9 to extorq-lab-control-plane",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:33:39Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-scheduler",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5zgh9.18ea1606a8867f3f",
+    "namespace": "extorq-system",
+    "resourceVersion": "22473",
+    "uid": "ffff0e13-151f-4a1f-a7b8-854a1e08c6ed"
+   },
+   "reason": "Scheduled",
+   "reportingComponent": "default-scheduler",
+   "reportingInstance": "",
+   "source": {
+    "component": "default-scheduler"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:33:39Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5zgh9",
+    "namespace": "extorq-system",
+    "resourceVersion": "22471",
+    "uid": "32639e69-580a-4fa9-90c0-f2167cfba5a9"
+   },
+   "lastTimestamp": "2026-11-21T14:33:39Z",
+   "message": "Container image \"otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea\" already present on machine and can be accessed by the pod",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:33:39Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5zgh9.18ea1606be78b25c",
+    "namespace": "extorq-system",
+    "resourceVersion": "22478",
+    "uid": "ab19c76c-1437-491a-847a-cd1c811de509"
+   },
+   "reason": "Pulled",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:33:39Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5zgh9",
+    "namespace": "extorq-system",
+    "resourceVersion": "22471",
+    "uid": "32639e69-580a-4fa9-90c0-f2167cfba5a9"
+   },
+   "lastTimestamp": "2026-11-21T14:33:39Z",
+   "message": "Container created",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:33:39Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5zgh9.18ea1606bf084bc1",
+    "namespace": "extorq-system",
+    "resourceVersion": "22480",
+    "uid": "9d76ff03-792a-4956-98e6-6a8731251a02"
+   },
+   "reason": "Created",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:33:39Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5zgh9",
+    "namespace": "extorq-system",
+    "resourceVersion": "22471",
+    "uid": "32639e69-580a-4fa9-90c0-f2167cfba5a9"
+   },
+   "lastTimestamp": "2026-11-21T14:33:39Z",
+   "message": "Container started",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:33:39Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5zgh9.18ea1606c1e4ae7a",
+    "namespace": "extorq-system",
+    "resourceVersion": "22481",
+    "uid": "c22509b9-bf44-4cf6-a408-e2ba176952a3"
+   },
+   "reason": "Started",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:33:39Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5zgh9",
+    "namespace": "extorq-system",
+    "resourceVersion": "22471",
+    "uid": "32639e69-580a-4fa9-90c0-f2167cfba5a9"
+   },
+   "lastTimestamp": "2026-11-21T14:33:39Z",
+   "message": "Readiness probe failed: Get \"http://10.244.0.18:13133/\": dial tcp 10.244.0.18:13133: connect: connection refused",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:33:39Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5zgh9.18ea1606c2082d64",
+    "namespace": "extorq-system",
+    "resourceVersion": "22482",
+    "uid": "b7be7bb6-19e1-42a9-ba20-5f27c1eec428"
+   },
+   "reason": "Unhealthy",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Warning"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:36:51Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-5zgh9",
+    "namespace": "extorq-system",
+    "resourceVersion": "22471",
+    "uid": "32639e69-580a-4fa9-90c0-f2167cfba5a9"
+   },
+   "lastTimestamp": "2026-11-21T14:36:51Z",
+   "message": "Stopping container otel-collector",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:36:51Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     }
+    ],
+    "name": "extorq-otel-collector-5zgh9.18ea1633517ddd5c",
+    "namespace": "extorq-system",
+    "resourceVersion": "22761",
+    "uid": "21d509d9-d9bf-4fbc-9df2-f618bbe247de"
+   },
+   "reason": "Killing",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:43Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-lq2vg",
+    "namespace": "extorq-system",
+    "resourceVersion": "22160",
+    "uid": "c387027d-0910-4ef5-8bfa-43aeee1ba6f7"
+   },
+   "lastTimestamp": "2026-11-21T14:30:43Z",
+   "message": "Successfully assigned extorq-system/extorq-otel-collector-lq2vg to extorq-lab-control-plane",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:43Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-scheduler",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:43Z"
+     }
+    ],
+    "name": "extorq-otel-collector-lq2vg.18ea15ddb67e18d0",
+    "namespace": "extorq-system",
+    "resourceVersion": "22164",
+    "uid": "37e2f89a-8e7c-4626-802a-206e5272fd27"
+   },
+   "reason": "Scheduled",
+   "reportingComponent": "default-scheduler",
+   "reportingInstance": "",
+   "source": {
+    "component": "default-scheduler"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:43Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-lq2vg",
+    "namespace": "extorq-system",
+    "resourceVersion": "22162",
+    "uid": "c387027d-0910-4ef5-8bfa-43aeee1ba6f7"
+   },
+   "lastTimestamp": "2026-11-21T14:30:43Z",
+   "message": "Container image \"otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea\" already present on machine and can be accessed by the pod",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:43Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:43Z"
+     }
+    ],
+    "name": "extorq-otel-collector-lq2vg.18ea15ddccae8f0e",
+    "namespace": "extorq-system",
+    "resourceVersion": "22166",
+    "uid": "24658da6-edca-4e92-b6a5-5f2052edcd9c"
+   },
+   "reason": "Pulled",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:43Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-lq2vg",
+    "namespace": "extorq-system",
+    "resourceVersion": "22162",
+    "uid": "c387027d-0910-4ef5-8bfa-43aeee1ba6f7"
+   },
+   "lastTimestamp": "2026-11-21T14:30:43Z",
+   "message": "Container created",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:43Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:43Z"
+     }
+    ],
+    "name": "extorq-otel-collector-lq2vg.18ea15ddcd593594",
+    "namespace": "extorq-system",
+    "resourceVersion": "22168",
+    "uid": "71c68c8e-e39e-432b-a6a6-20372e47ba1e"
+   },
+   "reason": "Created",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:43Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-lq2vg",
+    "namespace": "extorq-system",
+    "resourceVersion": "22162",
+    "uid": "c387027d-0910-4ef5-8bfa-43aeee1ba6f7"
+   },
+   "lastTimestamp": "2026-11-21T14:30:43Z",
+   "message": "Container started",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:43Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:43Z"
+     }
+    ],
+    "name": "extorq-otel-collector-lq2vg.18ea15ddcfe25c5c",
+    "namespace": "extorq-system",
+    "resourceVersion": "22169",
+    "uid": "be400889-cdc7-4779-b01a-b77066aa57fe"
+   },
+   "reason": "Started",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 2,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:43Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-lq2vg",
+    "namespace": "extorq-system",
+    "resourceVersion": "22162",
+    "uid": "c387027d-0910-4ef5-8bfa-43aeee1ba6f7"
+   },
+   "lastTimestamp": "2026-11-21T14:30:44Z",
+   "message": "Readiness probe failed: Get \"http://10.244.0.15:13133/\": dial tcp 10.244.0.15:13133: connect: connection refused",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:43Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:44Z"
+     }
+    ],
+    "name": "extorq-otel-collector-lq2vg.18ea15ddcffe46d8",
+    "namespace": "extorq-system",
+    "resourceVersion": "22172",
+    "uid": "7458b7df-31db-420c-908c-99d729550236"
+   },
+   "reason": "Unhealthy",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Warning"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:15Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-lq2vg",
+    "namespace": "extorq-system",
+    "resourceVersion": "22162",
+    "uid": "c387027d-0910-4ef5-8bfa-43aeee1ba6f7"
+   },
+   "lastTimestamp": "2026-11-21T14:32:15Z",
+   "message": "Stopping container otel-collector",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:15Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:15Z"
+     }
+    ],
+    "name": "extorq-otel-collector-lq2vg.18ea15f33fc68fdc",
+    "namespace": "extorq-system",
+    "resourceVersion": "22310",
+    "uid": "57818d02-deea-4a7e-b082-53149fda754c"
+   },
+   "reason": "Killing",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:16Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-sgz7f",
+    "namespace": "extorq-system",
+    "resourceVersion": "22314",
+    "uid": "80d59a5b-7000-4cc0-9eb8-614fd6c759ad"
+   },
+   "lastTimestamp": "2026-11-21T14:32:16Z",
+   "message": "Successfully assigned extorq-system/extorq-otel-collector-sgz7f to extorq-lab-control-plane",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:16Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-scheduler",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:16Z"
+     }
+    ],
+    "name": "extorq-otel-collector-sgz7f.18ea15f34a3c0c39",
+    "namespace": "extorq-system",
+    "resourceVersion": "22318",
+    "uid": "474c4127-fcb2-4cab-a51c-20e332c7ea9c"
+   },
+   "reason": "Scheduled",
+   "reportingComponent": "default-scheduler",
+   "reportingInstance": "",
+   "source": {
+    "component": "default-scheduler"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:16Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-sgz7f",
+    "namespace": "extorq-system",
+    "resourceVersion": "22316",
+    "uid": "80d59a5b-7000-4cc0-9eb8-614fd6c759ad"
+   },
+   "lastTimestamp": "2026-11-21T14:32:16Z",
+   "message": "Container image \"otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea\" already present on machine and can be accessed by the pod",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:16Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:16Z"
+     }
+    ],
+    "name": "extorq-otel-collector-sgz7f.18ea15f360516826",
+    "namespace": "extorq-system",
+    "resourceVersion": "22322",
+    "uid": "bab2bbf1-9631-4d51-b905-a7f8a629e86f"
+   },
+   "reason": "Pulled",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:16Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-sgz7f",
+    "namespace": "extorq-system",
+    "resourceVersion": "22316",
+    "uid": "80d59a5b-7000-4cc0-9eb8-614fd6c759ad"
+   },
+   "lastTimestamp": "2026-11-21T14:32:16Z",
+   "message": "Container created",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:16Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:16Z"
+     }
+    ],
+    "name": "extorq-otel-collector-sgz7f.18ea15f360f62818",
+    "namespace": "extorq-system",
+    "resourceVersion": "22324",
+    "uid": "cf153805-820c-4ec8-acbf-3e4cdcd088a1"
+   },
+   "reason": "Created",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:16Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-sgz7f",
+    "namespace": "extorq-system",
+    "resourceVersion": "22316",
+    "uid": "80d59a5b-7000-4cc0-9eb8-614fd6c759ad"
+   },
+   "lastTimestamp": "2026-11-21T14:32:16Z",
+   "message": "Container started",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:16Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:16Z"
+     }
+    ],
+    "name": "extorq-otel-collector-sgz7f.18ea15f36393d56e",
+    "namespace": "extorq-system",
+    "resourceVersion": "22325",
+    "uid": "0710ff18-fd8a-4846-8d2a-8cab0c4c5486"
+   },
+   "reason": "Started",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:16Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-sgz7f",
+    "namespace": "extorq-system",
+    "resourceVersion": "22316",
+    "uid": "80d59a5b-7000-4cc0-9eb8-614fd6c759ad"
+   },
+   "lastTimestamp": "2026-11-21T14:32:16Z",
+   "message": "Readiness probe failed: Get \"http://10.244.0.16:13133/\": dial tcp 10.244.0.16:13133: connect: connection refused",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:16Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:16Z"
+     }
+    ],
+    "name": "extorq-otel-collector-sgz7f.18ea15f363bed4c1",
+    "namespace": "extorq-system",
+    "resourceVersion": "22326",
+    "uid": "39fd228e-445f-42af-8c44-be7e3a6db3ac"
+   },
+   "reason": "Unhealthy",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Warning"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:33:39Z",
+   "involvedObject": {
+    "apiVersion": "v1",
+    "fieldPath": "spec.containers{otel-collector}",
+    "kind": "Pod",
+    "name": "extorq-otel-collector-sgz7f",
+    "namespace": "extorq-system",
+    "resourceVersion": "22316",
+    "uid": "80d59a5b-7000-4cc0-9eb8-614fd6c759ad"
+   },
+   "lastTimestamp": "2026-11-21T14:33:39Z",
+   "message": "Stopping container otel-collector",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:33:39Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:reportingInstance": {},
+       "f:source": {
+        "f:component": {},
+        "f:host": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kubelet",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     }
+    ],
+    "name": "extorq-otel-collector-sgz7f.18ea16069d80941d",
+    "namespace": "extorq-system",
+    "resourceVersion": "22463",
+    "uid": "2772c90d-c0a9-4f6b-90c5-2174f03fb13d"
+   },
+   "reason": "Killing",
+   "reportingComponent": "kubelet",
+   "reportingInstance": "extorq-lab-control-plane",
+   "source": {
+    "component": "kubelet",
+    "host": "extorq-lab-control-plane"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:30:43Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "DaemonSet",
+    "name": "extorq-otel-collector",
+    "namespace": "extorq-system",
+    "resourceVersion": "22158",
+    "uid": "54d718f9-54ce-4e00-b621-0e86ed7c0e10"
+   },
+   "lastTimestamp": "2026-11-21T14:30:43Z",
+   "message": "Created pod: extorq-otel-collector-lq2vg",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:30:43Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:30:43Z"
+     }
+    ],
+    "name": "extorq-otel-collector.18ea15ddb6503517",
+    "namespace": "extorq-system",
+    "resourceVersion": "22161",
+    "uid": "4f08a1f4-b6be-4e54-a83e-cbaf98fdb201"
+   },
+   "reason": "SuccessfulCreate",
+   "reportingComponent": "daemonset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "daemonset-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:15Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "DaemonSet",
+    "name": "extorq-otel-collector",
+    "namespace": "extorq-system",
+    "resourceVersion": "22306",
+    "uid": "54d718f9-54ce-4e00-b621-0e86ed7c0e10"
+   },
+   "lastTimestamp": "2026-11-21T14:32:15Z",
+   "message": "Deleted pod: extorq-otel-collector-lq2vg",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:15Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:15Z"
+     }
+    ],
+    "name": "extorq-otel-collector.18ea15f33faff82b",
+    "namespace": "extorq-system",
+    "resourceVersion": "22309",
+    "uid": "4256ee95-f4fb-4545-bb8f-cb798624f499"
+   },
+   "reason": "SuccessfulDelete",
+   "reportingComponent": "daemonset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "daemonset-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:32:16Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "DaemonSet",
+    "name": "extorq-otel-collector",
+    "namespace": "extorq-system",
+    "resourceVersion": "22311",
+    "uid": "54d718f9-54ce-4e00-b621-0e86ed7c0e10"
+   },
+   "lastTimestamp": "2026-11-21T14:32:16Z",
+   "message": "Created pod: extorq-otel-collector-sgz7f",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:32:16Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:32:16Z"
+     }
+    ],
+    "name": "extorq-otel-collector.18ea15f34a0871ef",
+    "namespace": "extorq-system",
+    "resourceVersion": "22315",
+    "uid": "ce7187d7-a4f1-4d29-ba17-fe300b93fdb5"
+   },
+   "reason": "SuccessfulCreate",
+   "reportingComponent": "daemonset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "daemonset-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:33:39Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "DaemonSet",
+    "name": "extorq-otel-collector",
+    "namespace": "extorq-system",
+    "resourceVersion": "22459",
+    "uid": "54d718f9-54ce-4e00-b621-0e86ed7c0e10"
+   },
+   "lastTimestamp": "2026-11-21T14:33:39Z",
+   "message": "Deleted pod: extorq-otel-collector-sgz7f",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:33:39Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     }
+    ],
+    "name": "extorq-otel-collector.18ea16069d6666c7",
+    "namespace": "extorq-system",
+    "resourceVersion": "22462",
+    "uid": "95033bc5-1788-4c4b-8744-52c00fd7df8a"
+   },
+   "reason": "SuccessfulDelete",
+   "reportingComponent": "daemonset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "daemonset-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:33:39Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "DaemonSet",
+    "name": "extorq-otel-collector",
+    "namespace": "extorq-system",
+    "resourceVersion": "22464",
+    "uid": "54d718f9-54ce-4e00-b621-0e86ed7c0e10"
+   },
+   "lastTimestamp": "2026-11-21T14:33:39Z",
+   "message": "Created pod: extorq-otel-collector-5zgh9",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:33:39Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:33:39Z"
+     }
+    ],
+    "name": "extorq-otel-collector.18ea1606a855d085",
+    "namespace": "extorq-system",
+    "resourceVersion": "22470",
+    "uid": "8095f854-0205-49ae-b44d-ef36ec29ee86"
+   },
+   "reason": "SuccessfulCreate",
+   "reportingComponent": "daemonset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "daemonset-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:36:51Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "DaemonSet",
+    "name": "extorq-otel-collector",
+    "namespace": "extorq-system",
+    "resourceVersion": "22756",
+    "uid": "54d718f9-54ce-4e00-b621-0e86ed7c0e10"
+   },
+   "lastTimestamp": "2026-11-21T14:36:51Z",
+   "message": "Deleted pod: extorq-otel-collector-5zgh9",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:36:51Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     }
+    ],
+    "name": "extorq-otel-collector.18ea163351624c65",
+    "namespace": "extorq-system",
+    "resourceVersion": "22760",
+    "uid": "0dd6f12d-2e74-44eb-ac30-a2c615378462"
+   },
+   "reason": "SuccessfulDelete",
+   "reportingComponent": "daemonset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "daemonset-controller"
+   },
+   "type": "Normal"
+  },
+  {
+   "count": 1,
+   "eventTime": null,
+   "firstTimestamp": "2026-11-21T14:36:51Z",
+   "involvedObject": {
+    "apiVersion": "apps/v1",
+    "kind": "DaemonSet",
+    "name": "extorq-otel-collector",
+    "namespace": "extorq-system",
+    "resourceVersion": "22759",
+    "uid": "54d718f9-54ce-4e00-b621-0e86ed7c0e10"
+   },
+   "lastTimestamp": "2026-11-21T14:36:51Z",
+   "message": "Created pod: extorq-otel-collector-5k4dx",
+   "metadata": {
+    "creationTimestamp": "2026-11-21T14:36:51Z",
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:count": {},
+       "f:firstTimestamp": {},
+       "f:involvedObject": {},
+       "f:lastTimestamp": {},
+       "f:message": {},
+       "f:reason": {},
+       "f:reportingComponent": {},
+       "f:source": {
+        "f:component": {}
+       },
+       "f:type": {}
+      },
+      "manager": "kube-controller-manager",
+      "operation": "Update",
+      "time": "2026-11-21T14:36:51Z"
+     }
+    ],
+    "name": "extorq-otel-collector.18ea163358822293",
+    "namespace": "extorq-system",
+    "resourceVersion": "22765",
+    "uid": "2d579efc-3e77-4f6b-a0ce-d91fd2a8fe09"
+   },
+   "reason": "SuccessfulCreate",
+   "reportingComponent": "daemonset-controller",
+   "reportingInstance": "",
+   "source": {
+    "component": "daemonset-controller"
+   },
+   "type": "Normal"
+  }
+ ],
+ "kind": "EventList",
+ "metadata": {
+  "resourceVersion": "23216"
+ }
+}

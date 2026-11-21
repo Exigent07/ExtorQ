@@ -96,7 +96,9 @@ def _iter_files(root: Path, rel_paths: Iterable[str]) -> Iterable[tuple[str, Pat
             yield path.relative_to(root).as_posix(), path
 
 
-def index_paths(root: Path, rel_paths: Iterable[str], mount_rel: dict[str, str] | None = None) -> K8sIndex:
+def index_paths(
+    root: Path, rel_paths: Iterable[str], mount_rel: dict[str, str] | None = None
+) -> K8sIndex:
     """Index YAML files below ``rel_paths`` (relative to ``root``).
 
     ``mount_rel`` optionally maps a repository-relative path prefix to the path
@@ -135,3 +137,26 @@ def lookup(index: K8sIndex | None, path: str | None, line: int | None) -> K8sObj
         ):
             best = ref
     return best
+
+
+#: Kinds that carry a Pod template (pod-level checks apply to them).
+WORKLOAD_KINDS = frozenset(
+    {
+        "Pod",
+        "Deployment",
+        "DaemonSet",
+        "StatefulSet",
+        "ReplicaSet",
+        "ReplicationController",
+        "Job",
+        "CronJob",
+    }
+)
+
+
+def sole_workload(index: K8sIndex | None, path: str | None) -> K8sObjectRef | None:
+    """The only workload object in ``path``, if exactly one exists (else ``None``)."""
+    if not index or not path:
+        return None
+    refs = [ref for ref in index.get(path, ()) if ref.kind in WORKLOAD_KINDS]
+    return refs[0] if len(refs) == 1 else None

@@ -9,10 +9,13 @@
  * analyst sees that the source contained it instead of being misled by it.
  */
 
+// Escapes only (no literal invisible characters in source: Trojan Source review hazard).
 // Bidi embeddings/overrides/isolates and directional marks.
-const BIDI = /[؜‎‏‪-‮⁦-⁩]/;
-// Zero-width and invisible formatting characters.
-const INVISIBLE = /[­᠎​-‍⁠-⁤﻿]/;
+const BIDI = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+// Zero-width and invisible formatting characters, Unicode tag characters (invisible
+// "ASCII smuggling"), interlinear annotations and the line/paragraph separators that
+// can fake line breaks in single-line cells.
+const INVISIBLE = /[\u00ad\u180e\u200b-\u200d\u2028\u2029\u2060-\u2064\ufeff\ufff9-\ufffb]|[\u{e0000}-\u{e007f}]/u;
 // C0 controls except TAB/LF/CR (handled separately), DEL and C1 controls.
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 

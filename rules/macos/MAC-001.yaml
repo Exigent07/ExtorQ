@@ -1,0 +1,67 @@
+rule_id: MAC-001
+version: 1.0.0
+title: New or modified macOS LaunchAgent/LaunchDaemon
+description: >-
+  A launchd property list appeared or changed in a persistence location on a macOS host
+  (~/Library/LaunchAgents, /Library/LaunchAgents, /Library/LaunchDaemons), as observed by
+  the macOS collector comparing snapshots, and its label is not on the collector's
+  allow-list. launchd loads user agents at the next login and daemons at boot, so a new
+  plist is persistence even before it runs.
+severity: medium
+status: experimental
+mitre_techniques: [T1543.001, T1543.004]
+asset_types: [macos_host]
+requires:
+  - source_type: macos.launchd
+    event_types: [persistence.launchd.item_created, persistence.launchd.item_modified]
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: event
+group_by: [asset_id, path, sha256]
+params:
+  # Exact labels expected to change, in addition to the collector's own allow-list.
+  allowlist_labels: []
+false_positives:
+  - >-
+    Software installs and updates (browsers, updaters, Homebrew services) that create or
+    rewrite their launch agents; add their labels to the collector allow-list once
+    reviewed (allow-listed items stay visible as events).
+  - Administrators deploying management agents through MDM or scripts.
+blind_spots:
+  - >-
+    Plists created and removed between two collector scans, and persistence outside these
+    three directories (login items in the Background Task Management database, cron,
+    shell profiles, configuration profiles).
+  - >-
+    Whether launchd actually loaded the job is not visible without root; the alert is about
+    the file on disk.
+  - >-
+    Label-based allow-listing: an attacker who reuses an allow-listed label evades the rule
+    (the event is still recorded with attributes.allowlisted = true).
+references:
+  - https://attack.mitre.org/techniques/T1543/001/
+  - https://attack.mitre.org/techniques/T1543/004/
+query: MAC-001.sql
+summary_template: >-
+  launchd {kind} plist {path} ({label}, scope {scope}) {change_types} on {asset_id}:
+  program {program}; RunAtLoad {run_at_load}; KeepAlive {keep_alive}
+tests:
+  - name: user-agent-created-simulation
+    description: Shape of B3's mac_001_launchagent.sh (com.extorq.sim.<run_id>, /usr/bin/true).
+    fixture: tests/MAC-001/positive_user_agent_created_sim.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+  - name: daemon-modified-unparseable
+    description: A LaunchDaemon plist rewritten with content that does not parse.
+    fixture: tests/MAC-001/positive_daemon_modified_unparseable.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: allowlisted-and-deleted
+    description: An allow-listed updater agent created, and a plist deleted.
+    fixture: tests/MAC-001/negative_allowlisted_and_deleted.jsonl
+    expect: no_alert

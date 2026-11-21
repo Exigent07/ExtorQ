@@ -60,7 +60,9 @@ def decide(
         limit = f" after {timeout_seconds:.0f}s" if timeout_seconds else ""
         return Verdict(ScanStatus.FAILED, f"tool timed out{limit}; output discarded")
     if process.output_truncated:
-        return Verdict(ScanStatus.FAILED, "tool output exceeded the size limit; truncated output discarded")
+        return Verdict(
+            ScanStatus.FAILED, "tool output exceeded the size limit; truncated output discarded"
+        )
     if parse_error is not None:
         code = f" (exit code {process.exit_code})" if process.exit_code is not None else ""
         return Verdict(ScanStatus.FAILED, f"unusable tool output{code}: {parse_error}")

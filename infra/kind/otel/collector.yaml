@@ -84,6 +84,12 @@ processors:
     filter:
       # Only watch pods scheduled on this node.
       node_from_env_var: K8S_NODE_NAME
+    # Do not process records before the pod/ReplicaSet caches are synced: after a
+    # restart the receivers resume immediately, and records processed against an
+    # empty cache would lose their workload / container.id metadata (and with it the
+    # service attribution). Startup fails visibly if the API is unreachable for 30 s.
+    wait_for_metadata: true
+    wait_for_metadata_timeout: 30s
     pod_association:
       - sources:
           - from: resource_attribute
@@ -100,6 +106,11 @@ processors:
         - k8s.statefulset.name
         - k8s.job.name
         - k8s.cronjob.name
+        # Container-level metadata, matched on k8s.container.name and
+        # k8s.container.restart_count (set by the container parser from the log path).
+        - container.id
+        - container.image.name
+        - container.image.tags
 
   resource/containers:
     attributes:

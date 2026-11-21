@@ -13,6 +13,9 @@ import pytest
 
 from extorq.contracts.common import utc_now
 from extorq.contracts.event import SecurityEvent
+from extorq.contracts.identity import service_id
+from extorq.contracts.ingest import RecordKind
+from extorq.contracts.service import Service, ServiceRef
 from extorq.detection import harness
 from extorq.detection.engine import DetectionEngine, EngineConfig
 from extorq.detection.registry import LoadedRule, load_rules_report
@@ -84,6 +87,31 @@ def test_duplicate_inserts_do_not_inflate_counts_or_alerts(clean, to_row) -> Non
     assert tuple(evidence) == (18, 18)
 
 
+@pytest.mark.parametrize("rule_id", sorted(RULES))
+def test_duplicate_replay_is_idempotent_for_every_rule(clean, to_row, rule_id) -> None:
+    """At-least-once delivery: inserting a positive fixture twice changes nothing."""
+    rule = RULES[rule_id]
+    case = next(c for c in rule.tests if c.expect == "alert")
+    records = harness.load_fixture(case.fixture)
+    delta = harness.day_offset(harness.anchor_time(records, case))
+    records = harness.shift_records(records, delta)
+    now = harness.anchor_time(records, case) if case.now is None else case.now + delta
+
+    def run(copies: int) -> list[tuple[str, int, int]]:
+        clean.truncate()
+        for i in range(copies):
+            harness.insert_records(clean.client("admin"), records, to_row, batch_id=f"copy{i}")
+        _engine(clean, rule).run_once(now=now, force=True)
+        return sorted(
+            (a["alert_id"], a["event_count"], len(a["evidence_event_ids"]))
+            for a in _latest(clean, rule_id)
+        )
+
+    once = run(1)
+    assert once, f"{rule_id}: positive fixture produced no alert"
+    assert run(2) == once
+
+
 def test_late_events_extend_the_same_alert(clean, to_row) -> None:
     records = _events(BURST)
     events = sorted((r for r in records), key=lambda r: r[1].event_time)
@@ -113,6 +141,36 @@ def test_late_events_extend_the_same_alert(clean, to_row) -> None:
         {"a": alert1["alert_id"]},
     ).rows[0][0]
     assert stored == 18
+
+
+def test_late_arriving_telemetry_beyond_tolerance_is_caught_up(clean, to_row) -> None:
+    """A collector backfilling 2 h of journal: events older than lookback + late tolerance
+    are still evaluated because they were ingested after the last run (catch-up)."""
+    records = _events(BURST)
+    harness.insert_records(clean.client("admin"), records, to_row)
+    now = max(m.event_time for _, m in records) + timedelta(hours=2)
+
+    def engine(catchup: int) -> DetectionEngine:
+        return DetectionEngine(
+            [RULES["VM-001"]],
+            rules_client=clean.client("rules_ro"),
+            read_client=clean.client("detect"),
+            write_client=clean.client("detect"),
+            config=EngineConfig(instance="rules-harness", catchup_max_seconds=catchup),
+        )
+
+    without = engine(0).run_once(now=now, force=True)[0]
+    assert without.alerts_created == 0  # the gap: normal window (20 min) misses the burst
+
+    caught = engine(6 * 3600)
+    run = caught.run_once(now=now, force=True)[0]
+    assert run.status.value == "succeeded" and run.alerts_created == 1
+    assert run.window_start <= min(m.event_time for _, m in records)
+    [alert] = _latest(clean, "VM-001")
+    assert alert["event_count"] == 18
+    again = caught.run_once(now=now + timedelta(minutes=1), force=True)[0]
+    assert again.alerts_created == 0 and again.alerts_updated == 0
+    assert _versions(clean, alert["alert_id"]) == 1
 
 
 def test_identity_is_stable_across_reruns_and_fresh_state(clean, to_row) -> None:
@@ -165,6 +223,78 @@ def test_rule_sql_runs_with_readonly_identity(clean) -> None:
     run = _engine(clean, sneaky).run_once(now=utc_now(), force=True)[0]
     assert run.status.value == "failed"
     assert run.error and ("497" in run.error or "privileges" in run.error.lower())
+
+
+def test_alert_service_ids_come_from_evidence_service_refs(clean, to_row) -> None:
+    """events.service_id (or the payload's service ref) of the evidence becomes alert.service_ids.
+
+    SYNTHETIC: the burst fixture events get a synthetic ServiceRef for the ssh service, as
+    B1's ssh adapter attributes sshd journald lines.
+    """
+    ssh_service = service_id("linux:lab-vm-01", "host_service", "ssh.service")
+    records = [
+        (kind, model.model_copy(update={"service": ServiceRef(service_id=ssh_service, name="ssh")}))
+        for kind, model in _events(BURST)
+    ]
+    harness.insert_records(clean.client("admin"), records, to_row)
+    now = max(m.event_time for _, m in records) + timedelta(seconds=60)
+    run = _engine(clean, RULES["VM-001"]).run_once(now=now, force=True)[0]
+    assert run.alerts_created == 1
+    [alert] = _latest(clean, "VM-001")
+    assert list(alert["service_ids"]) == [ssh_service]
+
+
+def test_alert_ignores_service_ids_registered_for_another_asset(clean, to_row) -> None:
+    """F-IC-6: VM events claiming the macOS ssh service id (registered for macOS) are not
+    attributed to that service. SYNTHETIC records."""
+    mac_ssh = service_id("macos:workstation-01", "host_service", "com.openssh.sshd")
+    records = [
+        (kind, model.model_copy(update={"service": ServiceRef(service_id=mac_ssh, name="ssh")}))
+        for kind, model in _events(BURST)
+    ]
+    first = min(m.event_time for _, m in records)
+    genuine = Service(
+        service_id=mac_ssh,
+        asset_id="macos:workstation-01",
+        service_kind="host_service",
+        service_key="com.openssh.sshd",
+        name="ssh",
+        category="ssh",
+        discovered_via=["launchd_job"],
+        adapter_support="implemented",
+        monitoring_status="unmonitored",
+        first_seen=first,
+        last_seen=first,
+        observed_by="fixture-synthetic",
+    )
+    harness.insert_records(clean.client("admin"), [*records, (RecordKind.SERVICE, genuine)], to_row)
+    now = max(m.event_time for _, m in records) + timedelta(seconds=60)
+    assert _engine(clean, RULES["VM-001"]).run_once(now=now, force=True)[0].alerts_created == 1
+    [alert] = _latest(clean, "VM-001")
+    assert list(alert["service_ids"]) == []
+
+
+def test_alert_lists_producing_and_subject_services(clean, to_row) -> None:
+    """B1 note 5: unit-file diffs are produced by systemd and ABOUT the unit's service
+    (attributes.subject_service_id); the VM-002 alert lists both. SYNTHETIC records."""
+    systemd = service_id("linux:lab-vm-01", "host_service", "init.scope")
+    unit = service_id("linux:lab-vm-01", "host_service", "extorq-sim-fixture0vm002.service")
+    fixture = ROOT / "linux" / "tests" / "VM-002" / "positive_created_with_audit_sim.jsonl"
+    records = []
+    for kind, model in _events(fixture):
+        if model.event_type.startswith("persistence.systemd."):
+            model = model.model_copy(
+                update={
+                    "service": ServiceRef(service_id=systemd, name="systemd"),
+                    "attributes": {**model.attributes, "subject_service_id": unit},
+                }
+            )
+        records.append((kind, model))
+    harness.insert_records(clean.client("admin"), records, to_row)
+    now = max(m.event_time for _, m in records) + timedelta(seconds=60)
+    assert _engine(clean, RULES["VM-002"]).run_once(now=now, force=True)[0].alerts_created == 1
+    [alert] = _latest(clean, "VM-002")
+    assert sorted(alert["service_ids"]) == sorted([systemd, unit])
 
 
 def test_missing_sources_reported_when_no_telemetry(clean) -> None:

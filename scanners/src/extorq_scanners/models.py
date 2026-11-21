@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from extorq.contracts import PostureFinding, Severity, SkippedCheck
-
 from extorq_scanners.k8s_index import K8sIndex
+from extorq_scanners.services import ServiceHint
 
 
 class ReportFormatError(ValueError):
@@ -37,6 +37,13 @@ class NormalizeContext:
     #: Semgrep: number of rules supplied (coverage); label of the rulesets used.
     rules_total: int | None = None
     ruleset_label: str | None = None
+    #: Extra finding-identity part (trivy image: ``image:<repository>``) so equal
+    #: packages in different artifacts of one asset get distinct finding ids.
+    identity_qualifier: str = ""
+    #: Human label of the scanned artifact (trivy image: the image repository).
+    artifact: str | None = None
+    #: Evidence-gated OS package -> service attribution (see extorq_scanners.services).
+    package_services: Mapping[str, ServiceHint] = field(default_factory=dict)
 
 
 @dataclass

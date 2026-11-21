@@ -1,0 +1,7 @@
+# DOCUMENTED FORMAT EXAMPLES - NOT CAPTURED TELEMETRY. Apache is not deployed in the ExtorQ lab.
+# Source: Apache HTTP Server 2.4 documentation, "Log Files"
+# (https://httpd.apache.org/docs/2.4/logs.html), Common/Combined Log Format and error-log
+# examples, reproduced verbatim. Used only to test the apache adapter's parsers.
+common	127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326
+combined	127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326 "http://www.example.com/start.html" "Mozilla/4.08 [en] (Win98; I ;Nav)"
+error	[Fri Sep 09 10:42:29.902022 2011] [core:error] [pid 35708:tid 4328636416] [client 72.15.99.187] File does not exist: /usr/local/apache2/htdocs/favicon.ico

@@ -20,6 +20,7 @@ thread and anything else touching the same file use separate instances.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -100,19 +101,16 @@ class StateStore:
     def __init__(self, path: Path, *, busy_timeout_ms: int = 10_000) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        try:
+        with contextlib.suppress(OSError):
             os.chmod(path.parent, 0o700)
-        except OSError:
-            pass
         self._lock = threading.RLock()
         new_file = not path.exists()
-        self._conn = sqlite3.connect(str(path), timeout=busy_timeout_ms / 1000,
-                                     isolation_level=None, check_same_thread=False)
+        self._conn = sqlite3.connect(
+            str(path), timeout=busy_timeout_ms / 1000, isolation_level=None, check_same_thread=False
+        )
         if new_file:
-            try:
+            with contextlib.suppress(OSError):
                 os.chmod(path, 0o600)
-            except OSError:
-                pass
         self._conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA synchronous = FULL")
@@ -164,8 +162,10 @@ class StateStore:
                 conn.execute("DELETE FROM snapshots WHERE name = ?", (snapshot.name,))
                 conn.executemany(
                     "INSERT INTO snapshots(name, item_key, item, item_hash) VALUES (?, ?, ?, ?)",
-                    [(snapshot.name, key, item, digest)
-                     for key, (item, digest) in snapshot.items.items()],
+                    [
+                        (snapshot.name, key, item, digest)
+                        for key, (item, digest) in snapshot.items.items()
+                    ],
                 )
                 conn.execute(
                     "INSERT INTO snapshot_names(name, updated_at) VALUES (?, ?) "
@@ -178,8 +178,9 @@ class StateStore:
 
     def checkpoint(self, key: str) -> str | None:
         with self._lock:
-            row = self._conn.execute("SELECT value FROM checkpoints WHERE key = ?",
-                                     (key,)).fetchone()
+            row = self._conn.execute(
+                "SELECT value FROM checkpoints WHERE key = ?", (key,)
+            ).fetchone()
         return None if row is None else str(row[0])
 
     def checkpoints(self) -> dict[str, str]:
@@ -215,8 +216,9 @@ class StateStore:
 
     def has_snapshot(self, name: str) -> bool:
         with self._lock:
-            row = self._conn.execute("SELECT 1 FROM snapshot_names WHERE name = ?",
-                                     (name,)).fetchone()
+            row = self._conn.execute(
+                "SELECT 1 FROM snapshot_names WHERE name = ?", (name,)
+            ).fetchone()
         return row is not None
 
     # ── outbox (sender side) ──────────────────────────────────────────
@@ -244,12 +246,14 @@ class StateStore:
                 batch_id = str(row[0])
                 rows = conn.execute(
                     "SELECT seq, kind, record, size, created_at, batch_id FROM outbox "
-                    "WHERE batch_id = ? ORDER BY seq", (batch_id,)
+                    "WHERE batch_id = ? ORDER BY seq",
+                    (batch_id,),
                 ).fetchall()
                 return batch_id, [OutboxRow(*r) for r in rows]
             candidates = conn.execute(
                 "SELECT seq, kind, record, size, created_at, batch_id FROM outbox "
-                "ORDER BY seq LIMIT ?", (int(max_records),)
+                "ORDER BY seq LIMIT ?",
+                (int(max_records),),
             ).fetchall()
             if not candidates:
                 return None
@@ -262,10 +266,12 @@ class StateStore:
                 chosen.append(outbox_row)
                 total += outbox_row.size
             batch_id = uuid.uuid4().hex
-            conn.executemany("UPDATE outbox SET batch_id = ? WHERE seq = ?",
-                             [(batch_id, r.seq) for r in chosen])
-            return batch_id, [OutboxRow(r.seq, r.kind, r.record, r.size, r.created_at, batch_id)
-                              for r in chosen]
+            conn.executemany(
+                "UPDATE outbox SET batch_id = ? WHERE seq = ?", [(batch_id, r.seq) for r in chosen]
+            )
+            return batch_id, [
+                OutboxRow(r.seq, r.kind, r.record, r.size, r.created_at, batch_id) for r in chosen
+            ]
 
     def ack(self, batch_id: str) -> int:
         """Delete a batch after the gateway answered 202."""
@@ -276,16 +282,44 @@ class StateStore:
     def reassign(self, batch_id: str, *, split: bool) -> None:
         """Give the rows of ``batch_id`` fresh batch ids (halves when ``split``)."""
         with self.transaction() as conn:
-            seqs = [int(r[0]) for r in conn.execute(
-                "SELECT seq FROM outbox WHERE batch_id = ? ORDER BY seq", (batch_id,))]
+            seqs = [
+                int(r[0])
+                for r in conn.execute(
+                    "SELECT seq FROM outbox WHERE batch_id = ? ORDER BY seq", (batch_id,)
+                )
+            ]
             if not seqs:
                 return
-            groups = [seqs[: len(seqs) // 2], seqs[len(seqs) // 2:]] if split and len(seqs) > 1 \
+            groups = (
+                [seqs[: len(seqs) // 2], seqs[len(seqs) // 2 :]]
+                if split and len(seqs) > 1
                 else [seqs]
+            )
             for group in groups:
                 new_id = uuid.uuid4().hex
-                conn.executemany("UPDATE outbox SET batch_id = ? WHERE seq = ?",
-                                 [(new_id, s) for s in group])
+                conn.executemany(
+                    "UPDATE outbox SET batch_id = ? WHERE seq = ?", [(new_id, s) for s in group]
+                )
+
+    def requeue_dead(self) -> int:
+        """Move every dead-lettered record back into the outbox (fresh batch ids on send).
+
+        Used by ``extorq-collect flush --requeue-dead`` after the cause of a rejection was
+        fixed. Original order is preserved; records keep their content (and therefore
+        their deterministic identities, so the gateway still deduplicates them).
+        """
+        now = time.time()
+        with self.transaction() as conn:
+            rows = conn.execute(
+                "SELECT id, kind, record FROM outbox_dead ORDER BY seq, id"
+            ).fetchall()
+            for _id, kind, record in rows:
+                conn.execute(
+                    "INSERT INTO outbox(kind, record, size, created_at) VALUES (?, ?, ?, ?)",
+                    (kind, record, len(record.encode("utf-8")), now),
+                )
+            conn.execute("DELETE FROM outbox_dead")
+            return len(rows)
 
     def dead_letter(self, batch_id: str, status_code: int | None, error: str) -> int:
         now = time.time()
@@ -296,8 +330,45 @@ class StateStore:
             conn.executemany(
                 "INSERT INTO outbox_dead(seq, kind, record, batch_id, status_code, error, "
                 "failed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [(seq, kind, record, batch_id, status_code, error, now)
-                 for seq, kind, record in rows],
+                [
+                    (seq, kind, record, batch_id, status_code, error, now)
+                    for seq, kind, record in rows
+                ],
             )
             conn.execute("DELETE FROM outbox WHERE batch_id = ?", (batch_id,))
             return len(rows)
+
+
+def read_status(path: Path) -> dict[str, Any]:
+    """Read-only summary of a collector state DB (``{}`` when it does not exist yet).
+
+    Opens the database with ``mode=ro`` so ``extorq-collect status`` never creates or
+    modifies collector state, and never returns record contents.
+    """
+    if not path.is_file():
+        return {}
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0)
+    try:
+        conn.execute("PRAGMA busy_timeout = 5000")
+        depth = int(conn.execute("SELECT count(*) FROM outbox").fetchone()[0])
+        inflight = int(
+            conn.execute("SELECT count(*) FROM outbox WHERE batch_id IS NOT NULL").fetchone()[0]
+        )
+        oldest = conn.execute("SELECT min(created_at) FROM outbox").fetchone()[0]
+        dead = int(conn.execute("SELECT count(*) FROM outbox_dead").fetchone()[0])
+        checkpoints = int(conn.execute("SELECT count(*) FROM checkpoints").fetchone()[0])
+        snapshots = int(conn.execute("SELECT count(*) FROM snapshot_names").fetchone()[0])
+        row = conn.execute("SELECT value FROM kv WHERE key = 'health.last'").fetchone()
+    finally:
+        conn.close()
+    return {
+        "outbox_depth": depth,
+        "outbox_in_flight": inflight,
+        "outbox_oldest_age_seconds": None
+        if oldest is None
+        else round(max(0.0, time.time() - float(oldest)), 1),
+        "dead_letters": dead,
+        "checkpoints": checkpoints,
+        "snapshots": snapshots,
+        "last_health": json.loads(row[0]) if row else None,
+    }

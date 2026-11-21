@@ -21,6 +21,7 @@ STATE_VERSION = 1
 MAX_ETAGS = 64
 MAX_RUNS_TRACKED = 1000
 MAX_SNAPSHOT_CHARS = 32 * 1024
+MAX_INVENTORY_KEYS = 256
 
 
 def checkpoint_key(full_name: str) -> str:
@@ -48,8 +49,10 @@ class RepoState:
     protection: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: workflow run id -> "<attempt>:<status>:<conclusion>|<created_at>" last emitted.
     runs_seen: dict[str, str] = field(default_factory=dict)
-    #: Lower bound used for the ``created`` filter of the workflow-runs listing.
+    #: ``created_at`` of the oldest run still open at the last listing (None: none open).
     runs_cursor: str | None = None
+    #: When workflow runs were last listed successfully (gap detection).
+    runs_listed_at: str | None = None
     #: Monotonic counter making diff-event identities unique per observed change.
     change_seq: int = 0
     last_posture_at: str | None = None
@@ -57,6 +60,9 @@ class RepoState:
     last_asset_at: str | None = None
     #: Latest repository activity id processed (push timestamps / pusher enrichment).
     last_activity_id: int | None = None
+    #: Item keys of the last inventory snapshot (to emit tombstones for removed items).
+    inventory_workflows: list[str] = field(default_factory=list)
+    inventory_branches: list[str] = field(default_factory=list)
 
     def remember_etag(self, key: str, etag: str | None) -> None:
         if not etag:
@@ -104,10 +110,14 @@ class RepoState:
         state = cls()
         for name, default in asdict(cls()).items():
             value = data.get(name, default)
-            if isinstance(default, dict) and not isinstance(value, dict):
+            if (isinstance(default, dict) and not isinstance(value, dict)) or (
+                isinstance(default, list) and not isinstance(value, list)
+            ):
                 value = default
             setattr(state, name, value)
         state.branch_heads = {str(k): str(v) for k, v in state.branch_heads.items()}
         state.etags = {str(k): str(v) for k, v in state.etags.items()}
         state.runs_seen = {str(k): str(v) for k, v in state.runs_seen.items()}
+        state.inventory_workflows = [str(v) for v in state.inventory_workflows][:MAX_INVENTORY_KEYS]
+        state.inventory_branches = [str(v) for v in state.inventory_branches][:MAX_INVENTORY_KEYS]
         return state

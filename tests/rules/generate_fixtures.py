@@ -20,9 +20,12 @@ from fixture_builder import (
     BASE,
     K8S,
     LINUX,
+    MACOS,
     FixtureWriter,
+    http_probe,
     k8s_audit_events,
     k8s_risk_flags,
+    nginx_request,
     ssh_failed_connection,
     ssh_success,
     workflow_delta_attributes,
@@ -127,7 +130,9 @@ def _derived(name: str, *files: str, rename: dict[str, str] | None = None) -> Fi
 def k8s001() -> dict[str, FixtureWriter]:
     d = "kubernetes/tests/K8S-001"
     return {
-        f"{d}/positive_psa_privileged_pod.jsonl": _derived("k8s001-a", "psa_denied_privileged_pod.json"),
+        f"{d}/positive_psa_privileged_pod.jsonl": _derived(
+            "k8s001-a", "psa_denied_privileged_pod.json"
+        ),
         f"{d}/positive_psa_dry_run.jsonl": _derived("k8s001-b", "psa_denied_dry_run.json"),
         f"{d}/positive_psa_ephemeral_container.jsonl": _derived(
             "k8s001-c", "psa_denied_ephemeral_container.json"
@@ -151,10 +156,21 @@ def k8s001() -> dict[str, FixtureWriter]:
     }
 
 
-def _rbac_state(fx: FixtureWriter, audit_file: str, kind: str, name: str, namespace: str | None,
-                *, offset_s: int = 30, baseline: bool = False, flags: list[str] | None = None) -> None:
+def _rbac_state(
+    fx: FixtureWriter,
+    audit_file: str,
+    kind: str,
+    name: str,
+    namespace: str | None,
+    *,
+    offset_s: int = 30,
+    baseline: bool = False,
+    flags: list[str] | None = None,
+) -> None:
     audit = k8s_audit_events(audit_file)[0]
-    attrs: dict[str, object] = {"risk_flags": flags if flags is not None else k8s_risk_flags(audit_file)}
+    attrs: dict[str, object] = {
+        "risk_flags": flags if flags is not None else k8s_risk_flags(audit_file)
+    }
     if baseline:
         attrs["baseline"] = True
     fx.add(
@@ -174,7 +190,9 @@ def _rbac_state(fx: FixtureWriter, audit_file: str, kind: str, name: str, namesp
 def k8s002() -> dict[str, FixtureWriter]:
     d = "kubernetes/tests/K8S-002"
     out = {
-        f"{d}/positive_crb_patch_subjects.jsonl": _derived("k8s002-a", "rbac_crb_patch_subjects.json"),
+        f"{d}/positive_crb_patch_subjects.jsonl": _derived(
+            "k8s002-a", "rbac_crb_patch_subjects.json"
+        ),
         f"{d}/positive_role_wildcard.jsonl": _derived("k8s002-b", "rbac_role_wildcard_create.json"),
         f"{d}/negative_controller_denied_delete.jsonl": _derived(
             "k8s002-d",
@@ -184,13 +202,22 @@ def k8s002() -> dict[str, FixtureWriter]:
         ),
     }
     fx = _derived("k8s002-c", "rbac_clusterrole_escalate_create.json")
-    _rbac_state(fx, "rbac_clusterrole_escalate_create.json", "ClusterRole", "b2-fixture-escalate", None)
+    _rbac_state(
+        fx, "rbac_clusterrole_escalate_create.json", "ClusterRole", "b2-fixture-escalate", None
+    )
     out[f"{d}/positive_escalate_audit_and_state.jsonl"] = fx
 
     fx = FixtureWriter("k8s002-e")
     _rbac_state(fx, "rbac_role_wildcard_create.json", "Role", "reader", "extorq-apps", flags=[])
-    _rbac_state(fx, "rbac_clusterrole_escalate_create.json", "ClusterRole", "legacy-escalate", None,
-                baseline=True, offset_s=60)
+    _rbac_state(
+        fx,
+        "rbac_clusterrole_escalate_create.json",
+        "ClusterRole",
+        "legacy-escalate",
+        None,
+        baseline=True,
+        offset_s=60,
+    )
     out[f"{d}/negative_benign_state.jsonl"] = fx
     return out
 
@@ -213,9 +240,18 @@ jobs:
 REPO_ASSET = ("github:example-org/extorq-lab", "github_repository")
 
 
-def _workflow_event(fx: FixtureWriter, t, sha: str, path: str, before: str | None, after: str | None,
-                    *, repo_default: str | None = "read", actor: str = "octo-dev",
-                    sim: dict[str, str] | None = None) -> None:
+def _workflow_event(
+    fx: FixtureWriter,
+    t,
+    sha: str,
+    path: str,
+    before: str | None,
+    after: str | None,
+    *,
+    repo_default: str | None = "read",
+    actor: str = "octo-dev",
+    sim: dict[str, str] | None = None,
+) -> None:
     attrs = workflow_delta_attributes(path, before, after, repo_default=repo_default)
     fields: dict[str, object] = {}
     if sim:
@@ -229,8 +265,14 @@ def _workflow_event(fx: FixtureWriter, t, sha: str, path: str, before: str | Non
         outcome="success",
         actor={"type": "github_user", "name": actor},
         resource={"type": "github_workflow", "name": path.rsplit("/", 1)[-1], "path": path},
-        github={"repository": "example-org/extorq-lab", "ref": "refs/heads/main", "commit_sha": sha,
-                "workflow_path": path, "workflow_name": "ci", "actor_login": actor},
+        github={
+            "repository": "example-org/extorq-lab",
+            "ref": "refs/heads/main",
+            "commit_sha": sha,
+            "workflow_path": path,
+            "workflow_name": "ci",
+            "actor_login": actor,
+        },
         message=f"Workflow {path} modified (synthetic fixture)",
         attributes=attrs,
         **fields,
@@ -243,32 +285,65 @@ def gh001() -> dict[str, FixtureWriter]:
     path = ".github/workflows/ci.yml"
     out: dict[str, FixtureWriter] = {}
     fx = FixtureWriter("gh001-a")
-    _workflow_event(fx, BASE, "1" * 40, path, WF_BASE,
-                    WF_BASE.replace("permissions:\n  contents: read", "permissions: write-all"))
+    _workflow_event(
+        fx,
+        BASE,
+        "1" * 40,
+        path,
+        WF_BASE,
+        WF_BASE.replace("permissions:\n  contents: read", "permissions: write-all"),
+    )
     out[f"{d}/positive_write_all.jsonl"] = fx
 
     fx = FixtureWriter("gh001-b")
-    after = WF_BASE.replace("on:\n  push:\n    branches: [main]",
-                            "on:\n  push:\n    branches: [main]\n  pull_request_target:")
-    _workflow_event(fx, BASE, "2" * 40, path, WF_BASE, after, actor="extorq-sim-fixture0gh001",
-                    sim={"run_id": "fixture0gh001", "scenario_id": "GH-001"})
+    after = WF_BASE.replace(
+        "on:\n  push:\n    branches: [main]",
+        "on:\n  push:\n    branches: [main]\n  pull_request_target:",
+    )
+    _workflow_event(
+        fx,
+        BASE,
+        "2" * 40,
+        path,
+        WF_BASE,
+        after,
+        actor="extorq-sim-fixture0gh001",
+        sim={"run_id": "fixture0gh001", "scenario_id": "GH-001"},
+    )
     out[f"{d}/positive_pull_request_target_sim.jsonl"] = fx
 
     fx = FixtureWriter("gh001-c")
     no_perms = WF_BASE.replace("permissions:\n  contents: read\n", "")
-    with_oidc = WF_BASE.replace("permissions:\n  contents: read",
-                                "permissions:\n  contents: read\n  id-token: write")
-    _workflow_event(fx, BASE, "3" * 40, ".github/workflows/deploy.yml", no_perms, with_oidc,
-                    repo_default=None)
+    with_oidc = WF_BASE.replace(
+        "permissions:\n  contents: read", "permissions:\n  contents: read\n  id-token: write"
+    )
+    _workflow_event(
+        fx, BASE, "3" * 40, ".github/workflows/deploy.yml", no_perms, with_oidc, repo_default=None
+    )
     out[f"{d}/positive_scope_unknown_default.jsonl"] = fx
 
     fx = FixtureWriter("gh001-d")
-    _workflow_event(fx, BASE, "4" * 40, path, WF_BASE, WF_BASE.replace("make test", "make lint test"))
-    _workflow_event(fx, BASE + M, "5" * 40, path, WF_BASE,
-                    WF_BASE.replace("permissions:\n  contents: read",
-                                    "permissions:\n  contents: read\n  issues: read"))
-    _workflow_event(fx, BASE + 2 * M, "6" * 40, path, WF_BASE,
-                    WF_BASE.replace("    branches: [main]", "    branches: [main, develop]\n  pull_request:"))
+    _workflow_event(
+        fx, BASE, "4" * 40, path, WF_BASE, WF_BASE.replace("make test", "make lint test")
+    )
+    _workflow_event(
+        fx,
+        BASE + M,
+        "5" * 40,
+        path,
+        WF_BASE,
+        WF_BASE.replace(
+            "permissions:\n  contents: read", "permissions:\n  contents: read\n  issues: read"
+        ),
+    )
+    _workflow_event(
+        fx,
+        BASE + 2 * M,
+        "6" * 40,
+        path,
+        WF_BASE,
+        WF_BASE.replace("    branches: [main]", "    branches: [main, develop]\n  pull_request:"),
+    )
     out[f"{d}/negative_benign_edits.jsonl"] = fx
     return out
 
@@ -276,36 +351,79 @@ def gh001() -> dict[str, FixtureWriter]:
 # ── VM-002 (synthetic, catalog key_fields) ───────────────────────────
 
 
-def _unit_event(fx: FixtureWriter, event_type: str, t, path: str, sha: str, *, prev: str | None = None,
-                baseline: bool = False, sim: dict[str, str] | None = None) -> None:
+def _unit_event(
+    fx: FixtureWriter,
+    event_type: str,
+    t,
+    path: str,
+    sha: str,
+    *,
+    prev: str | None = None,
+    baseline: bool = False,
+    sim: dict[str, str] | None = None,
+) -> None:
     name = path.rsplit("/", 1)[-1]
-    attrs: dict[str, object] = {"sha256": sha, "exec_start": "/bin/sh -c 'sleep infinity'",
-                                "vendor_unit": False}
+    attrs: dict[str, object] = {
+        "sha256": sha,
+        "exec_start": "/bin/sh -c 'sleep infinity'",
+        "vendor_unit": False,
+    }
     if prev:
         attrs["previous_sha256"] = prev
     if baseline:
         attrs["baseline"] = True
     fields: dict[str, object] = {"simulation": sim} if sim else {}
-    fx.add(event_type, t, asset=LINUX, action=event_type.rsplit(".", 1)[-1], outcome="success",
-           resource={"type": "systemd_unit", "name": name, "path": path},
-           message=f"systemd unit {name} {event_type.rsplit('_', 1)[-1]} (snapshot diff)",
-           attributes=attrs, **fields)
+    fx.add(
+        event_type,
+        t,
+        asset=LINUX,
+        action=event_type.rsplit(".", 1)[-1],
+        outcome="success",
+        resource={"type": "systemd_unit", "name": name, "path": path},
+        message=f"systemd unit {name} {event_type.rsplit('_', 1)[-1]} (snapshot diff)",
+        attributes=attrs,
+        **fields,
+    )
 
 
-def _audit_watch(fx: FixtureWriter, t, path: str, key: str, serial: int,
-                 sim: dict[str, str] | None = None) -> None:
+def _audit_watch(
+    fx: FixtureWriter,
+    t,
+    path: str,
+    key: str,
+    serial: int,
+    sim: dict[str, str] | None = None,
+    *,
+    syscall: str = "openat",
+    exe: str = "/usr/bin/tee",
+) -> None:
     fields: dict[str, object] = {"simulation": sim} if sim else {}
-    fx.add("file.audit.watch", t, asset=LINUX, action="write", outcome="success",
-           resource={"path": path}, process={"executable": "/usr/bin/tee", "name": "tee", "pid": 7021},
-           actor={"type": "user", "id": "1000"},
-           message=f"audit watch {key}: {path} written by /usr/bin/tee",
-           attributes={"audit_key": key, "syscall": "openat", "audit_serial": str(serial)}, **fields)
+    fx.add(
+        "file.audit.watch",
+        t,
+        asset=LINUX,
+        action="write",
+        outcome="success",
+        resource={"path": path},
+        process={"executable": exe, "name": exe.rsplit("/", 1)[-1], "pid": 7021},
+        actor={"type": "user", "id": "1000"},
+        message=f"audit watch {key}: {path} {syscall} by {exe}",
+        attributes={"audit_key": key, "syscall": syscall, "audit_serial": str(serial)},
+        **fields,
+    )
 
 
 def _enabled(fx: FixtureWriter, t, unit: str, wanted_by: str = "multi-user.target") -> None:
-    fx.add("persistence.systemd.unit_enabled", t, asset=LINUX, action="unit_enabled",
-           outcome="success", resource={"type": "systemd_unit", "name": unit},
-           message=f"systemd unit {unit} enabled ({wanted_by})", attributes={"wanted_by": wanted_by})
+    fx.add(
+        "persistence.systemd.unit_enabled",
+        t,
+        asset=LINUX,
+        action="unit_enabled",
+        outcome="success",
+        resource={"type": "systemd_unit", "name": unit},
+        message=f"systemd unit {unit} enabled ({wanted_by})",
+        attributes={"wanted_by": wanted_by},
+    )
 
 
 @builder
@@ -321,8 +439,23 @@ def vm002() -> dict[str, FixtureWriter]:
     out[f"{d}/positive_created_with_audit_sim.jsonl"] = fx
 
     fx = FixtureWriter("vm002-b")
-    _unit_event(fx, "persistence.systemd.unit_modified", BASE, "/etc/systemd/system/ssh-tunnel.service",
-                "b" * 64, prev="c" * 64)
+    _audit_watch(
+        fx,
+        BASE - 30 * S,
+        "/etc/systemd/system/ssh-tunnel.service",
+        "extorq_systemd",
+        813,
+        syscall="unlinkat",
+        exe="/usr/bin/rm",
+    )
+    _unit_event(
+        fx,
+        "persistence.systemd.unit_modified",
+        BASE,
+        "/etc/systemd/system/ssh-tunnel.service",
+        "b" * 64,
+        prev="c" * 64,
+    )
     out[f"{d}/positive_modified_inventory_only.jsonl"] = fx
 
     fx = FixtureWriter("vm002-c")
@@ -330,23 +463,390 @@ def vm002() -> dict[str, FixtureWriter]:
     out[f"{d}/positive_enabled_only.jsonl"] = fx
 
     fx = FixtureWriter("vm002-d")
-    _unit_event(fx, "persistence.systemd.unit_created", BASE, "/etc/systemd/system/nginx.service",
-                "d" * 64, baseline=True)
+    _unit_event(
+        fx,
+        "persistence.systemd.unit_created",
+        BASE,
+        "/etc/systemd/system/nginx.service",
+        "d" * 64,
+        baseline=True,
+    )
     _audit_watch(fx, BASE + S, "/etc/ssh/sshd_config", "extorq_sshd", 812)
-    fx.add("persistence.systemd.unit_deleted", BASE + 2 * S, asset=LINUX, action="unit_deleted",
-           resource={"type": "systemd_unit", "name": "old.service",
-                     "path": "/etc/systemd/system/old.service"},
-           message="systemd unit old.service deleted (snapshot diff)")
-    fx.add("persistence.cron.changed", BASE + 3 * S, asset=LINUX, action="changed",
-           resource={"path": "/etc/crontab"}, attributes={"sha256": "e" * 64},
-           message="cron configuration changed (snapshot diff)")
+    fx.add(
+        "persistence.systemd.unit_deleted",
+        BASE + 2 * S,
+        asset=LINUX,
+        action="unit_deleted",
+        resource={
+            "type": "systemd_unit",
+            "name": "old.service",
+            "path": "/etc/systemd/system/old.service",
+        },
+        message="systemd unit old.service deleted (snapshot diff)",
+    )
+    fx.add(
+        "persistence.cron.changed",
+        BASE + 3 * S,
+        asset=LINUX,
+        action="changed",
+        resource={"path": "/etc/crontab"},
+        attributes={"sha256": "e" * 64},
+        message="cron configuration changed (snapshot diff)",
+    )
     out[f"{d}/negative_baseline_and_unrelated.jsonl"] = fx
     return out
 
 
-def main() -> int:
+# ── CORR-002 (synthetic; nginx + sshd + systemd on one host) ─────────
+
+
+def _corr002_sequence(
+    fx: FixtureWriter,
+    *,
+    probe_ip: str,
+    ssh_ip: str,
+    unit: str,
+    ssh_at: timedelta = 5 * M,
+    persist_at: timedelta = 12 * M,
+    sim: dict[str, str] | None = None,
+    user: str = "admin",
+    probe_routes: tuple[str, ...] | None = None,
+    baseline: bool = False,
+) -> None:
+    kwargs = {"routes": probe_routes} if probe_routes is not None else {}
+    http_probe(fx, BASE, probe_ip, simulation=sim, **kwargs)
+    for i in range(4):
+        ssh_failed_connection(
+            fx, BASE + ssh_at + i * 9 * S, ssh_ip, 51000 + i, user, pid=5000 + i, simulation=sim
+        )
+    path = f"/etc/systemd/system/{unit}"
+    if not baseline:
+        _audit_watch(fx, BASE + persist_at, path, "extorq_systemd", 900, sim)
+    _unit_event(
+        fx,
+        "persistence.systemd.unit_created",
+        BASE + persist_at + 40 * S,
+        path,
+        "f" * 64,
+        baseline=baseline,
+        sim=sim,
+    )
+
+
+@builder
+def corr002() -> dict[str, FixtureWriter]:
+    d = "correlation/tests/CORR-002"
+    out: dict[str, FixtureWriter] = {}
+
+    fx = FixtureWriter("corr002-same-source")
+    _corr002_sequence(fx, probe_ip="203.0.113.60", ssh_ip="203.0.113.60", unit="backdoor.service")
+    out[f"{d}/positive_same_external_source.jsonl"] = fx
+
+    fx = FixtureWriter("corr002-nat-sim")
+    sim = {"run_id": "fixture0corr002", "scenario_id": "CORR-002"}
+    _corr002_sequence(
+        fx,
+        probe_ip="10.0.2.2",
+        ssh_ip="10.0.2.2",
+        unit="extorq-sim-fixture0corr002.service",
+        sim=sim,
+        user="extorq-sim-fixture0corr002",
+    )
+    out[f"{d}/positive_nat_gateway_sim.jsonl"] = fx
+
+    fx = FixtureWriter("corr002-different-sources")
+    _corr002_sequence(fx, probe_ip="198.51.100.20", ssh_ip="203.0.113.61", unit="updater.service")
+    out[f"{d}/positive_different_sources.jsonl"] = fx
+
+    fx = FixtureWriter("corr002-wrong-order")
+    _corr002_sequence(
+        fx,
+        probe_ip="203.0.113.62",
+        ssh_ip="203.0.113.62",
+        unit="early.service",
+        ssh_at=10 * M,
+        persist_at=3 * M,
+    )
+    out[f"{d}/negative_wrong_order.jsonl"] = fx
+
+    fx = FixtureWriter("corr002-too-slow")
+    _corr002_sequence(
+        fx,
+        probe_ip="203.0.113.63",
+        ssh_ip="203.0.113.63",
+        unit="late.service",
+        ssh_at=10 * M,
+        persist_at=40 * M,
+    )
+    out[f"{d}/negative_too_slow.jsonl"] = fx
+
+    fx = FixtureWriter("corr002-baseline")
+    _corr002_sequence(
+        fx, probe_ip="203.0.113.64", ssh_ip="203.0.113.64", unit="nginx.service", baseline=True
+    )
+    out[f"{d}/negative_missing_stage_baseline.jsonl"] = fx
+
+    fx = FixtureWriter("corr002-below-probe")
+    _corr002_sequence(
+        fx,
+        probe_ip="203.0.113.65",
+        ssh_ip="203.0.113.65",
+        unit="quiet.service",
+        probe_routes=("/.env", "/.git/config", "/wp-login.php", "/admin.php"),
+    )
+    nginx_request(fx, BASE + 30 * S, "203.0.113.65", "/", 200)
+    nginx_request(fx, BASE + 31 * S, "203.0.113.65", "/favicon.ico", 404)
+    out[f"{d}/negative_below_probe_threshold.jsonl"] = fx
+
+    fx = FixtureWriter("corr002-deletion")
+    http_probe(fx, BASE, "203.0.113.66")
+    for i in range(4):
+        ssh_failed_connection(fx, BASE + 5 * M + i * 9 * S, "203.0.113.66", 51100 + i, "admin")
+    _audit_watch(
+        fx,
+        BASE + 12 * M,
+        "/etc/systemd/system/old-agent.service",
+        "extorq_systemd",
+        901,
+        syscall="unlinkat",
+        exe="/usr/bin/rm",
+    )
+    out[f"{d}/negative_deletion_only.jsonl"] = fx
+    return out
+
+
+# ── HTTP-001 (synthetic nginx access lines) ──────────────────────────
+
+
+@builder
+def http001() -> dict[str, FixtureWriter]:
+    d = "http/tests/HTTP-001"
+    out: dict[str, FixtureWriter] = {}
+
+    fx = FixtureWriter("http001-external")
+    http_probe(fx, BASE, "203.0.113.70")
+    out[f"{d}/positive_external_probe.jsonl"] = fx
+
+    # Shape of B1's simulations/http/http_probe.sh (6 probe paths + 5 failed logins).
+    fx = FixtureWriter("http001-b1-shape")
+    sim = {"run_id": "fixture0http01", "scenario_id": "HTTP-001"}
+    paths = ("/.env", "/.git/config", "/wp-login.php", "/phpmyadmin/", "/server-status")
+    for i, route in enumerate(paths):
+        nginx_request(fx, BASE + i * S, "10.0.2.2", route, 404, simulation=sim)
+    nginx_request(fx, BASE + 6 * S, "10.0.2.2", "/admin", 401, simulation=sim)
+    for i in range(5):
+        nginx_request(
+            fx, BASE + (8 + i) * S, "10.0.2.2", "/login", 401, method="POST", simulation=sim
+        )
+    out[f"{d}/positive_nat_b1_shape_sim.jsonl"] = fx
+
+    fx = FixtureWriter("http001-ordinary")
+    ordinary = (
+        "/favicon.ico",
+        "/static/app.css",
+        "/images/logo.png",
+        "/about",
+        "/blog/2026",
+        "/robots.txt",
+        "/apple-touch-icon.png",
+        "/docs/start",
+        "/news",
+        "/team",
+        "/static/app.js",
+        "/contact",
+    )
+    http_probe(fx, BASE, "203.0.113.71", routes=ordinary)
+    out[f"{d}/negative_ordinary_404.jsonl"] = fx
+
+    fx = FixtureWriter("http001-slow")
+    http_probe(fx, BASE, "203.0.113.72", spacing_s=150.0)
+    out[f"{d}/negative_slow_probe.jsonl"] = fx
+    return out
+
+
+# ── MAC-001 (synthetic launchd diffs, attribute set of B3's collector) ─
+
+
+def _launchd(
+    fx: FixtureWriter,
+    event_type: str,
+    t,
+    path: str,
+    attrs: dict[str, object],
+    sim: dict[str, str] | None = None,
+) -> None:
+    label = attrs.get("label")
+    fields: dict[str, object] = {"simulation": sim} if sim else {}
+    change = event_type.rsplit("_", 1)[-1]
+    fx.add(
+        event_type,
+        t,
+        asset=MACOS,
+        source_type="macos.launchd",
+        action=f"launchd_item_{change}",
+        outcome="success",
+        resource={"type": "launchd_plist", "name": label or path.rsplit("/", 1)[-1], "path": path},
+        message=f"launchd plist {change}: {path} (synthetic fixture)",
+        attributes={k: v for k, v in attrs.items() if v is not None},
+        **fields,
+    )
+
+
+@builder
+def mac001() -> dict[str, FixtureWriter]:
+    d = "macos/tests/MAC-001"
+    out: dict[str, FixtureWriter] = {}
+
+    fx = FixtureWriter("mac001-sim")
+    label = "com.extorq.sim.fixture0mac001"
+    _launchd(
+        fx,
+        "persistence.launchd.item_created",
+        BASE,
+        f"/Users/labuser/Library/LaunchAgents/{label}.plist",
+        {
+            "label": label,
+            "program": "/usr/bin/true",
+            "run_at_load": False,
+            "sha256": "a" * 64,
+            "size": 412,
+            "mode": "0600",
+            "owner_uid": 501,
+            "world_writable": False,
+            "scope": "user",
+            "kind": "agent",
+            "allowlisted": False,
+        },
+        sim={"run_id": "fixture0mac001", "scenario_id": "MAC-001"},
+    )
+    out[f"{d}/positive_user_agent_created_sim.jsonl"] = fx
+
+    fx = FixtureWriter("mac001-daemon")
+    _launchd(
+        fx,
+        "persistence.launchd.item_modified",
+        BASE,
+        "/Library/LaunchDaemons/com.example.helper.plist",
+        {
+            "sha256": "b" * 64,
+            "previous_sha256": "c" * 64,
+            "size": 97,
+            "scope": "system",
+            "kind": "daemon",
+            "allowlisted": False,
+            "parse_error": "plist could not be parsed",
+        },
+    )
+    out[f"{d}/positive_daemon_modified_unparseable.jsonl"] = fx
+
+    fx = FixtureWriter("mac001-negative")
+    _launchd(
+        fx,
+        "persistence.launchd.item_created",
+        BASE,
+        "/Users/labuser/Library/LaunchAgents/com.google.keystone.agent.plist",
+        {
+            "label": "com.google.keystone.agent",
+            "program": "/Users/labuser/Library/Google/x",
+            "run_at_load": True,
+            "sha256": "d" * 64,
+            "scope": "user",
+            "kind": "agent",
+            "allowlisted": True,
+        },
+    )
+    _launchd(
+        fx,
+        "persistence.launchd.item_deleted",
+        BASE + M,
+        "/Users/labuser/Library/LaunchAgents/com.example.old.plist",
+        {"label": "com.example.old", "scope": "user", "kind": "agent", "previous_sha256": "e" * 64},
+    )
+    out[f"{d}/negative_allowlisted_and_deleted.jsonl"] = fx
+    return out
+
+
+# ── APP-001 (synthetic lab-portal auth events, B1 log contract) ──────
+
+
+def _app_login_failed(
+    fx: FixtureWriter,
+    t,
+    user: str,
+    ip: str,
+    *,
+    k8s: bool = False,
+    reason: str = "invalid_password",
+    sim: dict[str, str] | None = None,
+) -> None:
+    fields: dict[str, object] = {"simulation": sim} if sim else {}
+    if k8s:
+        fields["kubernetes"] = {
+            "cluster": "extorq-lab",
+            "namespace": "extorq-apps",
+            "pod_name": "lab-portal-7c9d8f6b5-x2x4q",
+            "pod_uid": "0f6e2c1a-9a8b-4c3d-8e7f-112233445566",
+            "container_name": "lab-portal",
+            "workload_kind": "Deployment",
+            "workload_name": "lab-portal",
+        }
+    fx.add(
+        "app.auth.login_failed",
+        t,
+        asset=K8S if k8s else LINUX,
+        source_type="k8s.container_log" if k8s else "linux.app",
+        action="login",
+        outcome="failure",
+        actor={"type": "user", "name": user},
+        network={"src_ip": ip},
+        http={"method": "POST", "route": "/login", "status_code": 401},
+        message=f"login failed for {user} ({reason})",
+        attributes={"reason": reason, "service": "lab-portal", "request_id_source": "generated"},
+        **fields,
+    )
+
+
+@builder
+def app001() -> dict[str, FixtureWriter]:
+    d = "app/tests/APP-001"
+    out: dict[str, FixtureWriter] = {}
+
+    fx = FixtureWriter("app001-guessing")
+    sim = {"run_id": "fixture0app001", "scenario_id": "HTTP-001"}
+    for i in range(5):
+        _app_login_failed(fx, BASE + i * S, "lab-admin", "10.0.2.2", sim=sim)
+    out[f"{d}/positive_guessing_nat_sim.jsonl"] = fx
+
+    fx = FixtureWriter("app001-spraying")
+    for i, user in enumerate(["admin", "root", "test", "guest", "lab-admin", "operator"]):
+        _app_login_failed(
+            fx,
+            BASE + i * 3 * S,
+            user,
+            "203.0.113.80",
+            k8s=True,
+            reason="unknown_user" if user != "lab-admin" else "invalid_password",
+        )
+    out[f"{d}/positive_spraying_k8s.jsonl"] = fx
+
+    fx = FixtureWriter("app001-negative")
+    for i in range(4):
+        _app_login_failed(fx, BASE + i * 5 * S, "lab-admin", "203.0.113.81")
+    for i in range(6):
+        _app_login_failed(fx, BASE + 10 * M + i * 6 * M, "alice", "203.0.113.82")
+    out[f"{d}/negative_below_and_slow.jsonl"] = fx
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", action="append", help="builder name, e.g. corr002 (repeatable)")
+    args = parser.parse_args(argv)
+    selected = [b for b in BUILDERS if not args.only or b.__name__ in set(args.only)]
     written = 0
-    for build in BUILDERS:
+    for build in selected:
         for rel, fx in build().items():
             fx.write(ROOT / rel)
             written += 1

@@ -29,3 +29,6 @@ class DetectorSettings(BaseSettings):
     #: At most this many contexts are (re)built per rule evaluation.
     max_contexts_per_run: int = Field(default=50, ge=0, le=1000)
     startup_attempts: int = Field(default=30, ge=1, le=1000)
+    #: Late-data catch-up horizon (0 disables) and overlap with the previous run.
+    catchup_max_seconds: int = Field(default=6 * 3600, ge=0, le=7 * 86400)
+    catchup_margin_seconds: int = Field(default=300, ge=0, le=3600)

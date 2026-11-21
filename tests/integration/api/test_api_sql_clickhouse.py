@@ -27,6 +27,7 @@ from extorq.api.repository import (
     EventFilters,
     FindingFilters,
     SeriesQuery,
+    ServiceFilters,
 )
 from extorq.api.settings import ApiSettings
 
@@ -90,7 +91,7 @@ def test_assets_are_deduplicated_and_latest_version_wins(
     repo: ClickHouseRepository, dataset: Dataset
 ) -> None:
     rows, total = repo.list_assets("", "", 50, 0)
-    assert total == 2
+    assert total == 4  # linux (2 versions), github, k8s cluster, k8s node
     linux = next(r for r in rows if r["asset_id"] == dataset.linux)
     assert linux["criticality"] == "high"
     assert linux["last_seen"].tzinfo is not None
@@ -366,3 +367,146 @@ def test_state_mutation_round_trip_with_insert_only_identity(
         json={"status": "acknowledged", "expected_updated_at": updated_at},
     )
     assert ok.status_code == 200, ok.text
+
+
+# ── service model (0004, schema 1.1) ─────────────────────────────────────────────
+
+
+def test_services_final_dedup_present_and_filters(
+    repo: ClickHouseRepository, dataset: Dataset
+) -> None:
+    sid = dataset.service_ids
+    present = {r["service_id"]: r for r in repo.list_services(ServiceFilters(), 100)}
+    assert set(present) == {sid["ssh"], sid["ftp"], sid["workload"], sid["k8s_service"]}
+    assert present[sid["ssh"]]["monitoring_status"] == "monitored"  # newest version wins
+    assert present[sid["ssh"]]["last_seen"].tzinfo is not None
+    assert '"attribution":"confirmed"' in present[sid["ssh"]]["endpoints"]
+    everything = repo.list_services(ServiceFilters(include_removed=True), 100)
+    assert sid["gone"] in {r["service_id"] for r in everything}
+    by_kind = repo.list_services(ServiceFilters(service_kind="k8s_service"), 100)
+    assert [r["service_id"] for r in by_kind] == [sid["k8s_service"]]
+    planned = repo.list_services(ServiceFilters(adapter_support="planned"), 100)
+    assert [r["service_id"] for r in planned] == [sid["ftp"]]
+    on_linux = repo.list_services(ServiceFilters(asset_id=dataset.linux), 100)
+    assert {r["service_id"] for r in on_linux} == {sid["ssh"], sid["ftp"]}
+    assert len(repo.list_services(ServiceFilters(), 1)) == 1  # max_rows bound
+    record = repo.get_service(sid["ssh"])
+    assert record is not None and '"origin"' in record["attributes"]
+    assert repo.get_service("f" * 32) is None
+
+
+def test_service_instances_latest_and_present_only(
+    repo: ClickHouseRepository, dataset: Dataset
+) -> None:
+    rows, total = repo.service_instances(dataset.service_ids["ssh"], 50)
+    assert total == 1  # pid:7 is a tombstone; pid:100 has two versions
+    assert rows[0]["pid"] == 100 and rows[0]["process_user"] == "root"
+    assert rows[0]["observed_at"] >= dataset.now - timedelta(seconds=1)
+    pods, _ = repo.service_instances(dataset.service_ids["workload"], 50)
+    assert pods[0]["asset_id"] == dataset.k8s_node and pods[0]["pod_uid"] == "synthetic-pod-uid"
+
+
+def test_service_telemetry_auth_and_events_are_duplicate_safe(
+    repo: ClickHouseRepository, dataset: Dataset
+) -> None:
+    since, until = _window(dataset)
+    ssh = dataset.service_ids["ssh"]
+    sources = repo.service_event_sources(ssh, since, until)
+    assert [(r["source_type"], r["events"]) for r in sources] == [("linux.journald", 2)]
+    summary = repo.service_auth_summary(ssh, since, until)
+    assert (summary["total"], summary["failure"], summary["success"]) == (2, 2, 0)
+    assert (summary["distinct_actors"], summary["distinct_sources"]) == (2, 1)
+    top = repo.service_auth_sources(ssh, since, until, 10)
+    assert [(r["source_ip"], r["events"], r["failures"]) for r in top] == [("10.0.2.2", 2, 2)]
+    events = repo.list_events(EventFilters(since=since, until=until, service_id=ssh), 50, 0)
+    assert sorted(e["event_id"] for e in events) == sorted(
+        [dataset.event_ids["e1"], dataset.event_ids["e2"]]
+    )
+    assert {e["service_name"] for e in events} == {"ssh"}
+    nothing = repo.service_event_sources(dataset.service_ids["ftp"], since, until)
+    assert nothing == []
+    empty = repo.service_auth_summary(dataset.service_ids["ftp"], since, until)
+    assert empty["total"] == 0
+
+
+def test_finding_service_attribution_and_filter(
+    repo: ClickHouseRepository, dataset: Dataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ssh = dataset.service_ids["ssh"]
+    attribution = repo.finding_service_attribution(list(dataset.finding_ids.values()))
+    # Latest observation is unattributed; the earlier attribution survives (argMax skips NULL).
+    assert attribution == {dataset.finding_ids["open"]: ssh}
+    rows, total, lifecycle = repo.list_findings(FindingFilters(service_id=ssh), 50, 0)
+    assert lifecycle is True and total == 1
+    assert rows[0]["finding_id"] == dataset.finding_ids["open"]
+    monkeypatch.setattr(repo, "findings_lifecycle_available", lambda: False)
+    rows, total, lifecycle = repo.list_findings(FindingFilters(service_id=ssh), 50, 0)
+    assert lifecycle is False and total == 1
+    assert rows[0]["finding_id"] == dataset.finding_ids["open"]
+
+
+def test_alert_service_filter_and_children(repo: ClickHouseRepository, dataset: Dataset) -> None:
+    since, until = _window(dataset)
+    ssh_alerts = AlertFilters(since=since, until=until, service_id=dataset.service_ids["ssh"])
+    rows = repo.list_alerts(ssh_alerts, 50, 0)
+    assert [r["alert_id"] for r in rows] == [dataset.alert_ids["a1"]]
+    assert rows[0]["service_ids"] == [dataset.service_ids["ssh"]]
+    assert repo.count_alerts(ssh_alerts) == 1
+    alert = repo.get_alert(dataset.alert_ids["a1"])
+    assert alert is not None and alert["service_ids"] == [dataset.service_ids["ssh"]]
+    children = repo.asset_children(dataset.k8s)
+    assert [(c["asset_id"], c["asset_type"]) for c in children] == [
+        (dataset.k8s_node, "kubernetes_node")
+    ]
+
+
+def test_service_endpoints_end_to_end(
+    api: tuple[TestClient, dict[str, str]], dataset: Dataset
+) -> None:
+    client, headers = api
+    viewer = {**headers, "X-ExtorQ-Role": "viewer"}
+    sid = dataset.service_ids
+    listing = client.get("/api/v1/services", headers=viewer)
+    assert listing.status_code == 200, listing.text[:500]
+    body = listing.json()
+    states = {i["service_id"]: i["coverage_state"] for i in body["items"]}
+    assert states == {
+        sid["ssh"]: "monitored",  # synthetic-linux collector is fresh
+        sid["ftp"]: "planned",
+        # The workload's source (k8s.container_log) has no collector health report:
+        # nothing stale is invented, the record itself is fresh.
+        sid["workload"]: "monitored",
+        sid["k8s_service"]: "unsupported",
+    }
+    assert body["summary"]["removed"] == 1
+    kinds = {k["service_kind"] for k in body["summary"]["by_kind"]}
+    assert kinds == {"host_service", "k8s_workload", "k8s_service"}
+
+    detail = client.get(f"/api/v1/services/{sid['ssh']}", headers=viewer)
+    assert detail.status_code == 200, detail.text[:500]
+    d = detail.json()
+    assert d["service"]["endpoints"][0]["attribution"] == "confirmed"
+    assert d["instances_total"] == 1
+    assert d["telemetry"][0]["source_type"] == "linux.journald"
+    assert d["telemetry"][0]["events"] == 2
+    assert d["auth_activity"]["by_outcome"] == {"failure": 2}
+    assert [f["finding_id"] for f in d["findings"]] == [dataset.finding_ids["open"]]
+    assert [a["alert_id"] for a in d["alerts"]] == [dataset.alert_ids["a1"]]
+
+    on_cluster = client.get(f"/api/v1/assets/{dataset.k8s}/services", headers=viewer).json()
+    assert {i["service_id"] for i in on_cluster["items"]} == {sid["workload"], sid["k8s_service"]}
+    cluster = client.get(f"/api/v1/assets/{dataset.k8s}", headers=viewer).json()
+    assert [c["asset_id"] for c in cluster["child_assets"]] == [dataset.k8s_node]
+    assert cluster["services_summary"]["coverage"]["total"] == 2
+    events = client.get(
+        "/api/v1/events",
+        headers=viewer,
+        params={
+            "service_id": sid["ssh"],
+            "since": "2020-01-01T00:00:00Z",
+            "until": "2020-01-31T00:00:00Z",
+        },
+    )
+    assert events.status_code == 200 and events.json()["items"] == []
+    overview = client.get("/api/v1/overview", headers=viewer).json()
+    assert overview["service_coverage"]["coverage"]["total"] == 4

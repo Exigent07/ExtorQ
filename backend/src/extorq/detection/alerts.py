@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -46,6 +47,7 @@ DETECTOR_VERSION = f"extorq-detector/{__version__}"
 MAX_ALERT_EVIDENCE = 500
 MAX_ENTITIES = 16
 MAX_SIM_IDS = 16
+MAX_SERVICE_IDS = 16
 MAX_FEATURE_KEYS = 64
 MAX_FEATURE_LIST = 64
 COMMON_COLUMNS = (
@@ -366,6 +368,7 @@ def decide(
             or row.event_count > len(row.evidence_event_ids),
             "features": merge_features(existing.features, row.features),
             "entities": dict(list({**existing.entities, **row.entities}.items())[:MAX_ENTITIES]),
+            "service_ids": list(existing.service_ids),
             "simulation_run_ids": sims,
             "confidence": confidence,
             "created_at": existing.created_at,
@@ -385,6 +388,7 @@ def decide(
             or row.event_count > len(row.evidence_event_ids),
             "features": dict(row.features),
             "entities": dict(row.entities),
+            "service_ids": [],
             "simulation_run_ids": list(row.simulation_run_ids),
             "confidence": row.confidence,
             "created_at": now,
@@ -409,6 +413,7 @@ def decide(
         asset_type=row.asset_type,
         group_key=row.group_key,
         entities=fields["entities"],
+        service_ids=fields["service_ids"],
         summary=summary,
         first_seen=fields["first_seen"],
         last_seen=fields["last_seen"],
@@ -438,6 +443,21 @@ def decide(
         for eid in new_ids
     ]
     return AlertDecision(alert=alert, new_evidence=new_evidence, created=created)
+
+
+def with_service_ids(alert: DetectionAlert, found: Iterable[str]) -> DetectionAlert:
+    """Return ``alert`` with the evidence services added to ``service_ids``.
+
+    ``found`` are ``events.service_id`` values of the alert's evidence events (set by the
+    producing adapter, never guessed). Ids are validated (32 hex), unioned with the ids
+    the alert already carries (service attribution only grows, like evidence), sorted for
+    determinism and capped at the contract bound.
+    """
+    valid = {sid for sid in found if isinstance(sid, str) and _HEX32.match(sid)}
+    merged = sorted(set(alert.service_ids) | valid)[:MAX_SERVICE_IDS]
+    if merged == list(alert.service_ids):
+        return alert
+    return DetectionAlert.model_validate({**alert.model_dump(), "service_ids": merged})
 
 
 def find_continuation(

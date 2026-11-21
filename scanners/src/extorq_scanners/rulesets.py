@@ -25,7 +25,6 @@ import httpx
 import yaml
 
 from extorq.contracts.identity import iso_utc
-
 from extorq_scanners import __version__
 from extorq_scanners.config import RulesetConfig, SemgrepConfig, resolve_in_root
 
@@ -157,9 +156,13 @@ def resolve(
         try:
             data = path.read_bytes()
         except OSError as exc:
-            raise RulesetError(f"local ruleset {ruleset.name} unreadable: {type(exc).__name__}") from None
+            raise RulesetError(
+                f"local ruleset {ruleset.name} unreadable: {type(exc).__name__}"
+            ) from None
         rules = count_rules(data)
-        return ResolvedRuleset(ruleset.name, path, hashlib.sha256(data).hexdigest(), rules, "local"), None
+        return ResolvedRuleset(
+            ruleset.name, path, hashlib.sha256(data).hexdigest(), rules, "local"
+        ), None
     cache_dir = resolve_in_root(root, cfg.cache_dir)
     cached = _cached(ruleset, cache_dir, now)
     if cached is not None and not cached.stale:
@@ -170,7 +173,15 @@ def resolve(
         except RulesetError as exc:
             if cached is None:
                 raise
-            return cached, f"ruleset {ruleset.name}: refresh failed ({exc}); using cache from {cached.fetched_at}"
+            return (
+                cached,
+                f"ruleset {ruleset.name}: refresh failed ({exc}); "
+                f"using cache from {cached.fetched_at}",
+            )
     if cached is None:
         raise RulesetError(f"ruleset {ruleset.name} not cached (run 'extorq-scan update')")
-    return cached, f"ruleset {ruleset.name}: cache from {cached.fetched_at} is older than {ruleset.max_age_hours}h"
+    return (
+        cached,
+        f"ruleset {ruleset.name}: cache from {cached.fetched_at} "
+        f"is older than {ruleset.max_age_hours}h",
+    )

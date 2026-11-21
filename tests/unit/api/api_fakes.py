@@ -20,6 +20,7 @@ from extorq.api.repository import (
     EventFilters,
     FindingFilters,
     SeriesQuery,
+    ServiceFilters,
 )
 from extorq.contracts import (
     AIAssessment,
@@ -28,6 +29,7 @@ from extorq.contracts import (
     AITask,
     InvestigationContext,
 )
+from extorq.contracts.identity import service_id
 
 Row = dict[str, Any]
 NOW = datetime(2026, 11, 21, 12, 0, 0, tzinfo=UTC)
@@ -236,6 +238,73 @@ def pipeline_row(component: str = "writer", instance: str = "w1", **kw: Any) -> 
     return row
 
 
+def service_row(key: str = "ssh.service", **kw: Any) -> Row:
+    """A SYNTHETIC ``v_services`` row (implemented ssh adapter, reported monitored)."""
+    asset_id = kw.get("asset_id", "linux:lab-vm-01")
+    kind = kw.get("service_kind", "host_service")
+    row: Row = {
+        "service_id": service_id(asset_id, kind, key),
+        "asset_id": asset_id,
+        "service_kind": kind,
+        "service_key": key,
+        "name": f"{SYN}-{key}",
+        "category": "ssh",
+        "product": "openssh",
+        "version": None,
+        "discovered_via": ["listening_socket", "systemd_unit"],
+        "adapter_id": "ssh",
+        "adapter_support": "implemented",
+        "monitoring_status": "monitored",
+        "coverage_note": "telemetry fresh",
+        "telemetry_sources": ["linux.journald"],
+        "endpoints": (
+            '[{"address":"0.0.0.0","attribution":"confirmed","attribution_basis":"socket owner",'
+            '"exposure":"any","port":22,"protocol":"tcp"}]'
+        ),
+        "config_refs": ["/etc/ssh/sshd_config"],
+        "instance_count": 1,
+        "last_telemetry_at": NOW - timedelta(minutes=2),
+        "first_seen": NOW - timedelta(days=1),
+        "last_seen": NOW - timedelta(minutes=1),
+        "present": 1,
+        "observed_by": "linux-ssh",
+        "attributes": "{}",
+    }
+    row.update(kw)
+    row["service_id"] = kw.get("service_id", service_id(asset_id, row["service_kind"], key))
+    return row
+
+
+def instance_row(service: Row, key: str = "pid:100", **kw: Any) -> Row:
+    row: Row = {
+        "instance_id": hexid(f"instance:{service['service_id']}:{key}"),
+        "service_id": service["service_id"],
+        "asset_id": service["asset_id"],
+        "instance_kind": "process",
+        "instance_key": key,
+        "parent_instance_id": None,
+        "state": "running",
+        "pid": 100,
+        "process_name": "sshd",
+        "process_user": "root",
+        "namespace": None,
+        "pod_name": None,
+        "pod_uid": None,
+        "container_name": None,
+        "container_id": None,
+        "image": None,
+        "node_name": None,
+        "workload_kind": None,
+        "workload_name": None,
+        "started_at": NOW - timedelta(days=1),
+        "observed_at": NOW - timedelta(minutes=1),
+        "observed_by": "linux-ssh",
+        "attributes": "{}",
+    }
+    row.update(kw)
+    return row
+
+
 def assessment(alert_id: str, **kw: Any) -> AIAssessment:
     data: dict[str, Any] = {
         "assessment_id": hexid(f"assessment:{alert_id}:{kw.get('status', 'ok')}"),
@@ -282,6 +351,12 @@ class FakeRepository:
         self.alert_series_rows: list[Row] = []
         self.event_series_rows: list[Row] = []
         self.direct_assessments: list[Row] = []
+        self.services: list[Row] = []
+        self.instances: list[Row] = []
+        self.finding_attribution: dict[str, str] = {}
+        self.auth_summary: dict[str, Row] = {}
+        self.auth_sources: dict[str, list[Row]] = {}
+        self.service_sources: dict[str, list[Row]] = {}
         self.writes: list[tuple[str, Row]] = []
         self.calls: list[tuple[str, Any]] = []
         self.fail_action_insert = False
@@ -342,6 +417,9 @@ class FakeRepository:
     def collectors(self, asset_id: str) -> list[Row]:
         return [c for c in self.collector_rows if not asset_id or c["asset_id"] == asset_id]
 
+    def asset_children(self, asset_id: str) -> list[Row]:
+        return [a for a in self.assets if a.get("parent_asset_id") == asset_id]
+
     def inventory_summary(self, asset_id: str) -> list[Row]:
         return self.inventory.get(asset_id, [])
 
@@ -362,11 +440,56 @@ class FakeRepository:
             for f in self.findings
             if (not filters.asset_id or f["asset_id"] == filters.asset_id)
             and (not filters.severities or f["severity"] in filters.severities)
+            and (
+                not filters.service_id
+                or self.finding_attribution.get(f["finding_id"]) == filters.service_id
+            )
         ]
         return rows[offset : offset + limit], len(rows), self.lifecycle
 
     def finding_severity_counts(self, asset_id: str) -> tuple[list[Row], bool]:
         return self.finding_counts, self.lifecycle
+
+    def finding_service_attribution(self, finding_ids: Sequence[str]) -> dict[str, str]:
+        known = self.finding_attribution
+        return {i: known[i] for i in finding_ids if i in known}
+
+    # services
+    def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]:
+        self.calls.append(("list_services", (filters, max_rows)))
+        rows = [
+            r
+            for r in self.services
+            if (not filters.asset_id or r["asset_id"] == filters.asset_id)
+            and (not filters.service_kind or r["service_kind"] == filters.service_kind)
+            and (not filters.category or r["category"] == filters.category)
+            and (not filters.adapter_support or r["adapter_support"] == filters.adapter_support)
+            and (
+                not filters.monitoring_status or r["monitoring_status"] == filters.monitoring_status
+            )
+            and (filters.include_removed or r["present"] == 1)
+        ]
+        rows.sort(key=lambda r: (r["asset_id"], r["service_kind"], r["name"], r["service_id"]))
+        return rows[:max_rows]
+
+    def get_service(self, service_id: str) -> Row | None:
+        return next((r for r in self.services if r["service_id"] == service_id), None)
+
+    def service_instances(self, service_id: str, limit: int) -> tuple[list[Row], int]:
+        rows = [i for i in self.instances if i["service_id"] == service_id]
+        return rows[:limit], len(rows)
+
+    def service_event_sources(self, service_id: str, since: datetime, until: datetime) -> list[Row]:
+        self.calls.append(("service_event_sources", (service_id, since, until)))
+        return self.service_sources.get(service_id, [])
+
+    def service_auth_summary(self, service_id: str, since: datetime, until: datetime) -> Row:
+        return self.auth_summary.get(service_id, {})
+
+    def service_auth_sources(
+        self, service_id: str, since: datetime, until: datetime, limit: int
+    ) -> list[Row]:
+        return self.auth_sources.get(service_id, [])[:limit]
 
     # rules
     def rules_latest(self) -> list[Row]:
@@ -423,6 +546,8 @@ class FakeRepository:
             if f.open_only and status in CLOSED_STATUSES:
                 continue
             if f.simulation_run_id and f.simulation_run_id not in a["simulation_run_ids"]:
+                continue
+            if f.service_id and f.service_id not in a.get("service_ids", []):
                 continue
             state = self.states.get(a["alert_id"])
             out.append(
@@ -495,6 +620,7 @@ class FakeRepository:
             if filters.since <= e["event_time"] < filters.until
             and (not filters.asset_id or e["asset_id"] == filters.asset_id)
             and (not filters.src_ip or e["src_ip"] == filters.src_ip)
+            and (not filters.service_id or e.get("service_id") == filters.service_id)
         ]
         rows.sort(key=lambda r: r["event_time"], reverse=True)
         return rows[offset : offset + limit]

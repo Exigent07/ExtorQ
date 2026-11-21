@@ -19,7 +19,13 @@ import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import DatabaseError, Error, OperationalError
 
-from extorq.common.config import CLICKHOUSE_USERS, ConfigError, Settings, get_settings, read_secret_file
+from extorq.common.config import (
+    CLICKHOUSE_USERS,
+    ConfigError,
+    Settings,
+    get_settings,
+    read_secret_file,
+)
 
 Role = Literal["admin", "ingest", "detect", "rules_ro", "ai", "api_ro", "api_writer", "grafana"]
 ROLES: tuple[str, ...] = get_args(Role)

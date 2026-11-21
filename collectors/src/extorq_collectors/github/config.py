@@ -10,7 +10,14 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from extorq_collectors.github.records import RepoRef, clean_text
 
@@ -64,10 +71,15 @@ class GitHubCollectorConfig(BaseModel):
 
     repos: tuple[RepoConfig, ...] = ()
     api_base_url: str = "https://api.github.com"
-    interval_seconds: int = Field(default=120, ge=30, le=3600)
     #: Path to the token file (only used when EXTORQ_GITHUB_TOKEN_FILE is unset). Never a token.
     token_file: str | None = None
-    allow_gh_cli_token: bool = False
+    #: Opt-in fallback to ``gh auth token`` (broad OAuth scopes; reported in health).
+    #: YAML key ``gh_cli_token_fallback`` is accepted as an alias because the SDK's config
+    #: secret heuristic flags any ``*_token: <value>`` pair, even a boolean.
+    allow_gh_cli_token: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("allow_gh_cli_token", "gh_cli_token_fallback"),
+    )
     page_size: int = Field(default=50, ge=1, le=100)
     max_pages: int = Field(default=10, ge=1, le=50)
     max_commits_per_poll: int = Field(default=50, ge=1, le=500)

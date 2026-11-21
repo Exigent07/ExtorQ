@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -53,7 +54,23 @@ IMAGE = "clickhouse/clickhouse-server:26.8.42.13"
 CONTAINER_NAME = "extorq-c2-rules-ch"
 OWNER_LABEL = "extorq.owner=c2"
 REPO_ROOT = Path(__file__).resolve().parents[4]
-MIGRATIONS = ("0001_core_tables.sql", "0003_findings_views.sql")
+#: Applied in order. 0002 (RBAC, password templating) is replaced by the c2_* users
+#: below; the roles that 0004's GRANT statements reference are created first.
+MIGRATIONS = (
+    "0001_core_tables.sql",
+    "0003_findings_views.sql",
+    "0004_services.sql",
+    "0005_findings_services.sql",
+)
+PLATFORM_ROLES = (
+    "extorq_role_ingest",
+    "extorq_role_detect",
+    "extorq_role_rules_ro",
+    "extorq_role_ai",
+    "extorq_role_api_ro",
+    "extorq_role_api_writer",
+    "extorq_role_grafana",
+)
 RULES_RO_TABLES = (
     "events",
     "assets",
@@ -62,19 +79,28 @@ RULES_RO_TABLES = (
     "scan_runs",
     "simulation_runs",
 )
+#: Mirrors extorq_role_detect (0002 + 0004).
 DETECT_SELECT = (
     *RULES_RO_TABLES,
     "collector_health",
+    "pipeline_health",
     "alerts",
     "alert_evidence",
     "rule_runs",
     "detection_rules",
     "investigation_contexts",
     "context_relationships",
-    "v_collector_latest",
+    "services",
+    "service_instances",
+    "v_assets",
     "v_alerts",
+    "v_inventory_current",
+    "v_collector_latest",
+    "v_pipeline_latest",
+    "v_rule_latest_run",
     "v_findings_current",
-    "v_scan_runs_current",
+    "v_services",
+    "v_service_instances_current",
 )
 DETECT_INSERT = (
     "alerts",
@@ -87,6 +113,8 @@ DETECT_INSERT = (
 )
 TRUNCATE_TABLES = (
     "events",
+    "services",
+    "service_instances",
     "alerts",
     "alert_evidence",
     "rule_runs",
@@ -102,6 +130,7 @@ TRUNCATE_TABLES = (
     "pipeline_health",
 )
 ToRow = Callable[..., dict[str, Any]]
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
 
 
 class HarnessError(RuntimeError):
@@ -244,6 +273,12 @@ class EphemeralClickHouse:
 
     def _apply_migrations(self) -> None:
         docker = _docker()
+        roles = "".join(f"CREATE ROLE IF NOT EXISTS {role};\n" for role in PLATFORM_ROLES)
+        _run(
+            [docker, "exec", "-i", self.name, "clickhouse-client", "--multiquery"],
+            stdin=roles.encode("ascii"),
+            timeout=60,
+        )
         for name in MIGRATIONS:
             path = REPO_ROOT / "infra" / "clickhouse" / "migrations" / name
             if not path.is_file():
@@ -258,14 +293,14 @@ class EphemeralClickHouse:
         admin = self.client("admin")
         tables = self._existing_objects(admin)
         ro, detect = self._passwords["rules_ro"], self._passwords["detect"]
-        admin.raw.command(
-            f"CREATE USER c2_rules_ro IDENTIFIED WITH sha256_password BY '{ro}' "
-            "DEFAULT DATABASE extorq SETTINGS readonly = 1"
-        )
-        admin.raw.command(
-            f"CREATE USER c2_detect IDENTIFIED WITH sha256_password BY '{detect}' "
-            "DEFAULT DATABASE extorq"
-        )
+        for password in (ro, detect):
+            # token_urlsafe output; re-checked because DDL cannot bind parameters.
+            if not _TOKEN_RE.fullmatch(password):
+                raise HarnessError("generated password has unexpected characters")
+        ro_sql = f"CREATE USER c2_rules_ro IDENTIFIED WITH sha256_password BY '{ro}' DEFAULT DATABASE extorq SETTINGS readonly = 1"  # noqa: E501
+        detect_sql = f"CREATE USER c2_detect IDENTIFIED WITH sha256_password BY '{detect}' DEFAULT DATABASE extorq"  # noqa: E501
+        admin.raw.command(ro_sql)  # extorq: sql-reviewed DDL; validated token_urlsafe password
+        admin.raw.command(detect_sql)  # extorq: sql-reviewed DDL; validated token_urlsafe password
         for table in RULES_RO_TABLES:
             admin.raw.command(f"GRANT SELECT ON extorq.{table} TO c2_rules_ro")
         for table in DETECT_SELECT:
@@ -432,8 +467,8 @@ class CaseResult:
 def fetch_alerts(client: ClickHouseConnectClient, rule_id: str) -> list[dict[str, Any]]:
     result = client.select(
         "SELECT alert_id, confidence, entities, event_count, evidence_event_ids, "
-        "evidence_truncated, simulation_run_ids, created_at, updated_at, summary, group_key "
-        "FROM alerts FINAL WHERE rule_id = {r:String} ORDER BY first_seen",
+        "evidence_truncated, simulation_run_ids, created_at, updated_at, summary, group_key, "
+        "service_ids, features FROM alerts FINAL WHERE rule_id = {r:String} ORDER BY first_seen",
         {"r": rule_id},
     )
     return result.dicts()

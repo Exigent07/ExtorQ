@@ -70,7 +70,10 @@ def test_dotenv_dev_fallback_and_api_opt_out(tmp_path: Path) -> None:
     dotenv = tmp_path / ".env"
     dotenv.write_text(f"JEV_API_KEY={SECRET}\nOTHER=1\n", encoding="utf-8")
     assert resolve_key("JEV_API_KEY", dotenv_path=str(dotenv)).source == "dotenv"
-    assert resolve_key("JEV_API_KEY", dotenv_path=str(dotenv), use_dotenv=False).state is KeyState.MISSING
+    assert (
+        resolve_key("JEV_API_KEY", dotenv_path=str(dotenv), use_dotenv=False).state
+        is KeyState.MISSING
+    )
     assert resolve_key("GEMINI_API_KEY", dotenv_path=str(dotenv)).state is KeyState.MISSING
 
 

@@ -1,0 +1,74 @@
+{
+ "apiVersion": "networking.k8s.io/v1",
+ "items": [
+  {
+   "metadata": {
+    "annotations": {
+     "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"networking.k8s.io/v1\",\"kind\":\"NetworkPolicy\",\"metadata\":{\"annotations\":{},\"labels\":{\"app.kubernetes.io/name\":\"lab-portal\",\"app.kubernetes.io/part-of\":\"extorq\"},\"name\":\"lab-portal\",\"namespace\":\"extorq-apps\"},\"spec\":{\"ingress\":[{\"ports\":[{\"port\":8080,\"protocol\":\"TCP\"}]}],\"podSelector\":{\"matchLabels\":{\"app.kubernetes.io/name\":\"lab-portal\"}},\"policyTypes\":[\"Ingress\",\"Egress\"]}}\n"
+    },
+    "creationTimestamp": "2026-11-21T10:33:22Z",
+    "generation": 3,
+    "labels": {
+     "app.kubernetes.io/name": "lab-portal",
+     "app.kubernetes.io/part-of": "extorq"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "networking.k8s.io/v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:kubectl.kubernetes.io/last-applied-configuration": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/name": {},
+         "f:app.kubernetes.io/part-of": {}
+        }
+       },
+       "f:spec": {
+        "f:ingress": {},
+        "f:podSelector": {},
+        "f:policyTypes": {}
+       }
+      },
+      "manager": "kubectl-client-side-apply",
+      "operation": "Update",
+      "time": "2026-11-21T10:34:55Z"
+     }
+    ],
+    "name": "lab-portal",
+    "namespace": "extorq-apps",
+    "resourceVersion": "2268",
+    "uid": "e8549a03-4c35-429d-a2b1-93e0dfb2b969"
+   },
+   "spec": {
+    "ingress": [
+     {
+      "ports": [
+       {
+        "port": 8080,
+        "protocol": "TCP"
+       }
+      ]
+     }
+    ],
+    "podSelector": {
+     "matchLabels": {
+      "app.kubernetes.io/name": "lab-portal"
+     }
+    },
+    "policyTypes": [
+     "Ingress",
+     "Egress"
+    ]
+   }
+  }
+ ],
+ "kind": "NetworkPolicyList",
+ "metadata": {
+  "resourceVersion": "23216"
+ }
+}

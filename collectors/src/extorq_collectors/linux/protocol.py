@@ -131,10 +131,13 @@ def parse_audit_response(data: bytes) -> AuditChunk:
     except ValueError as exc:
         raise ProtocolError("audit header is not JSON") from exc
     meta = header_obj.get("_extorq") if isinstance(header_obj, dict) else None
-    if not isinstance(meta, dict) or meta.get("type") != "audit" \
-            or meta.get("protocol") != PROTOCOL_VERSION:
+    if (
+        not isinstance(meta, dict)
+        or meta.get("type") != "audit"
+        or meta.get("protocol") != PROTOCOL_VERSION
+    ):
         raise ProtocolError("unexpected audit header")
-    chunk = AuditChunk(header=meta, payload=data[newline + 1:])
+    chunk = AuditChunk(header=meta, payload=data[newline + 1 :])
     if chunk.next_offset < chunk.start_offset:
         raise ProtocolError("audit next_offset precedes start_offset")
     if chunk.next_offset - chunk.start_offset < len(chunk.payload):

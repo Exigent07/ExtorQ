@@ -1,0 +1,112 @@
+type=SYSCALL msg=audit(1795271969.381:4058): arch=c00000b7 syscall=221 success=yes exit=0 a0=c98d5ee1d320 a1=c98d5ee1af90 a2=c98d5ee0b2c0 a3=f3d488700b50 items=2 ppid=5881 pid=5882 auid=1000 uid=1000 gid=1000 euid=0 suid=0 fsuid=0 egid=1000 sgid=1000 fsgid=1000 tty=(none) ses=96 comm="sudo" exe="/usr/bin/sudo" subj=unconfined key="extorq_root_exec"ARCH=aarch64 SYSCALL=execve AUID="extorq-admin" UID="extorq-admin" GID="extorq-admin" EUID="root" SUID="root" FSUID="root" EGID="extorq-admin" SGID="extorq-admin" FSGID="extorq-admin"
+type=EXECVE msg=audit(1795271969.381:4058): argc=6 a0="sudo" a1="/bin/sh" a2="-s" a3="--" a4="create" a5="extorq-sim-0e49c82d82bc.service"
+type=CWD msg=audit(1795271969.381:4058): cwd="/home/extorq-admin"
+type=PATH msg=audit(1795271969.381:4058): item=0 name="/usr/bin/sudo" inode=2090 dev=fd:01 mode=0104755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1795271969.381:4058): item=1 name="/lib/ld-linux-aarch64.so.1" inode=6410 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1795271969.381:4058): proctitle=7375646F002F62696E2F7368002D73002D2D00637265617465006578746F72712D73696D2D3065343963383264383262632E73657276696365
+type=USER_ACCT msg=audit(1795271969.383:4059): pid=5882 uid=1000 auid=1000 ses=96 subj=unconfined msg='op=PAM:accounting grantors=pam_permit acct="extorq-admin" exe="/usr/bin/sudo" hostname=? addr=? terminal=? res=success'UID="extorq-admin" AUID="extorq-admin"
+type=USER_CMD msg=audit(1795271969.383:4060): pid=5882 uid=1000 auid=1000 ses=96 subj=unconfined msg='cwd="/home/extorq-admin" cmd=2F62696E2F7368202D73202D2D20637265617465206578746F72712D73696D2D3065343963383264383262632E73657276696365 exe="/usr/bin/sudo" terminal=? res=success'UID="extorq-admin" AUID="extorq-admin"
+type=CRED_REFR msg=audit(1795271969.383:4061): pid=5882 uid=1000 auid=1000 ses=96 subj=unconfined msg='op=PAM:setcred grantors=pam_permit,pam_cap acct="root" exe="/usr/bin/sudo" hostname=? addr=? terminal=? res=success'UID="extorq-admin" AUID="extorq-admin"
+type=USER_START msg=audit(1795271969.384:4062): pid=5882 uid=1000 auid=1000 ses=96 subj=unconfined msg='op=PAM:session_open grantors=pam_limits,pam_env,pam_env,pam_permit,pam_umask,pam_unix acct="root" exe="/usr/bin/sudo" hostname=? addr=? terminal=? res=success'UID="extorq-admin" AUID="extorq-admin"
+type=SYSCALL msg=audit(1795271969.384:4063): arch=c00000b7 syscall=221 success=yes exit=0 a0=c83841ce1278 a1=c83841ce5df0 a2=c83841cff1e0 a3=c83841cff1e0 items=2 ppid=5882 pid=5883 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=96 comm="sh" exe="/usr/bin/dash" subj=unconfined key="extorq_root_exec"ARCH=aarch64 SYSCALL=execve AUID="extorq-admin" UID="root" GID="root" EUID="root" SUID="root" FSUID="root" EGID="root" SGID="root" FSGID="root"
+type=EXECVE msg=audit(1795271969.384:4063): argc=5 a0="/bin/sh" a1="-s" a2="--" a3="create" a4="extorq-sim-0e49c82d82bc.service"
+type=CWD msg=audit(1795271969.384:4063): cwd="/home/extorq-admin"
+type=PATH msg=audit(1795271969.384:4063): item=0 name="/bin/sh" inode=1702 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1795271969.384:4063): item=1 name="/lib/ld-linux-aarch64.so.1" inode=6410 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1795271969.384:4063): proctitle=2F62696E2F7368002D73002D2D00637265617465006578746F72712D73696D2D3065343963383264383262632E73657276696365
+type=SYSCALL msg=audit(1795271969.384:4064): arch=c00000b7 syscall=56 success=yes exit=3 a0=ffffffffffffff9c a1=c4215bdf16a8 a2=241 a3=1b6 items=2 ppid=5882 pid=5883 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=96 comm="sh" exe="/usr/bin/dash" subj=unconfined key="extorq_systemd"ARCH=aarch64 SYSCALL=openat AUID="extorq-admin" UID="root" GID="root" EUID="root" SUID="root" FSUID="root" EGID="root" SGID="root" FSGID="root"
+type=CWD msg=audit(1795271969.384:4064): cwd="/home/extorq-admin"
+type=PATH msg=audit(1795271969.384:4064): item=0 name="/etc/systemd/system/" inode=362 dev=fd:01 mode=040755 ouid=0 ogid=0 rdev=00:00 nametype=PARENT cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1795271969.384:4064): item=1 name="/etc/systemd/system/extorq-sim-0e49c82d82bc.service" inode=88035 dev=fd:01 mode=0100644 ouid=0 ogid=0 rdev=00:00 nametype=CREATE cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1795271969.384:4064): proctitle=2F62696E2F7368002D73002D2D00637265617465006578746F72712D73696D2D3065343963383264383262632E73657276696365
+type=SYSCALL msg=audit(1795271969.384:4065): arch=c00000b7 syscall=221 success=yes exit=0 a0=c4215bdf1760 a1=c4215bdf1698 a2=c4215bdf16f0 a3=f5acfffa3b50 items=2 ppid=5883 pid=5884 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=96 comm="cat" exe="/usr/bin/cat" subj=unconfined key="extorq_root_exec"ARCH=aarch64 SYSCALL=execve AUID="extorq-admin" UID="root" GID="root" EUID="root" SUID="root" FSUID="root" EGID="root" SGID="root" FSGID="root"
+type=EXECVE msg=audit(1795271969.384:4065): argc=1 a0="cat"
+type=CWD msg=audit(1795271969.384:4065): cwd="/home/extorq-admin"
+type=PATH msg=audit(1795271969.384:4065): item=0 name="/usr/bin/cat" inode=1691 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1795271969.384:4065): item=1 name="/lib/ld-linux-aarch64.so.1" inode=6410 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1795271969.384:4065): proctitle="cat"
+type=SYSCALL msg=audit(1795271969.384:4066): arch=c00000b7 syscall=221 success=yes exit=0 a0=c4215bdf1748 a1=c4215bdf16c0 a2=c4215bdf16d8 a3=f5acfffa3b50 items=2 ppid=5883 pid=5885 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=96 comm="systemctl" exe="/usr/bin/systemctl" subj=unconfined key="extorq_root_exec"ARCH=aarch64 SYSCALL=execve AUID="extorq-admin" UID="root" GID="root" EUID="root" SUID="root" FSUID="root" EGID="root" SGID="root" FSGID="root"
+type=EXECVE msg=audit(1795271969.384:4066): argc=2 a0="systemctl" a1="daemon-reload"
+type=CWD msg=audit(1795271969.384:4066): cwd="/home/extorq-admin"
+type=PATH msg=audit(1795271969.384:4066): item=0 name="/usr/bin/systemctl" inode=1996 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1795271969.384:4066): item=1 name="/lib/ld-linux-aarch64.so.1" inode=6410 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1795271969.384:4066): proctitle=73797374656D63746C006461656D6F6E2D72656C6F6164
+type=BPF msg=audit(1795271969.485:4067): prog-id=206 op=LOAD
+type=BPF msg=audit(1795271969.485:4068): prog-id=187 op=UNLOAD
+type=BPF msg=audit(1795271969.485:4069): prog-id=207 op=LOAD
+type=BPF msg=audit(1795271969.486:4070): prog-id=208 op=LOAD
+type=BPF msg=audit(1795271969.486:4071): prog-id=188 op=UNLOAD
+type=BPF msg=audit(1795271969.486:4072): prog-id=189 op=UNLOAD
+type=BPF msg=audit(1795271969.486:4073): prog-id=209 op=LOAD
+type=BPF msg=audit(1795271969.486:4074): prog-id=190 op=UNLOAD
+type=BPF msg=audit(1795271969.487:4075): prog-id=210 op=LOAD
+type=BPF msg=audit(1795271969.487:4076): prog-id=191 op=UNLOAD
+type=BPF msg=audit(1795271969.487:4077): prog-id=211 op=LOAD
+type=BPF msg=audit(1795271969.487:4078): prog-id=212 op=LOAD
+type=BPF msg=audit(1795271969.487:4079): prog-id=193 op=UNLOAD
+type=BPF msg=audit(1795271969.487:4080): prog-id=194 op=UNLOAD
+type=BPF msg=audit(1795271969.487:4081): prog-id=213 op=LOAD
+type=BPF msg=audit(1795271969.487:4082): prog-id=195 op=UNLOAD
+type=BPF msg=audit(1795271969.488:4083): prog-id=214 op=LOAD
+type=BPF msg=audit(1795271969.488:4084): prog-id=196 op=UNLOAD
+type=BPF msg=audit(1795271969.488:4085): prog-id=215 op=LOAD
+type=BPF msg=audit(1795271969.488:4086): prog-id=203 op=UNLOAD
+type=BPF msg=audit(1795271969.488:4087): prog-id=216 op=LOAD
+type=BPF msg=audit(1795271969.488:4088): prog-id=217 op=LOAD
+type=BPF msg=audit(1795271969.488:4089): prog-id=204 op=UNLOAD
+type=BPF msg=audit(1795271969.488:4090): prog-id=205 op=UNLOAD
+type=BPF msg=audit(1795271969.488:4091): prog-id=218 op=LOAD
+type=BPF msg=audit(1795271969.489:4092): prog-id=200 op=UNLOAD
+type=BPF msg=audit(1795271969.489:4093): prog-id=219 op=LOAD
+type=BPF msg=audit(1795271969.489:4094): prog-id=220 op=LOAD
+type=BPF msg=audit(1795271969.489:4095): prog-id=201 op=UNLOAD
+type=BPF msg=audit(1795271969.489:4096): prog-id=202 op=UNLOAD
+type=SYSCALL msg=audit(1795271969.492:4097): arch=c00000b7 syscall=221 success=yes exit=0 a0=c4215bdf1780 a1=c4215bdf16f0 a2=c4215bdf1710 a3=f5acfffa3b50 items=2 ppid=5883 pid=5927 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=96 comm="systemctl" exe="/usr/bin/systemctl" subj=unconfined key="extorq_root_exec"ARCH=aarch64 SYSCALL=execve AUID="extorq-admin" UID="root" GID="root" EUID="root" SUID="root" FSUID="root" EGID="root" SGID="root" FSGID="root"
+type=EXECVE msg=audit(1795271969.492:4097): argc=3 a0="systemctl" a1="enable" a2="extorq-sim-0e49c82d82bc.service"
+type=CWD msg=audit(1795271969.492:4097): cwd="/home/extorq-admin"
+type=PATH msg=audit(1795271969.492:4097): item=0 name="/usr/bin/systemctl" inode=1996 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1795271969.492:4097): item=1 name="/lib/ld-linux-aarch64.so.1" inode=6410 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1795271969.492:4097): proctitle=73797374656D63746C00656E61626C65006578746F72712D73696D2D3065343963383264383262632E73657276696365
+type=BPF msg=audit(1795271969.592:4098): prog-id=221 op=LOAD
+type=BPF msg=audit(1795271969.592:4099): prog-id=206 op=UNLOAD
+type=BPF msg=audit(1795271969.592:4100): prog-id=222 op=LOAD
+type=BPF msg=audit(1795271969.592:4101): prog-id=223 op=LOAD
+type=BPF msg=audit(1795271969.592:4102): prog-id=207 op=UNLOAD
+type=BPF msg=audit(1795271969.592:4103): prog-id=208 op=UNLOAD
+type=BPF msg=audit(1795271969.593:4104): prog-id=224 op=LOAD
+type=BPF msg=audit(1795271969.593:4105): prog-id=209 op=UNLOAD
+type=BPF msg=audit(1795271969.594:4106): prog-id=225 op=LOAD
+type=BPF msg=audit(1795271969.594:4107): prog-id=210 op=UNLOAD
+type=BPF msg=audit(1795271969.594:4108): prog-id=226 op=LOAD
+type=BPF msg=audit(1795271969.594:4109): prog-id=227 op=LOAD
+type=BPF msg=audit(1795271969.594:4110): prog-id=211 op=UNLOAD
+type=BPF msg=audit(1795271969.594:4111): prog-id=212 op=UNLOAD
+type=BPF msg=audit(1795271969.594:4112): prog-id=228 op=LOAD
+type=BPF msg=audit(1795271969.594:4113): prog-id=213 op=UNLOAD
+type=BPF msg=audit(1795271969.594:4114): prog-id=229 op=LOAD
+type=BPF msg=audit(1795271969.594:4115): prog-id=214 op=UNLOAD
+type=BPF msg=audit(1795271969.595:4116): prog-id=230 op=LOAD
+type=BPF msg=audit(1795271969.595:4117): prog-id=215 op=UNLOAD
+type=BPF msg=audit(1795271969.595:4118): prog-id=231 op=LOAD
+type=BPF msg=audit(1795271969.595:4119): prog-id=232 op=LOAD
+type=BPF msg=audit(1795271969.595:4120): prog-id=216 op=UNLOAD
+type=BPF msg=audit(1795271969.595:4121): prog-id=217 op=UNLOAD
+type=BPF msg=audit(1795271969.595:4122): prog-id=233 op=LOAD
+type=BPF msg=audit(1795271969.595:4123): prog-id=218 op=UNLOAD
+type=BPF msg=audit(1795271969.595:4124): prog-id=234 op=LOAD
+type=BPF msg=audit(1795271969.595:4125): prog-id=235 op=LOAD
+type=BPF msg=audit(1795271969.595:4126): prog-id=219 op=UNLOAD
+type=BPF msg=audit(1795271969.595:4127): prog-id=220 op=UNLOAD
+type=SYSCALL msg=audit(1795271969.598:4128): arch=c00000b7 syscall=221 success=yes exit=0 a0=c4215bdf1a58 a1=c4215bdf17a8 a2=c4215bdf19e8 a3=f5acfffa3b50 items=2 ppid=5883 pid=5971 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=96 comm="systemctl" exe="/usr/bin/systemctl" subj=unconfined key="extorq_root_exec"ARCH=aarch64 SYSCALL=execve AUID="extorq-admin" UID="root" GID="root" EUID="root" SUID="root" FSUID="root" EGID="root" SGID="root" FSGID="root"
+type=EXECVE msg=audit(1795271969.598:4128): argc=3 a0="systemctl" a1="is-enabled" a2="extorq-sim-0e49c82d82bc.service"
+type=CWD msg=audit(1795271969.598:4128): cwd="/home/extorq-admin"
+type=PATH msg=audit(1795271969.598:4128): item=0 name="/usr/bin/systemctl" inode=1996 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1795271969.598:4128): item=1 name="/lib/ld-linux-aarch64.so.1" inode=6410 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1795271969.598:4128): proctitle=73797374656D63746C0069732D656E61626C6564006578746F72712D73696D2D3065343963383264383262632E73657276696365
+type=SYSCALL msg=audit(1795271969.600:4129): arch=c00000b7 syscall=221 success=yes exit=0 a0=c4215bdf1a80 a1=c4215bdf19f0 a2=c4215bdf1a10 a3=f5acfffa3b50 items=2 ppid=5972 pid=5973 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=96 comm="systemctl" exe="/usr/bin/systemctl" subj=unconfined key="extorq_root_exec"ARCH=aarch64 SYSCALL=execve AUID="extorq-admin" UID="root" GID="root" EUID="root" SUID="root" FSUID="root" EGID="root" SGID="root" FSGID="root"
+type=EXECVE msg=audit(1795271969.600:4129): argc=3 a0="systemctl" a1="is-active" a2="extorq-sim-0e49c82d82bc.service"
+type=CWD msg=audit(1795271969.600:4129): cwd="/home/extorq-admin"
+type=PATH msg=audit(1795271969.600:4129): item=0 name="/usr/bin/systemctl" inode=1996 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PATH msg=audit(1795271969.600:4129): item=1 name="/lib/ld-linux-aarch64.so.1" inode=6410 dev=fd:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0OUID="root" OGID="root"
+type=PROCTITLE msg=audit(1795271969.600:4129): proctitle=73797374656D63746C0069732D616374697665006578746F72712D73696D2D3065343963383264383262632E73657276696365
+type=USER_END msg=audit(1795271969.602:4130): pid=5882 uid=1000 auid=1000 ses=96 subj=unconfined msg='op=PAM:session_close grantors=pam_limits,pam_env,pam_env,pam_permit,pam_umask,pam_unix acct="root" exe="/usr/bin/sudo" hostname=? addr=? terminal=? res=success'UID="extorq-admin" AUID="extorq-admin"

@@ -75,6 +75,9 @@ _TELEMETRY_KINDS = [
     "scan_run",
     "collector_health",
 ]
+#: Contract 1.1 (PLAN §10): host and Kubernetes-inventory producers also report the
+#: services they discover and their instances (processes, containers, Pods).
+_SERVICE_AWARE_KINDS = [*_TELEMETRY_KINDS, "service", "service_instance"]
 #: "any configured lab asset" (PLAN §4.2/§4.3).
 _LAB_ASSET_PATTERNS = ["macos:workstation-01", "linux:lab-vm-01", "k8s:extorq-lab*", "github:*"]
 
@@ -87,13 +90,18 @@ class ProducerSpec:
     allowed_asset_patterns: list[str]
 
 
-#: PLAN §4.3, exactly. The gateway authorizes every record against this registry.
+#: PLAN §4.3 + §10 (service kinds). The gateway authorizes every record against this
+#: registry. ``extorq-selftest`` is the SDK heartbeat example's identity (docs/collectors.md):
+#: it may only report CollectorHealth for ExtorQ's own pipeline (source ``extorq.pipeline``)
+#: from the Mac where it runs (proposal in docs/team/interface-changes/A.md).
 PRODUCERS: tuple[ProducerSpec, ...] = (
-    ProducerSpec("macos-workstation-01", _TELEMETRY_KINDS, ["macos.*"], ["macos:workstation-01"]),
-    ProducerSpec("linux-ssh-lab-vm-01", _TELEMETRY_KINDS, ["linux.*"], ["linux:lab-vm-01"]),
+    ProducerSpec(
+        "macos-workstation-01", _SERVICE_AWARE_KINDS, ["macos.*"], ["macos:workstation-01"]
+    ),
+    ProducerSpec("linux-ssh-lab-vm-01", _SERVICE_AWARE_KINDS, ["linux.*"], ["linux:lab-vm-01"]),
     ProducerSpec(
         "k8s-inventory-extorq-lab",
-        _TELEMETRY_KINDS,
+        _SERVICE_AWARE_KINDS,
         ["k8s.api_inventory", "k8s.events", "k8s.posture"],
         ["k8s:extorq-lab*"],
     ),
@@ -109,6 +117,9 @@ PRODUCERS: tuple[ProducerSpec, ...] = (
     ),
     ProducerSpec(
         "simulation-runner", ["simulation_run"], ["extorq.simulation"], _LAB_ASSET_PATTERNS
+    ),
+    ProducerSpec(
+        "extorq-selftest", ["collector_health"], ["extorq.pipeline"], ["macos:workstation-01"]
     ),
 )
 
@@ -135,6 +146,7 @@ class Report:
     created: int = 0
     kept: int = 0
     rotated: int = 0
+    updated: int = 0
     permissions_fixed: int = 0
 
     def record(self, outcome: str) -> None:
@@ -306,14 +318,35 @@ def ensure_tls(tls_dir: Path, *, rotate: bool, rotate_ca: bool, report: Report) 
             tmp_key, tmp_crt = work / "ca.key", work / "ca.crt"
             run_openssl(
                 openssl,
-                ["genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256",
-                 "-out", str(tmp_key)],
+                [
+                    "genpkey",
+                    "-algorithm",
+                    "EC",
+                    "-pkeyopt",
+                    "ec_paramgen_curve:P-256",
+                    "-out",
+                    str(tmp_key),
+                ],
             )
             os.chmod(tmp_key, 0o600)
             run_openssl(
                 openssl,
-                ["req", "-x509", "-new", "-key", str(tmp_key), "-sha256", "-days", str(CA_DAYS),
-                 "-config", str(ca_conf), "-extensions", "v3_ca", "-out", str(tmp_crt)],
+                [
+                    "req",
+                    "-x509",
+                    "-new",
+                    "-key",
+                    str(tmp_key),
+                    "-sha256",
+                    "-days",
+                    str(CA_DAYS),
+                    "-config",
+                    str(ca_conf),
+                    "-extensions",
+                    "v3_ca",
+                    "-out",
+                    str(tmp_crt),
+                ],
             )
             atomic_write(ca_key, tmp_key.read_bytes())
             atomic_write(ca_crt, tmp_crt.read_bytes())
@@ -345,21 +378,52 @@ def ensure_tls(tls_dir: Path, *, rotate: bool, rotate_ca: bool, report: Report) 
             tmp_key, tmp_csr, tmp_crt = work / "gw.key", work / "gw.csr", work / "gw.crt"
             run_openssl(
                 openssl,
-                ["genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256",
-                 "-out", str(tmp_key)],
+                [
+                    "genpkey",
+                    "-algorithm",
+                    "EC",
+                    "-pkeyopt",
+                    "ec_paramgen_curve:P-256",
+                    "-out",
+                    str(tmp_key),
+                ],
             )
             os.chmod(tmp_key, 0o600)
             run_openssl(
                 openssl,
-                ["req", "-new", "-key", str(tmp_key), "-subj", "/CN=extorq-ingest-gateway/O=ExtorQ lab",
-                 "-out", str(tmp_csr)],
+                [
+                    "req",
+                    "-new",
+                    "-key",
+                    str(tmp_key),
+                    "-subj",
+                    "/CN=extorq-ingest-gateway/O=ExtorQ lab",
+                    "-out",
+                    str(tmp_csr),
+                ],
             )
             serial = "0x" + secrets.token_hex(16)
             run_openssl(
                 openssl,
-                ["x509", "-req", "-in", str(tmp_csr), "-CA", str(ca_crt), "-CAkey", str(ca_key),
-                 "-set_serial", serial, "-sha256", "-days", str(LEAF_DAYS),
-                 "-extfile", str(leaf_ext), "-out", str(tmp_crt)],
+                [
+                    "x509",
+                    "-req",
+                    "-in",
+                    str(tmp_csr),
+                    "-CA",
+                    str(ca_crt),
+                    "-CAkey",
+                    str(ca_key),
+                    "-set_serial",
+                    serial,
+                    "-sha256",
+                    "-days",
+                    str(LEAF_DAYS),
+                    "-extfile",
+                    str(leaf_ext),
+                    "-out",
+                    str(tmp_crt),
+                ],
             )
             if not _leaf_matches(openssl, ca_crt, tmp_crt):
                 raise BootstrapError("issued gateway certificate failed verification")
@@ -379,7 +443,8 @@ def clickhouse_admin_xml(password: str) -> bytes:
     """users.d snippet defining the migrations-only admin (SHA-256 hash, private networks)."""
     digest = hashlib.sha256(password.encode("utf-8")).hexdigest()
     return (
-        "<!-- Generated by scripts/bootstrap.py. Contains a password hash: keep private (0600). -->\n"
+        "<!-- Generated by scripts/bootstrap.py. "
+        "Contains a password hash: keep private (0600). -->\n"
         "<clickhouse>\n"
         "  <users>\n"
         "    <extorq_admin>\n"
@@ -398,7 +463,7 @@ def clickhouse_admin_xml(password: str) -> bytes:
         "    </extorq_admin>\n"
         "  </users>\n"
         "</clickhouse>\n"
-    ).encode("utf-8")
+    ).encode()
 
 
 # ── producer registry ─────────────────────────────────────────────────
@@ -433,7 +498,7 @@ def write_if_changed(path: Path, data: bytes, report: Report) -> None:
         report.record("kept")
         return
     atomic_write(path, data)
-    report.record("created" if current is None else "rotated")
+    report.record("created" if current is None else "updated")
 
 
 # ── main ──────────────────────────────────────────────────────────────
@@ -466,8 +531,9 @@ def bootstrap(root: Path, *, rotate: bool, rotate_ca: bool) -> int:
             value = ensure_secret(ch_dir / f"{user}_password", rotate=rotate, report=ch_report)
             if user == "extorq_admin":
                 admin_password = value
-        write_if_changed(ch_dir / "extorq_admin_users.xml", clickhouse_admin_xml(admin_password),
-                         ch_report)
+        write_if_changed(
+            ch_dir / "extorq_admin_users.xml", clickhouse_admin_xml(admin_password), ch_report
+        )
 
         simple_report = Report()
         for name in SIMPLE_SECRETS:
@@ -476,11 +542,16 @@ def bootstrap(root: Path, *, rotate: bool, rotate_ca: bool) -> int:
 
         token_report = Report()
         for spec in PRODUCERS:
-            ensure_secret(token_dir / f"{spec.producer_id}.token", rotate=rotate,
-                          report=token_report, prefix="xtq_p_")
+            ensure_secret(
+                token_dir / f"{spec.producer_id}.token",
+                rotate=rotate,
+                report=token_report,
+                prefix="xtq_p_",
+            )
         registry_report = Report()
-        write_if_changed(secrets_dir / "producers.json", producers_registry(token_dir),
-                         registry_report)
+        write_if_changed(
+            secrets_dir / "producers.json", producers_registry(token_dir), registry_report
+        )
 
         tls_report = Report()
         ensure_tls(tls_dir, rotate=rotate, rotate_ca=rotate_ca, report=tls_report)
@@ -494,7 +565,7 @@ def bootstrap(root: Path, *, rotate: bool, rotate_ca: bool) -> int:
         rel = path.relative_to(root)
         print(
             f"{label:<28} {rel!s:<34} created={rep.created} kept={rep.kept} "
-            f"rotated={rep.rotated}"
+            f"rotated={rep.rotated} updated={rep.updated}"
         )
 
     line("clickhouse passwords+admin", ch_dir, ch_report)
@@ -503,26 +574,37 @@ def bootstrap(root: Path, *, rotate: bool, rotate_ca: bool) -> int:
     line("producer registry", secrets_dir / "producers.json", registry_report)
     line("tls (ca, gateway)", tls_dir, tls_report)
     fixed = (
-        report.permissions_fixed + ch_report.permissions_fixed + simple_report.permissions_fixed
-        + token_report.permissions_fixed + registry_report.permissions_fixed
+        report.permissions_fixed
+        + ch_report.permissions_fixed
+        + simple_report.permissions_fixed
+        + token_report.permissions_fixed
+        + registry_report.permissions_fixed
         + tls_report.permissions_fixed
     )
     print(f"permissions fixed: {fixed}")
     print(f".env present: {'yes' if (root / '.env').exists() else 'no'} (never read or modified)")
     if rotate or rotate_ca:
-        print("rotation done: run 'make rotate-apply' (recreates ClickHouse, re-syncs RBAC "
-              "passwords, restarts services) and restart collectors")
+        print(
+            "rotation done: run 'make rotate-apply' (recreates ClickHouse, re-syncs RBAC "
+            "passwords, restarts services) and restart collectors"
+        )
     print(f"completed at {datetime.now(UTC).isoformat(timespec='seconds')}")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--rotate", action="store_true",
-                        help="rotate ClickHouse passwords, service secrets, producer tokens and "
-                             "the gateway certificate")
-    parser.add_argument("--rotate-ca", action="store_true",
-                        help="also replace the local CA (collectors must receive the new ca.crt)")
+    parser.add_argument(
+        "--rotate",
+        action="store_true",
+        help="rotate ClickHouse passwords, service secrets, producer tokens and "
+        "the gateway certificate",
+    )
+    parser.add_argument(
+        "--rotate-ca",
+        action="store_true",
+        help="also replace the local CA (collectors must receive the new ca.crt)",
+    )
     parser.add_argument("--root", type=Path, default=REPO_ROOT, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     return bootstrap(args.root.resolve(), rotate=args.rotate, rotate_ca=args.rotate_ca)

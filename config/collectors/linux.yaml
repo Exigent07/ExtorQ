@@ -1,0 +1,56 @@
+# ExtorQ Linux collector (owner B1): agentless SSH collection from the lab VM through the
+# read-only dispatch boundary (/usr/local/sbin/extorq-collect-dispatch on the VM).
+# No secrets here: the SSH key and the pinned known_hosts file are referenced by path
+# (relative paths resolve against the repository root). The gateway token is read by the
+# runner from var/secrets/tokens/linux-ssh-lab-vm-01.token.
+# Docs: docs/telemetry/linux.md, collectors/AGENTS.md.
+collectors:
+  - collector_id: linux-ssh-lab-vm-01
+    producer_id: linux-ssh-lab-vm-01
+    asset_id: linux:lab-vm-01
+    module: extorq_collectors.linux.collector:LinuxSSHCollector
+    interval_seconds: 30
+    enabled: true
+    settings:
+      ssh:
+        # Point these at another host to monitor a different Linux machine that has the
+        # same dispatch boundary installed (see infra/vm/README.md).
+        host: 127.0.0.1
+        port: 2222
+        user: extorq-collector
+        identity_file: var/vm/keys/extorq-collector
+        known_hosts_file: var/vm/known_hosts      # StrictHostKeyChecking=yes against this file
+        host_key_algorithms: ssh-ed25519
+        connect_timeout_seconds: 10
+        command_timeout_seconds: 120
+        control_dir: var/run/ssh                  # ControlMaster sockets (0700)
+        control_persist_seconds: 300
+        max_attempts: 3
+      self_user: extorq-collector                 # own logins are labelled extorq.self=true
+      journal:
+        max_entries: 2000                         # per dispatch call (boundary limit 5000)
+        max_rounds: 5                             # calls per cycle while more entries remain
+      audit:
+        max_bytes: 1048576                        # per dispatch call (boundary limit 1 MiB)
+        max_rounds: 8
+      inventory:
+        interval_seconds: 60                      # unit/listener/account/file diffs (VM-002)
+        full_snapshot_seconds: 21600              # complete InventoryItem snapshot every 6 h
+      packages:
+        interval_seconds: 3600
+      posture:
+        interval_seconds: 900
+      services:
+        enabled: true
+        emit_records: true                        # Service / ServiceInstance records
+        refresh_seconds: 900                      # re-send unchanged records (last_seen)
+        stale_after_seconds: 180                  # channel freshness for "monitored"
+      adapters:
+        # Implemented Linux adapters to enable (apache is implemented but not deployed in
+        # the lab; it only ever binds to an apache2/httpd unit that exists).
+        enabled: [ssh, nginx, apache, webapp-json, systemd, auditd]
+        webapp-json:
+          apps:
+            - name: lab-portal
+              unit: lab-portal.service
+              syslog_identifier: lab-portal

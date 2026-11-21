@@ -33,10 +33,11 @@ GH_CLI_TIMEOUT_SECONDS = 10.0
 
 TokenSource = Literal["file", "env", "gh_cli"]
 
+# Phrased without "<word>_token=<value>" so secret redaction never mangles it in health.
 GH_CLI_WARNING = (
-    "using the GitHub CLI token (allow_gh_cli_token=true): it carries broad OAuth scopes "
-    "(typically repo, workflow) far beyond the read-only access needed; configure a "
-    "fine-grained read-only token via EXTORQ_GITHUB_TOKEN_FILE"
+    "using the GitHub CLI token (gh CLI fallback enabled in the collector settings): it "
+    "carries broad OAuth scopes (typically repo, workflow) far beyond the read-only access "
+    "needed; configure a fine-grained read-only token via EXTORQ_GITHUB_TOKEN_FILE"
 )
 
 _PREFIX_KINDS = (

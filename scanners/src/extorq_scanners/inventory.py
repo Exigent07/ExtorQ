@@ -37,19 +37,23 @@ def _ssh_block(root: Path, cfg: InventoryConfig) -> dict[str, Any]:
     return dict(block) if isinstance(block, dict) else {}
 
 
-def fetch_packages(root: Path, cfg: InventoryConfig) -> Any:
-    """Return the parsed ``packages`` JSON document from the VM."""
+def _dispatch_json(root: Path, cfg: InventoryConfig, command: str) -> Any:
+    """Run one allow-listed dispatch command on the VM and parse its JSON output."""
     try:
         from extorq_collectors.linux.ssh import SSHDispatchClient, SSHDispatchError, SSHTarget
     except ImportError:
-        raise InventoryUnavailable("B1 SSH dispatch helper (extorq_collectors.linux.ssh) not installed") from None
+        raise InventoryUnavailable(
+            "B1 SSH dispatch helper (extorq_collectors.linux.ssh) not installed"
+        ) from None
     try:
         target = SSHTarget.from_mapping(_ssh_block(root, cfg), base_dir=root)
     except (TypeError, ValueError) as exc:
         raise InventoryUnavailable(f"invalid ssh configuration: {exc}") from None
     client = SSHDispatchClient(target)
     try:
-        text = client.run("packages", timeout=float(cfg.timeout_seconds), max_output=MAX_INVENTORY_BYTES)
+        text = client.run(
+            command, timeout=float(cfg.timeout_seconds), max_output=MAX_INVENTORY_BYTES
+        )
     except SSHDispatchError as exc:
         raise InventoryUnavailable(f"{type(exc).__name__}: {str(exc)[:300]}") from None
     finally:
@@ -57,7 +61,17 @@ def fetch_packages(root: Path, cfg: InventoryConfig) -> Any:
     try:
         return json.loads(text)
     except ValueError:
-        raise InventoryUnavailable("packages output is not valid JSON") from None
+        raise InventoryUnavailable(f"{command} output is not valid JSON") from None
+
+
+def fetch_packages(root: Path, cfg: InventoryConfig) -> Any:
+    """Return the parsed ``packages`` JSON document (dpkg inventory) from the VM."""
+    return _dispatch_json(root, cfg, "packages")
+
+
+def fetch_inventory(root: Path, cfg: InventoryConfig) -> Any:
+    """Return the parsed ``inventory`` JSON document (systemd units etc.) from the VM."""
+    return _dispatch_json(root, cfg, "inventory")
 
 
 InventoryFetcher = Callable[[Path, InventoryConfig], Any]

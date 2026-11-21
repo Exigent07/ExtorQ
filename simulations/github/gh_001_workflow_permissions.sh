@@ -94,6 +94,7 @@ command -v git >/dev/null || die "git is required"
 command -v uv >/dev/null || die "uv is required"
 
 SIM_MESSAGE="ci: add PR preview job and broaden token permissions [extorq-sim ${RUN_ID}]"
+SIM_DESCRIPTION="GH-001: CI workflow changed to permissions: write-all plus a pull_request_target job that checks out the PR head (lab repository only)"
 CLEANUP_MESSAGE="ci: restore least-privilege CI workflow [extorq-sim ${RUN_ID} cleanup]"
 
 analyse() {  # analyse <before-file> <after-file> <expectation-flag>
@@ -114,8 +115,16 @@ record() {  # record <status>
     info "SimulationRun recording skipped (--no-record): status=$1"
     return 0
   fi
+  local rc=0
   (cd "$ROOT" && uv run --quiet extorq-collect sim-record \
-    --scenario "$SCENARIO" --asset "$ASSET" --status "$1" --run-id "$RUN_ID")
+    --scenario "$SCENARIO" --asset "$ASSET" --status "$1" --run-id "$RUN_ID" \
+    --description "$SIM_DESCRIPTION" --expected-rules "$SCENARIO") || rc=$?
+  case "$rc" in
+    0) info "SimulationRun $RUN_ID recorded: $1" ;;
+    75) info "SimulationRun $RUN_ID ($1) committed locally but not yet delivered;" \
+            "it is sent by the next sim-record or 'uv run extorq-collect flush'" ;;
+    *) die "sim-record failed (exit $rc) for status $1" ;;
+  esac
 }
 
 print_expected() {  # print_expected <commit-sha>
@@ -187,6 +196,11 @@ GH_LOGIN="$(gh api user --jq .login)"
 GH_USER_ID="$(gh api user --jq .id)"
 [[ "$GH_LOGIN" =~ ^[A-Za-z0-9-]{1,39}$ && "$GH_USER_ID" =~ ^[0-9]+$ ]] || die "unexpected gh user identity"
 GIT_ID=(-c user.name="${GH_LOGIN} (ExtorQ simulation)" -c user.email="${GH_USER_ID}+${GH_LOGIN}@users.noreply.github.com" -c commit.gpgsign=false)
+# Authenticate git over HTTPS through the gh CLI for these commands only (no persistent
+# git configuration change, no credential written to disk or printed).
+GH_BIN="$(command -v gh)"
+GIT_AUTH=(-c credential.helper= -c "credential.helper=!${GH_BIN} auth git-credential")
+REMOTE_URL="https://github.com/${REPO}.git"
 
 WORK_ROOT="$ROOT/var/github"
 mkdir -p "$WORK_ROOT"
@@ -195,7 +209,7 @@ WORK="$WORK_ROOT/gh-001-${RUN_ID}-${MODE}"
 
 if [ "$MODE" = "execute" ]; then
   confirm "Push the GH-001 escalated workflow to ${REPO}@${DEFAULT_BRANCH} (run_id=${RUN_ID})?"
-  gh repo clone "$REPO" "$WORK" -- --quiet --branch "$DEFAULT_BRANCH"
+  git "${GIT_AUTH[@]}" clone --quiet --branch "$DEFAULT_BRANCH" "$REMOTE_URL" "$WORK"
   if grep -Eq '^permissions:[[:space:]]*write-all' "$WORK/$WORKFLOW" 2>/dev/null; then
     die "$WORKFLOW already grants write-all: run --cleanup for the previous run first"
   fi
@@ -204,7 +218,7 @@ if [ "$MODE" = "execute" ]; then
   git -C "$WORK" add "$WORKFLOW"
   git -C "$WORK" "${GIT_ID[@]}" commit -q -m "$SIM_MESSAGE"
   SHA="$(git -C "$WORK" rev-parse HEAD)"
-  if ! git -C "$WORK" push -q origin "HEAD:${DEFAULT_BRANCH}"; then
+  if ! git -C "$WORK" "${GIT_AUTH[@]}" push -q origin "HEAD:${DEFAULT_BRANCH}"; then
     record failed || true
     die "push failed; nothing changed on GitHub"
   fi
@@ -216,14 +230,14 @@ fi
 
 # cleanup
 confirm "Restore the baseline workflow on ${REPO}@${DEFAULT_BRANCH} (run_id=${RUN_ID})?"
-gh repo clone "$REPO" "$WORK" -- --quiet --branch "$DEFAULT_BRANCH"
+git "${GIT_AUTH[@]}" clone --quiet --branch "$DEFAULT_BRANCH" "$REMOTE_URL" "$WORK"
 cp "$LAB_DIR/$WORKFLOW" "$WORK/$WORKFLOW"
 if git -C "$WORK" diff --quiet -- "$WORKFLOW"; then
   info "$WORKFLOW already matches the baseline; nothing to revert"
 else
   git -C "$WORK" add "$WORKFLOW"
   git -C "$WORK" "${GIT_ID[@]}" commit -q -m "$CLEANUP_MESSAGE"
-  git -C "$WORK" push -q origin "HEAD:${DEFAULT_BRANCH}" || die "push failed"
+  git -C "$WORK" "${GIT_AUTH[@]}" push -q origin "HEAD:${DEFAULT_BRANCH}" || die "push failed"
   info "pushed cleanup commit $(git -C "$WORK" rev-parse HEAD)"
 fi
 record cleaned_up

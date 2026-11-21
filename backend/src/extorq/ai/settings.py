@@ -14,8 +14,11 @@ included in error messages (only the variable *name* is ever reported):
 2. if the platform settings are unavailable or cannot be constructed: ExtorQ-AI's
    own reading of ``<NAME>_FILE`` and then ``<NAME>``;
 3. local development only: the same names loaded programmatically from a dotenv
-   file (``EXTORQ_AI_DOTENV``, default ``.env`` in the working directory). The API
-   disables this path (``use_dotenv=False``).
+   file (``EXTORQ_AI_DOTENV``, default ``.env`` in the working directory; set it to
+   an empty value to disable this path). Only ``JEV_API_KEY`` and ``GEMINI_API_KEY``
+   are read from it. Container images contain no ``.env`` (``.dockerignore``), so
+   compose services always use the ``*_FILE`` secrets; the API's configuration
+   report calls :func:`resolve_key` with ``use_dotenv=False``.
 
 ``JEV_API_KEY`` is passed explicitly to ``TypeSafeClient(api_key=...)``; the SDK's
 own ``TYPESAFE_API_KEY`` variable is never consulted because ExtorQ never builds
@@ -67,10 +70,14 @@ class AISettings(BaseSettings):
     #: Total budget for one Jev call including retries and backoff.
     jev_retry_budget_seconds: float = Field(default=25.0, gt=0, le=300)
     jev_max_retries: int = Field(default=2, ge=0, le=5)
-    #: Per HTTP attempt.
-    gemini_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
-    #: Attempts including the first one (1 = no retry).
-    gemini_max_attempts: int = Field(default=2, ge=1, le=5)
+    #: Per HTTP attempt (also sent as the server deadline). Observed summary latency with
+    #: thinking level "low" was 20-35 s, so 30 s cut off a live attempt; 60 s keeps one
+    #: attempt within the console's 90 s wait.
+    gemini_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    #: Attempts including the first one (1 = no retry). The SDK retries timeouts too, and a
+    #: retried generation doubles cost and exceeds the console wait, so the default is 1;
+    #: a failed attempt is returned as rate_limited / timeout / error and can be re-requested.
+    gemini_max_attempts: int = Field(default=1, ge=1, le=5)
     gemini_max_output_tokens: int = Field(default=8192, ge=1024, le=65536)
     #: "none" sends no thinking configuration at all.
     gemini_thinking_level: Literal["none", "minimal", "low", "medium", "high"] = "low"
@@ -80,7 +87,9 @@ class AISettings(BaseSettings):
     # ── budgets ─────────────────────────────────────────────────────
     jev_daily_cap: int = Field(default=300, ge=0, le=10_000)
     gemini_daily_cap: int = Field(default=50, ge=0, le=1_000)
-    gemini_alert_cooldown_seconds: int = Field(default=300, ge=0, le=86_400)
+    #: Minimum time between summary attempts for one alert. Successful summaries are reused
+    #: per context hash without a call, so this mainly bounds retries after failures.
+    gemini_alert_cooldown_seconds: int = Field(default=120, ge=0, le=86_400)
 
     # ── input size caps (characters of serialised provider input) ───
     jev_max_state_chars: int = Field(default=24_000, ge=2_000, le=200_000)

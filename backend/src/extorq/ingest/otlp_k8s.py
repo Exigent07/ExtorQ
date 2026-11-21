@@ -69,15 +69,31 @@ from extorq.contracts.event import (
     SimulationTag,
     SourceInfo,
 )
-from extorq.contracts.identity import canonical_json, event_id, sha256_hex
+from extorq.contracts.identity import (
+    canonical_json,
+    event_id,
+    instance_id,
+    service_id,
+    sha256_hex,
+)
+from extorq.contracts.service import InstanceKind, ServiceKind, ServiceRef
 
-PARSER_VERSION = "1.0.0"
+#: 1.1.0: container.id + image, ServiceRef to the workload service (schema 1.1).
+PARSER_VERSION = "1.1.0"
 AUDIT_PARSER = "otlp-k8s-audit"
 CONTAINER_PARSER = "otlp-k8s-container"
 LAB_PORTAL_PARSER = "otlp-k8s-lab-portal"
 
 ASSET_ID = "k8s:extorq-lab"
 CLUSTER_NAME = "extorq-lab"
+
+#: Adapter ids carried in ServiceRef.adapter_id (events.adapter_id).
+AUDIT_ADAPTER = "k8s-audit"
+CONTAINER_LOG_ADAPTER = "k8s-container-log"
+#: Same adapter id as B1's VM adapter for the lab-portal JSON schema.
+LAB_PORTAL_ADAPTER = "webapp-json"
+#: Workload kind used for pods without a workload controller (bare and static pods).
+POD_WORKLOAD_KIND = "Pod"
 
 #: (namespace, container) pairs whose stdout is parsed as lab-portal.log.v1.
 #: Restricting by workload prevents any other pod from forging application
@@ -141,6 +157,113 @@ _WORKLOAD_TEMPLATE_KINDS = frozenset(
 
 class OtlpPayloadError(ValueError):
     """The request body is not an OTLP/JSON ExportLogsServiceRequest."""
+
+
+# ── Kubernetes service hierarchy (shared with the inventory collector) ──
+#
+#   asset k8s:extorq-lab (cluster)
+#     ├─ asset k8s:extorq-lab/node/<node>                 (AssetType kubernetes_node)
+#     ├─ Service k8s_workload  key "<ns>/<Kind>/<name>"    (top-level controller, or
+#     │    │                                               "<ns>/Pod/<name>" without one)
+#     │    └─ ServiceInstance pod        key = pod UID (kubelet UID for static pods)
+#     │         └─ ServiceInstance container key = bare container id (64 hex)
+#     └─ Service k8s_service   key "<ns>/<name>"           (logical Service object;
+#                                                          never a host OS service)
+#
+# Both the normaliser (events) and the inventory collector (Service/ServiceInstance
+# records) derive ids ONLY through these helpers, so references always match.
+
+_K8S_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$")
+_K8S_KIND_RE = re.compile(r"^[A-Z][A-Za-z0-9]{0,62}$")
+#: Runtime container id: optional "<runtime>://" prefix + hex id.
+_CONTAINER_ID_RE = re.compile(r"^(?:([a-z][a-z0-9.+-]{0,31})://)?([0-9a-f]{12,128})$")
+#: kubelet uses the static-pod config hash (32 hex, no dashes) as the pod UID in node
+#: log paths and runtime labels; API-created pods have RFC 4122 UUIDs.
+_STATIC_POD_UID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def valid_k8s_name(value: Any) -> str | None:
+    """A DNS-1123 name as Kubernetes validates it, else None (never 'repaired')."""
+    if isinstance(value, str) and len(value) <= 253 and _K8S_NAME_RE.match(value):
+        return value
+    return None
+
+
+def node_asset_id(node_name: Any) -> str | None:
+    """Asset id of a cluster node: ``k8s:extorq-lab/node/<name>``."""
+    name = valid_k8s_name(node_name)
+    if name is None or len(name) > 180:
+        return None
+    return f"{ASSET_ID}/node/{name}"
+
+
+def canonical_container_id(value: Any) -> tuple[str | None, str | None]:
+    """``(bare id, runtime)`` from ``containerd://<hex>`` or ``<hex>``; ``(None, None)`` if invalid.
+
+    The bare hex id is the canonical form in events (``kubernetes.container_id``) and
+    container ServiceInstances, because the OTel processor reports the id without the
+    runtime prefix while the API reports ``<runtime>://<id>``.
+    """
+    if not isinstance(value, str):
+        return None, None
+    match = _CONTAINER_ID_RE.match(value.strip())
+    if not match:
+        return None, None
+    return match.group(2), match.group(1)
+
+
+def is_static_pod_uid(uid: Any) -> bool:
+    return isinstance(uid, str) and bool(_STATIC_POD_UID_RE.match(uid))
+
+
+def service_display_name(namespace: str, name: str) -> str:
+    return sanitize_untrusted(f"{namespace}/{name}", NAME_LIMIT)
+
+
+def workload_service_key(namespace: str, kind: str, name: str) -> str:
+    return f"{namespace}/{kind}/{name}"
+
+
+def workload_service_id(namespace: str, kind: str, name: str) -> str | None:
+    """service_id of a workload (top-level controller or controller-less Pod)."""
+    if not (valid_k8s_name(namespace) and valid_k8s_name(name) and _K8S_KIND_RE.match(kind)):
+        return None
+    return service_id(
+        ASSET_ID, ServiceKind.K8S_WORKLOAD.value, workload_service_key(namespace, kind, name)
+    )
+
+
+def k8s_service_key(namespace: str, name: str) -> str:
+    return f"{namespace}/{name}"
+
+
+def k8s_service_service_id(namespace: str, name: str) -> str | None:
+    """service_id of a logical Kubernetes Service object (not an OS service)."""
+    if not (valid_k8s_name(namespace) and valid_k8s_name(name)):
+        return None
+    return service_id(ASSET_ID, ServiceKind.K8S_SERVICE.value, k8s_service_key(namespace, name))
+
+
+def pod_instance_id(workload_sid: str, pod_key: str) -> str:
+    return instance_id(workload_sid, InstanceKind.POD.value, pod_key)
+
+
+def container_instance_id(workload_sid: str, bare_container_id: str) -> str:
+    return instance_id(workload_sid, InstanceKind.CONTAINER.value, bare_container_id)
+
+
+def apiserver_service_ref(node_name: Any) -> ServiceRef | None:
+    """kube-apiserver static pod of ``node_name`` (writer of that node's audit log)."""
+    node = valid_k8s_name(node_name)
+    if node is None:
+        return None
+    pod = f"kube-apiserver-{node}"
+    sid = workload_service_id("kube-system", POD_WORKLOAD_KIND, pod)
+    if sid is None:
+        return None
+    return ServiceRef(
+        service_id=sid, name=service_display_name("kube-system", pod), adapter_id=AUDIT_ADAPTER
+    )
 
 
 @dataclass
@@ -382,6 +505,11 @@ def _valid_ip(value: Any) -> str | None:
         return None
 
 
+def simulation_tag(*candidates: Any) -> SimulationTag | None:
+    """SimulationTag when any candidate (str or list of str) carries ``extorq-sim-<run_id>``."""
+    return _simulation_tag(*candidates)
+
+
 def _simulation_tag(*candidates: Any) -> SimulationTag | None:
     for candidate in candidates:
         if isinstance(candidate, str):
@@ -551,7 +679,9 @@ def summarize_pod_spec(spec: dict[str, Any]) -> dict[str, Any]:
     if isinstance(sa, str):
         summary["service_account"] = _name(sa, 128)
     if spec.get("automountServiceAccountToken") is not None:
-        summary["automount_sa_token"] = bool(spec.get("automountServiceAccountToken"))
+        # Key avoids the word "token": secret redaction would rewrite "..._token":false
+        # and corrupt the JSON summary.
+        summary["automount_service_account"] = bool(spec.get("automountServiceAccountToken"))
     if images:
         summary["images"] = images
     if containers:
@@ -777,6 +907,25 @@ def risk_flags_for_summary(summary: Mapping[str, Any] | None) -> list[str]:
     return sorted(flags)
 
 
+def metadata_only_request(request: Any) -> list[str] | None:
+    """Metadata keys touched when a patch/update body changes ONLY ``metadata``, else None.
+
+    Merge/strategic patches: the body has no key besides metadata (kind/apiVersion
+    allowed). RFC 6902 patches: every op path is under /metadata/. A full update (PUT)
+    carries the whole object and is never classified as metadata-only.
+    """
+    if isinstance(request, list):
+        paths = [op.get("path") for op in request[:128] if isinstance(op, Mapping)]
+        if paths and all(isinstance(p, str) and p.startswith("/metadata/") for p in paths):
+            return sorted({p.split("/")[2] for p in paths if isinstance(p, str)})[:8]
+        return None
+    if isinstance(request, Mapping) and set(request) - {"kind", "apiVersion"} == {"metadata"}:
+        metadata = request.get("metadata")
+        if isinstance(metadata, Mapping):
+            return sorted(str(k)[:64] for k in metadata if isinstance(k, str))[:8]
+    return None
+
+
 def _bound_summary(summary: dict[str, Any]) -> tuple[str, bool]:
     """Canonical JSON of ``summary`` within SUMMARY_LIMIT characters."""
     text = canonical_json(summary)
@@ -975,6 +1124,12 @@ def _normalize_audit(
         flags = risk_flags_for_summary(summary)
         if flags:
             attributes["risk_flags"] = flags
+    if verb in ("patch", "update") and code is not None and code < 300:
+        touched = metadata_only_request(event.get("requestObject"))
+        if touched is not None:
+            # e.g. kubectl annotate/label: the RBAC/pod content itself did not change.
+            attributes["metadata_only_change"] = True
+            attributes["metadata_fields_changed"] = touched
     message_text = response.get("message") if isinstance(response.get("message"), str) else None
     psa_violation = bool(message_text and "violates PodSecurity" in message_text and code == 403)
     if message_text:
@@ -1071,6 +1226,9 @@ def _normalize_audit(
             source_ips=source_ips,
             user_agent=user_agent,
         ),
+        # The audit file is written by this node's kube-apiserver (kubeadm patch in
+        # infra/kind/cluster.yaml); the collector only reads files on its own node.
+        service=apiserver_service_ref(resource.get("k8s.node.name")),
         message=message,
         attributes=attributes,
         raw=raw,
@@ -1126,6 +1284,46 @@ def _workload(resource: dict[str, Any]) -> tuple[str | None, str | None]:
         if isinstance(name, str) and name:
             return kind, _name(name)
     return None, None
+
+
+def _container_image(resource: dict[str, Any]) -> str | None:
+    """``name[:tag]`` from k8s_attributes (container.image.name / container.image.tags)."""
+    name = resource.get("container.image.name")
+    if not isinstance(name, str) or not name:
+        return None
+    tags = resource.get("container.image.tags")
+    tag = tags[0] if isinstance(tags, list) and tags and isinstance(tags[0], str) else None
+    return sanitize_untrusted(f"{name}:{tag}" if tag else name, 512) or None
+
+
+def _container_service_ref(kubernetes: KubernetesInfo, adapter_id: str) -> ServiceRef | None:
+    """ServiceRef to the record's workload service; None without workload evidence.
+
+    Instance: the container (bare runtime id) when k8s_attributes reported it, else
+    the pod (keyed by the UID from the node log path, which is the kubelet UID).
+    """
+    namespace, kind, name = (
+        kubernetes.namespace,
+        kubernetes.workload_kind,
+        kubernetes.workload_name,
+    )
+    if not (namespace and kind and name):
+        return None
+    sid = workload_service_id(namespace, kind, name)
+    if sid is None:
+        return None
+    if kubernetes.container_id:
+        iid: str | None = container_instance_id(sid, kubernetes.container_id)
+    elif kubernetes.pod_uid:
+        iid = pod_instance_id(sid, kubernetes.pod_uid)
+    else:
+        iid = None
+    return ServiceRef(
+        service_id=sid,
+        name=service_display_name(namespace, name),
+        instance_id=iid,
+        adapter_id=adapter_id,
+    )
 
 
 def _pod_identity_from_path(path: Any) -> tuple[str | None, str | None, str | None, str | None]:
@@ -1212,6 +1410,14 @@ def _normalize_container(
 
     red = _Redactor()
     workload_kind, workload_name = _workload(resource)
+    # Static pods are never associated by k8s_attributes (their log-path UID is the
+    # kubelet config hash, not the mirror pod UID) and have no controller: the pod
+    # itself is the workload. API pods without controller metadata stay unattributed
+    # (absence of metadata is not evidence of a bare pod).
+    static_pod = is_static_pod_uid(pod_uid)
+    if workload_kind is None and static_pod and pod_name:
+        workload_kind, workload_name = POD_WORKLOAD_KIND, pod_name
+    container_id, _runtime = canonical_container_id(resource.get("container.id"))
     restart = resource.get("k8s.container.restart_count")
     try:
         restart_count = int(restart) if restart is not None else None
@@ -1223,6 +1429,7 @@ def _normalize_container(
         pod_name=pod_name,
         pod_uid=pod_uid,
         container_name=container,
+        container_id=container_id,
         node_name=_name(resource.get("k8s.node.name"), 253),
         workload_kind=workload_kind,
         workload_name=workload_name,
@@ -1231,6 +1438,8 @@ def _normalize_container(
         "stream": stream,
         "time_source": time_source,
         "container_restart_count": restart_count,
+        "container_image": _container_image(resource),
+        "static_pod": True if static_pod else None,
     }
     simulation = _simulation_tag(pod_name, workload_name)
     observed = _ns_to_datetime(observed_ns) if observed_ns else None
@@ -1253,6 +1462,7 @@ def _normalize_container(
             observed,
             red,
             simulation,
+            _container_service_ref(kubernetes, LAB_PORTAL_ADAPTER),
         )
 
     message = red.text(body, MESSAGE_LIMIT)
@@ -1271,6 +1481,7 @@ def _normalize_container(
         event_time=cri_time,
         observed_time=observed,
         kubernetes=kubernetes,
+        service=_container_service_ref(kubernetes, CONTAINER_LOG_ADAPTER),
         message=message,
         attributes=attributes,
         raw=raw,
@@ -1298,6 +1509,7 @@ def _lab_portal_event(
     observed: datetime | None,
     red: _Redactor,
     simulation: SimulationTag | None,
+    service: ServiceRef | None,
 ) -> SecurityEvent:
     app_event = str(data["event"])
     event_type = _LAB_PORTAL_EVENTS[app_event]
@@ -1372,6 +1584,7 @@ def _lab_portal_event(
             duration_ms=duration_ms,
         ),
         kubernetes=kubernetes,
+        service=service,
         message=message,
         attributes=attributes,
         raw=red.text(body, 4096),
@@ -1388,16 +1601,34 @@ def _lab_portal_event(
 
 __all__ = [
     "ASSET_ID",
+    "AUDIT_ADAPTER",
     "CLUSTER_NAME",
+    "CONTAINER_LOG_ADAPTER",
     "DANGEROUS_CAPABILITIES",
+    "LAB_PORTAL_ADAPTER",
     "LAB_PORTAL_WORKLOADS",
     "PARSER_VERSION",
+    "POD_WORKLOAD_KIND",
     "NormalizationResult",
     "OtlpPayloadError",
+    "apiserver_service_ref",
+    "canonical_container_id",
+    "container_instance_id",
+    "is_static_pod_uid",
+    "k8s_service_key",
+    "k8s_service_service_id",
+    "metadata_only_request",
+    "node_asset_id",
     "normalize_otlp_logs",
     "normalize_otlp_logs_detailed",
+    "pod_instance_id",
     "risk_flags_for_summary",
+    "service_display_name",
+    "simulation_tag",
     "summarize_k8s_object",
     "summarize_pod_spec",
     "summarize_rbac_object",
+    "valid_k8s_name",
+    "workload_service_id",
+    "workload_service_key",
 ]

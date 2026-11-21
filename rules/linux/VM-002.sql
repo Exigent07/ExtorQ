@@ -1,9 +1,10 @@
--- VM-002 v1.0.0: new or modified systemd unit (persistence) on a Linux host.
+-- VM-002 v1.1.0: new or modified systemd unit (persistence) on a Linux host.
 --
 -- Trigger: persistence.systemd.unit_created / unit_modified inventory diffs (snapshot
 -- comparison over SSH) for unit files not in {allowlist_paths}. Baseline snapshots are
 -- never alerted. Supporting evidence (optional sources):
---   * auditd watch hits with key {audit_key} on exactly the same path (linux.auditd)
+--   * auditd watch hits with key {audit_key} on exactly the same path (linux.auditd),
+--     excluding deletions ({deletion_syscalls}): removing the file corroborates nothing
 --   * persistence.systemd.unit_enabled for the same unit name
 -- Confidence: high when the auditd watch corroborates the inventory diff on the exact
 -- path, medium otherwise. A unit that is only *enabled* (existing file, no content
@@ -69,6 +70,7 @@ WITH
           AND source_type = 'linux.auditd'
           AND event_type = 'file.audit.watch'
           AND JSONExtractString(attributes, 'audit_key') = {audit_key:String}
+          AND NOT has({deletion_syscalls:Array(String)}, JSONExtractString(attributes, 'syscall'))
         LIMIT 1 BY event_id
     )
 SELECT

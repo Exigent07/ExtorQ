@@ -33,4 +33,6 @@ export type ContractChecks = [
   Accepts<z.input<typeof S.zEventDetailResponse>, Api["EventDetailResponse"]>,
   Accepts<z.input<typeof S.zHealthResponse>, Api["HealthResponse"]>,
   Accepts<z.input<typeof S.zTimeSeriesResponse>, Api["TimeSeriesResponse"]>,
+  Accepts<z.input<typeof S.zAssetServicesResponse>, Api["AssetServicesResponse"]>,
+  Accepts<z.input<typeof S.zServiceDetailResponse>, Api["ServiceDetailResponse"]>,
 ];

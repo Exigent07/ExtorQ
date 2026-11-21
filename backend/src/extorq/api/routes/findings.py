@@ -11,7 +11,14 @@ from extorq.api import service
 from extorq.api.auth import CurrentPrincipal
 from extorq.api.errors import BadRequest
 from extorq.api.repository import FindingFilters
-from extorq.api.routes.common import IDENTIFIER_PATTERN, AssetIdQuery, Limit, Offset, Repo
+from extorq.api.routes.common import (
+    IDENTIFIER_PATTERN,
+    AssetIdQuery,
+    Limit,
+    Offset,
+    Repo,
+    ServiceIdQuery,
+)
 from extorq.contracts import FindingCategory, Severity
 
 router = APIRouter(tags=["findings"])
@@ -36,6 +43,7 @@ def list_findings(
             description="Lifecycle filter; requires the findings lifecycle view (else 400).",
         ),
     ] = None,
+    service_id: ServiceIdQuery = None,
 ) -> s.FindingListResponse:
     filters = FindingFilters(
         asset_id=asset_id or "",
@@ -43,6 +51,7 @@ def list_findings(
         scanner=scanner or "",
         category=category.value if category else "",
         states=tuple(state or ()),
+        service_id=service_id or "",
     )
     if filters.states and not repo.findings_lifecycle_available():
         raise BadRequest(
@@ -50,7 +59,8 @@ def list_findings(
             "which is not available"
         )
     rows, total, lifecycle = repo.list_findings(filters, limit, offset)
-    items = [service.finding_item(row, lifecycle) for row in rows]
+    attribution = repo.finding_service_attribution([str(row["finding_id"]) for row in rows])
+    items = [service.finding_item(row, lifecycle, attribution) for row in rows]
     return s.FindingListResponse(
         lifecycle_available=lifecycle,
         source="v_findings_current" if lifecycle else "finding_observations",

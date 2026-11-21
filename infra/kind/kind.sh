@@ -10,6 +10,7 @@
 #   infra/kind/kind.sh token        mint a short-lived inventory token + kubeconfig (0600)
 #   infra/kind/kind.sh netcheck     verify pods can reach the ingest gateway (TLS + CA)
 #   infra/kind/kind.sh kubeconfig   print the PATH of the admin kubeconfig (never contents)
+#   infra/kind/kind.sh audit-check  check the audit policy guarantees against the real audit log
 #
 # Safety:
 #   * Every kind call passes --name extorq-lab; every kubectl call passes
@@ -95,8 +96,8 @@ render() {
 }
 
 wait_for_audit_log() {
-  local i
-  for i in $(seq 1 60); do
+  local _attempt
+  for _attempt in $(seq 1 60); do
     if docker exec "${NODE_CONTAINER}" test -s "${AUDIT_LOG}"; then
       return 0
     fi
@@ -151,6 +152,34 @@ apply_base() {
   render "${MANIFESTS}/40-posture-lab.yaml" "${VAR_KIND}/40-posture-lab.yaml" \
     __POSTURE_LAB_IMAGE__ "${POSTURE_LAB_IMAGE}"
   kc apply -f "${VAR_KIND}/40-posture-lab.yaml"
+  annotate_bootstrap_risks
+}
+
+# kubeadm creates two bindings that the posture scan (rightly) reports: the operator's
+# cluster-admin group binding and anonymous read of the kube-public/cluster-info ConfigMap
+# (node bootstrap discovery). They are part of how kind/kubeadm works, so they are marked as
+# documented accepted risks instead of being hidden: the findings stay visible, flagged
+# "accepted". Annotation only; the objects themselves are not changed.
+annotate_bootstrap_risks() {
+  annotate_once clusterrolebinding kubeadm:cluster-admins "" \
+    "kind/kubeadm operator group (admin kubeconfig in var/kube, 0600); lab only"
+  annotate_once rolebinding kubeadm:bootstrap-signer-clusterinfo kube-public \
+    "kubeadm node bootstrap: anonymous get of the public cluster-info ConfigMap only"
+}
+
+# annotate_once <kind> <name> <namespace|""> <reason>: PATCH only when the annotation is missing
+# or different. Every PATCH of a risky binding is a genuine RBAC write in the audit log (and
+# K8S-002 evidence), so re-deploys must not repeat it.
+annotate_once() {
+  local kind="$1" name="$2" ns="$3" reason="$4" current
+  local -a scope=()
+  [[ -n "${ns}" ]] && scope=(-n "${ns}")
+  current="$(kc ${scope[@]+"${scope[@]}"} get "${kind}" "${name}" \
+    -o jsonpath='{.metadata.annotations.extorq\.io/accepted-risk}' 2>/dev/null || true)"
+  if [[ "${current}" != "${reason}" ]]; then
+    kc ${scope[@]+"${scope[@]}"} annotate --overwrite "${kind}" "${name}" "extorq.io/accepted-risk=${reason}" >/dev/null
+    log "annotated ${kind} ${name} as an accepted risk"
+  fi
 }
 
 lab_portal_version() {
@@ -200,8 +229,14 @@ cmd_load_images() {
         --label "org.opencontainers.image.version=$(lab_portal_version)" \
         -t "${image}" "${LAB_PORTAL_SRC}" >/dev/null
     fi
-    log "loading ${image} into ${CLUSTER_NAME}"
-    kind load docker-image --name "${CLUSTER_NAME}" "${image}" >/dev/null
+    # The tag is a content hash, so an image already in the node's containerd is current.
+    # (kind's own ID comparison reloads every time with Docker Desktop's containerd store.)
+    if docker exec "${NODE_CONTAINER}" crictl inspecti "docker.io/${image}" >/dev/null 2>&1; then
+      log "${image} already present in ${CLUSTER_NAME}"
+    else
+      log "loading ${image} into ${CLUSTER_NAME}"
+      kind load docker-image --name "${CLUSTER_NAME}" "${image}" >/dev/null
+    fi
   else
     log "lab-portal source not present yet (${LAB_PORTAL_SRC}); skipping image build"
   fi
@@ -393,8 +428,8 @@ cmd_netcheck() {
     __NETCHECK_IMAGE__ "${LAB_PORTAL_BASE_IMAGE}" __GATEWAY_URL__ "${GATEWAY_URL}"
   kc -n extorq-system delete pod extorq-b2-netcheck --ignore-not-found --wait=true >/dev/null
   kc apply -f "${VAR_KIND}/90-netcheck-pod.yaml" >/dev/null
-  local phase="" i
-  for i in $(seq 1 90); do
+  local phase="" _attempt
+  for _attempt in $(seq 1 90); do
     phase="$(kc -n extorq-system get pod extorq-b2-netcheck -o jsonpath='{.status.phase}' 2>/dev/null || true)"
     [[ "${phase}" == "Succeeded" || "${phase}" == "Failed" ]] && break
     sleep 2
@@ -402,6 +437,14 @@ cmd_netcheck() {
   kc -n extorq-system logs extorq-b2-netcheck || true
   kc -n extorq-system delete pod extorq-b2-netcheck --ignore-not-found --wait=false >/dev/null
   [[ "${phase}" == "Succeeded" ]] || die "netcheck failed (phase: ${phase:-unknown})"
+}
+
+cmd_audit_check() {
+  require_tools
+  cluster_exists || die "cluster ${CLUSTER_NAME} does not exist"
+  # Active file and rotated backups; bodies are never printed (counts and violations only).
+  docker exec "${NODE_CONTAINER}" sh -c 'cat /var/log/kubernetes/audit/kube-apiserver-audit*.log' \
+    | python3 -I "${SCRIPT_DIR}/audit_check.py"
 }
 
 main() {
@@ -415,8 +458,9 @@ main() {
     token) cmd_token ;;
     netcheck) cmd_netcheck ;;
     kubeconfig) echo "${ADMIN_KUBECONFIG}" ;;
+    audit-check) cmd_audit_check ;;
     *)
-      sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       [[ -n "${cmd}" ]] && die "unknown command: ${cmd}"
       exit 2
       ;;

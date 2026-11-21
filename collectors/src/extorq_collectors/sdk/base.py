@@ -40,6 +40,7 @@ from extorq.contracts.health import CollectorHealth
 from extorq.contracts.identity import canonical_json, sha256_hex
 from extorq.contracts.ingest import INGEST_RECORD_ADAPTER, MAX_RECORD_BYTES, IngestRecord
 from extorq.contracts.scan import ScanRun
+from extorq.contracts.service import Service, ServiceInstance
 from extorq.contracts.simulation import SimulationRun
 from extorq_collectors.sdk.config import CollectorConfig
 from extorq_collectors.sdk.state import StagedSnapshot, StateStore
@@ -52,6 +53,8 @@ _KIND_BY_MODEL: dict[type[BaseModel], str] = {
     ScanRun: "scan_run",
     CollectorHealth: "collector_health",
     SimulationRun: "simulation_run",
+    Service: "service",
+    ServiceInstance: "service_instance",
 }
 
 
@@ -140,16 +143,18 @@ def to_record_json(record: IngestRecord | BaseModel | Mapping[str, Any]) -> tupl
     text = canonical_json({"kind": validated.kind, "data": validated.data.model_dump(mode="json")})
     size = len(text.encode("utf-8"))
     if size > MAX_RECORD_BYTES:
-        raise ValueError(f"record of kind {validated.kind} is {size} bytes "
-                         f"(limit {MAX_RECORD_BYTES})")
+        raise ValueError(
+            f"record of kind {validated.kind} is {size} bytes (limit {MAX_RECORD_BYTES})"
+        )
     return validated.kind, text
 
 
 class CollectorContext:
     """Everything a collector needs during ``collect``."""
 
-    def __init__(self, config: CollectorConfig, store: StateStore,
-                 collector_version: str = "0.1.0") -> None:
+    def __init__(
+        self, config: CollectorConfig, store: StateStore, collector_version: str = "0.1.0"
+    ) -> None:
         self.collector_id = config.collector_id
         self.asset_id = config.asset_id
         self.producer_id = config.producer_id
@@ -174,6 +179,16 @@ class CollectorContext:
         self.lag_seconds = None
         self.health_details = {}
         self._staged.clear()
+
+    def discard_staged(self) -> list[str]:
+        """Drop snapshots staged by ``diff_snapshot`` but never emitted; return their names.
+
+        The runner calls this after every cycle: a snapshot only advances together with
+        the records describing it, never on its own (e.g. after a failed cycle).
+        """
+        names = sorted(self._staged)
+        self._staged.clear()
+        return names
 
     @staticmethod
     def now() -> datetime:
@@ -222,8 +237,9 @@ class CollectorContext:
                 removed[key] = json.loads(text)
                 previous[key] = removed[key]
         self._staged[name] = StagedSnapshot(name=name, items=current)
-        return SnapshotDiff(added, changed, removed, previous,
-                            baseline=not self.store.has_snapshot(name))
+        return SnapshotDiff(
+            added, changed, removed, previous, baseline=not self.store.has_snapshot(name)
+        )
 
     def report_lag(self, newest_source_time: datetime | None) -> None:
         """Record how far behind the newest collected source timestamp is."""

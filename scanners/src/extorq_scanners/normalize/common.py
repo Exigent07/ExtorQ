@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from extorq.common.redaction import sanitize_untrusted
 from extorq.contracts import (
     AcceptedRisk,
     FindingCategory,
@@ -17,7 +18,6 @@ from extorq.contracts import (
     Severity,
 )
 from extorq.contracts.identity import finding_id
-
 from extorq_scanners.models import NormalizeContext, NormalizedScan
 from extorq_scanners.sanitize import (
     ATTR_LIST_ITEM,
@@ -25,6 +25,7 @@ from extorq_scanners.sanitize import (
     ATTR_STR,
     MEDIUM,
     RedactionCounter,
+    Verbatim,
     clean,
     clean_list,
 )
@@ -49,6 +50,10 @@ def bounded_attributes(
             continue
         if isinstance(value, bool | int | float):
             out[key] = value
+        elif isinstance(value, Verbatim):
+            verbatim = sanitize_untrusted(str(value), ATTR_STR).strip()
+            if verbatim:
+                out[key] = verbatim
         elif isinstance(value, str):
             text = clean(value, ATTR_STR, counter)
             if text is not None:
@@ -65,13 +70,13 @@ def bounded_attributes(
     return out
 
 
-def references(primary: object, extra: Iterable[object] | None, counter: RedactionCounter) -> list[str]:
+def references(
+    primary: object, extra: Iterable[object] | None, counter: RedactionCounter
+) -> list[str]:
     """At most 10 http(s) references, primary URL first, de-duplicated."""
     candidates: list[object] = [primary] if primary else []
     candidates.extend(extra or [])
-    urls = [
-        u for u in candidates if isinstance(u, str) and u.startswith(("https://", "http://"))
-    ]
+    urls = [u for u in candidates if isinstance(u, str) and u.startswith(("https://", "http://"))]
     return clean_list(urls, max_items=MAX_REFERENCES, item_limit=MEDIUM, counter=counter)
 
 
@@ -111,8 +116,15 @@ class FindingBuilder:
         refs: list[str] | None = None,
         accepted_risk: AcceptedRisk | None = None,
         attributes: Mapping[str, Any] | None = None,
+        service_id: str | None = None,
     ) -> PostureFinding | None:
-        fid = finding_id(self.ctx.asset_id, self.ctx.scanner, check_id, resource_key)
+        fid = finding_id(
+            self.ctx.asset_id,
+            self.ctx.scanner,
+            check_id,
+            resource_key,
+            self.ctx.identity_qualifier,
+        )
         if fid in self._ids:
             self.result.duplicates += 1
             return None
@@ -128,6 +140,7 @@ class FindingBuilder:
                 title=title,
                 description=description,
                 resource=resource,
+                service_id=service_id,
                 package=package,
                 cve_ids=cve_ids or [],
                 cvss_score=cvss_score,

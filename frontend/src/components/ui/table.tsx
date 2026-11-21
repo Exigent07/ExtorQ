@@ -1,5 +1,4 @@
-"use client"
-
+// No client state: rendered on the server where possible (smaller RSC payload).
 import * as React from "react"
 import { cn } from "cn"
 

@@ -1,0 +1,339 @@
+"""MacOSCollector cycles on the real SDK context/state store with a fixture-backed runner."""
+
+from __future__ import annotations
+
+import json
+import plistlib
+import shutil
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+import pytest
+from macos_helpers import (
+    ASSET,
+    COLLECTOR,
+    FIXTURES,
+    FakeRunner,
+    copy_fixture_dir,
+    failed,
+    fixture_bytes,
+    ok,
+)
+
+from extorq_collectors.macos import collector as collector_mod
+from extorq_collectors.macos import launchd as launchd_mod
+from extorq_collectors.macos.collector import (
+    KV_SOURCES,
+    UNIFIED_LOG_CHECKPOINT,
+    MacOSCollector,
+    MacOSCollectorError,
+)
+from extorq_collectors.macos.inventory import (
+    DSCL_USERS_SHELL,
+    DSCL_USERS_UID,
+    LSOF_TCP_LISTEN_ARGV,
+    LSOF_UDP_ARGV,
+    NETSTAT_TCP,
+    PS_ARGV,
+    SYSTEM_PROFILER_APPS,
+)
+from extorq_collectors.macos.posture import COMMANDS
+from extorq_collectors.macos.procinfo import no_paths
+from extorq_collectors.sdk import CollectorConfig, CollectorContext, StateStore
+
+
+def build_runner() -> FakeRunner:
+    runner = FakeRunner()
+    runner.add_prefix(
+        ["/usr/bin/log", "show"],
+        ok(
+            ["/usr/bin/log"],
+            fixture_bytes("unified_log/gatekeeper_prompt_flow.ndjson")
+            + b'{"count":5,"finished":1}\n',
+        ),
+    )
+    runner.add(PS_ARGV, ok(PS_ARGV, fixture_bytes("services/ps_services.txt")))
+    runner.add(NETSTAT_TCP, ok(NETSTAT_TCP, b""))  # socket table withheld (as under uv)
+    runner.add(
+        LSOF_TCP_LISTEN_ARGV,
+        ok(LSOF_TCP_LISTEN_ARGV, fixture_bytes("services/lsof_tcp_services.txt")),
+    )
+    runner.add(LSOF_UDP_ARGV, ok(LSOF_UDP_ARGV, fixture_bytes("services/lsof_udp_services.txt")))
+    runner.add(
+        ["/bin/launchctl", "print", "system"],
+        ok([], fixture_bytes("services/launchctl_print_system.txt")),
+    )
+    runner.add(
+        ["/bin/launchctl", "print", "gui/501"],
+        ok([], fixture_bytes("services/launchctl_print_gui.txt")),
+    )
+    runner.add(DSCL_USERS_UID, ok(DSCL_USERS_UID, fixture_bytes("inventory/dscl_users_uid.txt")))
+    runner.add(
+        DSCL_USERS_SHELL, ok(DSCL_USERS_SHELL, fixture_bytes("inventory/dscl_users_shell.txt"))
+    )
+    files = {
+        "fdesetup": "posture/fdesetup_status.txt",
+        "csrutil": "posture/csrutil_status.txt",
+        "csrutil_authroot": "posture/csrutil_authenticated_root.txt",
+        "fw_global": "posture/socketfilterfw_globalstate.txt",
+        "fw_stealth": "posture/socketfilterfw_stealthmode.txt",
+        "fw_allowsigned": "posture/socketfilterfw_allowsigned.txt",
+        "spctl": "posture/spctl_status.txt",
+        "su_prefs": "posture/softwareupdate_export.plist",
+        "commerce_prefs": "posture/commerce_export.plist",
+        "guest": "posture/loginwindow_guestenabled.txt",
+        "admins": "posture/dscl_admin.txt",
+        "sw_vers": "posture/sw_vers.txt",
+        "hw_model": "posture/sysctl_hw_model.txt",
+    }
+    for name, rel in files.items():
+        runner.add(COMMANDS[name], ok(COMMANDS[name], fixture_bytes(rel)))
+    runner.add(
+        SYSTEM_PROFILER_APPS,
+        ok(SYSTEM_PROFILER_APPS, fixture_bytes("inventory/system_profiler_apps.json")),
+    )
+    return runner
+
+
+class Harness:
+    def __init__(self, tmp_path: Path, settings: dict[str, Any] | None = None) -> None:
+        self.agents = copy_fixture_dir(
+            "launchd/user_agents", tmp_path / "home/Library/LaunchAgents"
+        )
+        self.daemons = copy_fixture_dir(
+            "launchd/system_daemons", tmp_path / "Library/LaunchDaemons"
+        )
+        apple = tmp_path / "apple/System/Library/LaunchDaemons"
+        apple.mkdir(parents=True)
+        for name in (
+            "ssh.plist",
+            "com.apple.ftp-proxy.plist",
+            "com.apple.screensharing.plist",
+            "org.cups.cupsd.plist",
+        ):
+            shutil.copy2(FIXTURES / "launchd/apple" / name, apple / name)
+        self.runner = build_runner()
+        self.collector = MacOSCollector(
+            runner=self.runner,
+            path_resolver=no_paths,
+            uid=501,
+            launch_locations=[
+                launchd_mod.Location(self.agents, "user", "agent"),
+                launchd_mod.Location(self.daemons, "system", "daemon"),
+            ],
+            apple_definitions_root=tmp_path / "apple",
+            system_count_dirs=(str(tmp_path / "none-a"), str(tmp_path / "none-b")),
+            require_macos=False,
+        )
+        config = CollectorConfig(
+            collector_id=COLLECTOR,
+            producer_id="macos-workstation-01",
+            asset_id=ASSET,
+            module="extorq_collectors.macos.collector:MacOSCollector",
+            interval_seconds=60,
+            settings=settings or {"launchd": {"allowlist": ["sh.brew.*"]}},
+        )
+        self.store = StateStore(tmp_path / "state.db")
+        self.ctx = CollectorContext(config, self.store, collector_version="0.1.0")
+        self.collector.setup(self.ctx)
+
+    def cycle(self, *, force: bool = True) -> list[tuple[str, dict[str, Any]]]:
+        if force:
+            self.ctx.state.delete(KV_SOURCES)  # make every source due
+        before = {row[0] for row in self.store._conn.execute("SELECT seq FROM outbox")}
+        self.ctx.begin_cycle()
+        self.collector.collect(self.ctx)
+        rows = self.store._conn.execute(
+            "SELECT seq, kind, record FROM outbox ORDER BY seq"
+        ).fetchall()
+        return [(kind, json.loads(rec)["data"]) for seq, kind, rec in rows if seq not in before]
+
+
+def kinds(records: list[tuple[str, dict[str, Any]]]) -> Counter[str]:
+    return Counter(kind for kind, _ in records)
+
+
+def event_types(records: list[tuple[str, dict[str, Any]]]) -> Counter[str]:
+    return Counter(data["event_type"] for kind, data in records if kind == "event")
+
+
+def test_first_cycle_is_a_baseline_with_complete_records(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    records = h.cycle()
+    k, types = kinds(records), event_types(records)
+    assert k["scan_run"] == 2 and k["asset"] == 1 and k["finding"] >= 1
+    assert k["service"] > 20 and k["service_instance"] > 5
+    items = Counter(d["item_type"] for kind, d in records if kind == "inventory_item")
+    assert items["process"] > 500 and items["user"] > 100 and items["launch_item"] == 9
+    assert items["listener"] > 20 and items["software"] > 10
+    assert types["security.gatekeeper.event"] == 5
+    assert types["service.discovered"] == k["service"]  # baseline: flagged discoveries
+    assert not any(
+        t.startswith("persistence.launchd") for t in types
+    )  # baseline: no persistence noise
+    assert not any(t.startswith("network.listener") or t.startswith("account.user") for t in types)
+    discovered = [
+        d for kind, d in records if kind == "event" and d["event_type"] == "service.discovered"
+    ]
+    assert all(
+        d["attributes"]["baseline"] is True and d["service"]["service_id"] for d in discovered
+    )
+    firewall = [
+        d for kind, d in records if kind == "finding" and d["check_id"] == "macos.firewall.enabled"
+    ]
+    assert firewall and firewall[0]["severity"] == "medium"
+    airplay = [
+        d
+        for kind, d in records
+        if kind == "finding" and d["check_id"] == "macos.sharing.airplay_receiver"
+    ]
+    assert airplay and airplay[0]["service_id"]  # attributed to com.apple.controlcenter
+    asset = next(d for kind, d in records if kind == "asset")
+    assert (
+        asset["attributes"]["os_version"] == "27.0.1"
+        and asset["attributes"]["model_identifier"] == "Mac16,8"
+    )
+    assert "hostname" not in asset["attributes"] and asset["display_name"] is None
+    assert "serial" not in json.dumps(asset).lower()
+    ssh = next(
+        d for kind, d in records if kind == "service" and d["service_key"] == "com.openssh.sshd"
+    )
+    assert ssh["monitoring_status"] == "unmonitored" and ssh["adapter_id"] == "macos-sshd"
+    checkpoint = json.loads(h.ctx.checkpoints.get(UNIFIED_LOG_CHECKPOINT) or "{}")
+    assert isinstance(checkpoint["end"], int)
+    details = h.ctx.health_details
+    assert all(s.endswith("=ok") for s in details["sources"])
+    assert any("Endpoint Security" in g for g in details["gaps"])
+    assert any("lsof" in g for g in details["gaps"])  # listener visibility gap is explicit
+
+
+def test_persistence_changes_after_baseline(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.cycle()
+    sim = h.agents / "com.extorq.sim.abcd1234ef.plist"
+    sim.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": "com.extorq.sim.abcd1234ef",
+                "ProgramArguments": ["/usr/bin/true"],
+                "RunAtLoad": False,
+            }
+        )
+    )
+    redis = h.agents / "sh.brew.redis.plist"
+    redis.write_bytes(redis.read_bytes().replace(b"redis.conf", b"redis-other.conf"))
+    (h.agents / "sh.brew.php.plist").unlink()
+    records = h.cycle()
+    events = {
+        (d["event_type"], d["resource"]["path"].rsplit("/", 1)[-1]): d
+        for kind, d in records
+        if kind == "event" and d["event_type"].startswith("persistence.")
+    }
+    created = events[("persistence.launchd.item_created", "com.extorq.sim.abcd1234ef.plist")]
+    assert (
+        created["attributes"]["scope"] == "user" and created["attributes"]["run_at_load"] is False
+    )
+    assert created["simulation"]["run_id"] == "abcd1234ef"
+    assert created["service"]["name"] == "com.extorq.sim.abcd1234ef"
+    modified = events[("persistence.launchd.item_modified", "sh.brew.redis.plist")]
+    assert (
+        modified["attributes"]["allowlisted"] is True and modified["attributes"]["previous_sha256"]
+    )
+    assert ("persistence.launchd.item_deleted", "sh.brew.php.plist") in events
+    tombstones = [
+        d
+        for kind, d in records
+        if kind == "inventory_item" and not d["present"] and d["item_type"] == "launch_item"
+    ]
+    assert [t["item_key"].rsplit("/", 1)[-1] for t in tombstones] == ["sh.brew.php.plist"]
+    services = event_types(records)
+    assert services["service.discovered"] == 1  # the new (not loaded) job
+    third = h.cycle()
+    assert not any(t.startswith("persistence.") for t in event_types(third))  # no repeats
+
+
+def test_failing_source_is_isolated_and_never_advances_its_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    h.cycle()
+    (h.agents / "sh.brew.mysql.plist").unlink()
+
+    def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("simulated failure after the diff was staged")
+
+    monkeypatch.setattr(launchd_mod, "tombstone", broken)
+    h.runner.add(PS_ARGV, failed(PS_ARGV, 1, b"ps: boom"))
+    records = h.cycle()
+    sources = dict(s.split("=") for s in h.ctx.health_details["sources"])
+    assert sources["launchd"] == "error" and sources["inventory"] == "error"
+    assert sources["unified_log"] == "ok" and sources["posture"] == "ok"
+    assert not any(t.startswith("persistence.") for t in event_types(records))
+    monkeypatch.undo()
+    h.runner.add(PS_ARGV, ok(PS_ARGV, fixture_bytes("services/ps_services.txt")))
+    retry = h.cycle()
+    assert ("persistence.launchd.item_deleted") in event_types(retry)  # detected again, not lost
+
+
+def test_cycle_fails_only_when_every_due_source_failed(tmp_path: Path) -> None:
+    only_log = {
+        name: {"enabled": False}
+        for name in ("launchd", "inventory", "posture", "applications", "asset")
+    }
+    h = Harness(tmp_path, settings=only_log)
+    h.runner.prefixes.clear()
+    h.runner.add_prefix(
+        ["/usr/bin/log", "show"], failed(["/usr/bin/log"], 64, b"log: bad predicate")
+    )
+    with pytest.raises(MacOSCollectorError, match="all due sources failed"):
+        h.cycle()
+    assert h.ctx.checkpoints.get(UNIFIED_LOG_CHECKPOINT) is None  # nothing advanced
+
+
+def test_sources_respect_their_own_intervals(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.cycle()
+    calls_before = len(h.runner.calls)
+    records = h.cycle(force=False)  # immediately again: nothing is due yet
+    assert records == [] and len(h.runner.calls) == calls_before
+
+
+def test_collector_declares_its_source_types() -> None:
+    assert set(MacOSCollector.source_types) == {
+        "macos.unified_log",
+        "macos.launchd",
+        "macos.inventory",
+        "macos.posture",
+    }
+    assert collector_mod.COLLECTOR_TYPE == "macos"
+
+
+def test_second_instance_on_the_same_state_is_refused(tmp_path: Path) -> None:
+    first = Harness(tmp_path)
+    second = MacOSCollector(
+        runner=build_runner(), path_resolver=no_paths, uid=501, require_macos=False
+    )
+    with pytest.raises(MacOSCollectorError, match="another macOS collector instance"):
+        second.setup(first.ctx)
+    first.collector.close()
+    second.setup(first.ctx)  # released on close
+    second.close()
+
+
+def test_label_less_plist_events_reference_the_path_keyed_service(tmp_path: Path) -> None:
+    from extorq.contracts.identity import service_id
+
+    h = Harness(tmp_path)
+    h.cycle()
+    path = h.agents / "com.google.keystone.agent.plist"  # real plist without a Label
+    path.write_bytes(path.read_bytes() + b"\n")
+    records = h.cycle()
+    modified = [
+        d
+        for kind, d in records
+        if kind == "event" and d["event_type"] == "persistence.launchd.item_modified"
+    ]
+    assert len(modified) == 1
+    assert modified[0]["service"]["service_id"] == service_id(ASSET, "host_service", str(path))
+    assert modified[0]["service"]["name"] == "com.google.keystone.agent.plist"

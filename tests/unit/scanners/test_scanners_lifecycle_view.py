@@ -72,9 +72,14 @@ EXPECTED_COLUMNS = [
 ]
 
 
-@pytest.fixture(scope="module")
-def ch() -> Iterator[ClickHouse]:
-    yield from clickhouse_session()
+@pytest.fixture(scope="module", params=["0003", "0005"])
+def ch(request: pytest.FixtureRequest) -> Iterator[ClickHouse]:
+    """Every scenario runs against the 0003 view and the 0005 (service-aware) view."""
+    session = clickhouse_session(request.param)
+    client = next(session)
+    client.variant = request.param  # type: ignore[attr-defined]
+    yield client
+    session.close()  # runs the generator's cleanup
 
 
 def _ch_time(value: datetime) -> str:
@@ -120,6 +125,7 @@ class History:
         severity: Severity = Severity.HIGH,
         fixed_version: str | None = "1.1",
         accepted_risk: str | None = None,
+        service_id: str | None = None,
     ) -> PostureFinding:
         from extorq.contracts import AcceptedRisk
 
@@ -138,6 +144,7 @@ class History:
                 name=f"pkg-{key}", installed_version="1.0", fixed_version=fixed_version
             ),
             cve_ids=[f"CVE-2099-{key}"],
+            service_id=service_id,
             observed_at=observed,
             accepted_risk=(
                 AcceptedRisk(reason=accepted_risk, source="config:test") if accepted_risk else None
@@ -157,8 +164,8 @@ class History:
         write_running_row: bool = True,
     ) -> ScanRun:
         started = started_at or (self.base + timedelta(minutes=minute))
-        finished = None if status is ScanStatus.RUNNING else started + timedelta(
-            minutes=duration_minutes
+        finished = (
+            None if status is ScanStatus.RUNNING else started + timedelta(minutes=duration_minutes)
         )
         run_id = uuid.uuid4().hex
         common = {
@@ -215,7 +222,8 @@ S, P, F, R = ScanStatus.SUCCEEDED, ScanStatus.PARTIAL, ScanStatus.FAILED, ScanSt
 
 def test_view_has_exactly_the_contract_columns(ch: ClickHouse) -> None:
     described = ch.select("DESCRIBE TABLE extorq.v_findings_current")
-    assert [c["name"] for c in described] == EXPECTED_COLUMNS
+    expected = EXPECTED_COLUMNS + (["service_id"] if ch.variant == "0005" else [])  # type: ignore[attr-defined]
+    assert [c["name"] for c in described] == expected
     types = {c["name"]: c["type"] for c in described}
     assert types["last_success_at"].startswith("Nullable(DateTime64(3")
     assert types["latest_scan_at"].startswith("Nullable(DateTime64(3")
@@ -432,8 +440,11 @@ def test_duplicate_rows_collapse(ch: ClickHouse) -> None:
         ch.insert("extorq.scan_runs", [scan_run_row(run)])
     ch.insert(
         "extorq.finding_observations",
-        [finding_row(h.finding("A", s1)), finding_row(h.finding("B", s1))]
-        + [finding_row(h.finding("A", s2))],
+        [
+            finding_row(h.finding("A", s1)),
+            finding_row(h.finding("B", s1)),
+            finding_row(h.finding("A", s2)),
+        ],
     )
     rows = h.rows()
     assert len(rows) == 2
@@ -509,11 +520,104 @@ def test_views_use_invoker_security(ch: ClickHouse) -> None:
     ch.execute(f"CREATE USER {user} IDENTIFIED WITH no_password")
     try:
         ch.execute(f"GRANT SELECT ON extorq.v_findings_current TO {user}")
-        with pytest.raises(RuntimeError, match="ACCESS_DENIED|Not enough privileges"):
+        with pytest.raises(RuntimeError, match=r"ACCESS_DENIED|Not enough privileges"):
             ch.execute("SELECT count() FROM extorq.v_findings_current", user=user)
         ch.execute(f"GRANT SELECT ON extorq.scan_runs TO {user}")
         ch.execute(f"GRANT SELECT ON extorq.finding_observations TO {user}")
         out = ch.execute("SELECT count() FROM extorq.v_findings_current", user=user)
         assert int(out.strip()) >= 0
+    finally:
+        ch.execute(f"DROP USER IF EXISTS {user}")
+
+
+# ── 0005: service attribution (contract 1.1) ────────────────────────────────────
+
+
+def _only_0005(ch: ClickHouse) -> None:
+    if ch.variant != "0005":  # type: ignore[attr-defined]
+        pytest.skip("service_id exists from migration 0005 on")
+
+
+SVC = "8ae2e115bc4a7a7c2cf3ed07ee5cb827"  # synthetic: identity.service_id(...) shape
+
+
+def test_service_id_column_type(ch: ClickHouse) -> None:
+    _only_0005(ch)
+    described = {
+        c["name"]: c["type"] for c in ch.select("DESCRIBE TABLE extorq.v_findings_current")
+    }
+    assert described["service_id"] == "Nullable(String)"
+
+
+def test_service_id_follows_latest_observation(ch: ClickHouse) -> None:
+    _only_0005(ch)
+    h = History(ch)
+    h.scan(S, 0, ["A", "B"], overrides={"A": {"service_id": SVC}})
+    rows = h.by_key("A", "B")
+    assert rows["A"]["service_id"] == SVC
+    assert rows["B"]["service_id"] is None
+    # next scan without attribution evidence: the latest observation (NULL) wins
+    h.scan(S, 10, ["A", "B"])
+    assert h.by_key("A")["A"]["service_id"] is None
+    h.scan(S, 20, ["A"], overrides={"A": {"service_id": SVC}})
+    rows = h.by_key("A", "B")
+    assert rows["A"]["service_id"] == SVC and rows["A"]["state"] == "open"
+    assert rows["B"]["state"] == "resolved"
+
+
+def test_service_findings_query(ch: ClickHouse) -> None:
+    _only_0005(ch)
+    h = History(ch)
+    h.scan(S, 0, ["A", "B"], overrides={"A": {"service_id": SVC}})
+    rows = ch.select(
+        "SELECT finding_id, state FROM extorq.v_findings_current "
+        "WHERE asset_id = {asset:String} AND service_id = {svc:String}",
+        params={"asset": h.asset_id, "svc": SVC},
+        settings={"readonly": "1"},
+    )
+    assert rows == [{"finding_id": h.fid("A"), "state": "open"}]
+
+
+def test_grants_survive_create_or_replace_and_reapply_is_idempotent(ch: ClickHouse) -> None:
+    _only_0005(ch)
+    from scanners_ch_testlib import MIGRATIONS
+
+    ch.execute("GRANT SELECT ON extorq.v_findings_current TO extorq_role_api_ro")
+    before = ch.execute("SHOW GRANTS FOR extorq_role_api_ro")
+    ch.execute_script((MIGRATIONS / "0005_findings_services.sql").read_text(encoding="utf-8"))
+    ch.execute_script((MIGRATIONS / "0005_findings_services.sql").read_text(encoding="utf-8"))
+    after = ch.execute("SHOW GRANTS FOR extorq_role_api_ro")
+    assert "v_findings_current" in before
+    assert "GRANT SELECT ON extorq.v_findings_current TO extorq_role_api_ro" in after
+    described = [c["name"] for c in ch.select("DESCRIBE TABLE extorq.v_findings_current")]
+    assert described[-1] == "service_id"
+
+
+def test_migration_runner_splits_0005_statements() -> None:
+    from scanners_ch_testlib import MIGRATIONS
+
+    from extorq.storage.migrate import split_statements
+
+    text = (MIGRATIONS / "0005_findings_services.sql").read_text(encoding="utf-8")
+    statements = split_statements(text)
+    assert len(statements) == 4
+    assert statements[0].startswith("CREATE OR REPLACE VIEW extorq.v_findings_current")
+    assert all(
+        s.startswith("GRANT SELECT ON extorq.v_scan_runs_current TO ") for s in statements[1:]
+    )
+
+
+def test_scan_runs_view_grant_does_not_widen_privileges(ch: ClickHouse) -> None:
+    _only_0005(ch)
+    user = f"c3_grafana_probe_{uuid.uuid4().hex[:8]}"
+    ch.execute(f"CREATE USER {user} IDENTIFIED WITH no_password")
+    try:
+        ch.execute(f"GRANT extorq_role_grafana TO {user}")
+        ch.execute(f"SET DEFAULT ROLE extorq_role_grafana TO {user}")
+        # 0004/0005 grant the view, but the base table grant (from 0002) is missing here
+        with pytest.raises(RuntimeError, match=r"ACCESS_DENIED|Not enough privileges"):
+            ch.execute("SELECT count() FROM extorq.v_scan_runs_current", user=user)
+        ch.execute("GRANT SELECT ON extorq.scan_runs TO extorq_role_grafana")  # as 0002 does
+        assert int(ch.execute("SELECT count() FROM extorq.v_scan_runs_current", user=user)) >= 0
     finally:
         ch.execute(f"DROP USER IF EXISTS {user}")

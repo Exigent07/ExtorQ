@@ -93,14 +93,14 @@ _RULES: tuple[_Rule, ...] = (
     ),
     (
         "jwt",
-        re.compile(
-            r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
-        ),
+        re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"),
         _whole("jwt"),
     ),
     (
         "url_credentials",
-        re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]{1,20}://[^/\s:@\"']{1,256}:)(?!\[REDACTED)[^@\s/\"']{1,256}(?=@)"),
+        re.compile(
+            r"([a-zA-Z][a-zA-Z0-9+.-]{1,20}://[^/\s:@\"']{1,256}:)(?!\[REDACTED)[^@\s/\"']{1,256}(?=@)"
+        ),
         _keep_prefix("password"),
     ),
     (
@@ -112,6 +112,70 @@ _RULES: tuple[_Rule, ...] = (
         "bearer",
         re.compile(r"(?i)(\bbearer\s+)(?!\[REDACTED)[A-Za-z0-9._~+/-]{8,}=*"),
         _keep_prefix("bearer"),
+    ),
+    (
+        # Any other Authorization scheme ("Token x", "ApiKey x", raw value), F-06. Skips
+        # values already redacted above; requires a token-like value (digit or symbol) so
+        # words such as "authorization=denied" in application logs survive.
+        "authorization_header",
+        re.compile(
+            r"(?i)(\b(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?"
+            r"(?:(?:token|apikey|api-key|key|digest|negotiate|ntlm|aws4-hmac-sha256|hoba|"
+            r"mutual|scram-sha-1|scram-sha-256|vapid|dpop|oauth|signature|hawk|sharedkey|"
+            r"ssws|googlelogin|bearer|basic)\s+)?)"
+            r"(?![^\r\n\"']*\[REDACTED)(?=[^\s\"',;]*[0-9+/=_.~-])([^\s\"',;]{8,1024})"
+        ),
+        _keep_prefix("authorization"),
+    ),
+    (
+        # Whitespace-separated CLI secrets: --password x, --token x, -pass x (F-06).
+        # "--password-file x" and similar *_file flags are not matched.
+        "cli_secret_flag",
+        re.compile(
+            r"(?i)((?:^|(?<=\s))--?(?:password|passwd|pass|secret|token|api[-_]?key|"
+            r"auth[-_]?token|access[-_]?key|client[-_]?secret|private[-_]?key|"
+            r"requirepass|masterauth)\s+)"
+            r"(?!-)(?!\[REDACTED)(\S{1,1024})"
+        ),
+        _keep_prefix("secret"),
+    ),
+    (
+        # mysql-family "-p<secret>" (no space) and "sshpass -p <secret>" (F-06). Limited to
+        # these programs so "ssh -p2222" or "mkdir -p" are never touched.
+        "cli_password_short_flag",
+        re.compile(
+            r"(?i)(\b(?:mysql|mysqldump|mysqladmin|mysqlimport|mariadb|mariadb-dump)\b"
+            r"[^\n]*?\s-p)(?!\[REDACTED)([^\s\-][^\s]{0,1023})"
+        ),
+        _keep_prefix("password"),
+    ),
+    (
+        "sshpass",
+        re.compile(r"(?i)(\bsshpass\s+-p\s*)(?!\[REDACTED)(\S{1,1024})"),
+        _keep_prefix("password"),
+    ),
+    (
+        # redis-cli -a <password> (F-06 residual)
+        "redis_cli_password",
+        re.compile(r"(?i)(\bredis-cli\b[^\n]*?\s-a\s+)(?!\[REDACTED)(\S{1,1024})"),
+        _keep_prefix("password"),
+    ),
+    (
+        # curl -u user:pass / --user user:pass: keep the user, redact the password.
+        "curl_user_password",
+        re.compile(
+            r"(?i)(\bcurl\b[^\n]*?\s(?:-u|--user)\s+[^\s:]{1,256}:)(?!\[REDACTED)(\S{1,1024})"
+        ),
+        _keep_prefix("password"),
+    ),
+    (
+        # Upper-case environment assignments: PGPASSWORD=x, MYSQL_PWD=x, DB_SECRET=x ...
+        "env_secret_assignment",
+        re.compile(
+            r"(\b[A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|_PWD)\s*=\s*)"
+            r"(?!\[REDACTED)([^\s\"'&;]{1,1024})"
+        ),
+        _keep_prefix("secret"),
     ),
     (
         "secret_assignment",
@@ -159,20 +223,36 @@ _ANSI = re.compile(
     r"|\x1b[@-Z\\-_]"
     r"|\x9b[0-?]*[ -/]*[@-~]"
 )
-_NEWLINES = re.compile(r"\r\n|\r|\n")
-# C0 (except TAB/LF handled separately), DEL, C1; bidi embeddings/overrides/isolates,
-# zero-width and invisible format characters, BOM.
-_CONTROLS = re.compile(
-    "[\x00-\x08\x0b-\x1f\x7f-\x9f​-‏‪-‮⁠-⁤⁦-⁩﻿]"
-)
+# Line breaks, including the Unicode line/paragraph separators U+2028/U+2029 and NEL.
+_NEWLINES = re.compile("\r\n|[\r\n\u0085\u2028\u2029]")
+# ASCII fast path: C0 controls except TAB (LF is handled above) and DEL.
+_ASCII_CONTROLS = re.compile("[\x00-\x08\x0b-\x1f\x7f]")
+#: Unicode general categories removed from untrusted text: controls (Cc, incl. C1),
+#: format characters (Cf: bidi embeddings/overrides/isolates, zero-width characters,
+#: BOM, soft hyphen, Mongolian vowel separator, TAG characters U+E0000-E007F, ...),
+#: surrogates (Cs) and private-use characters (Co). Written as names, never as literal
+#: invisible characters in this source file (Trojan Source, F-03).
+_STRIPPED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co"})
+
+
+def _strip_invisible(text: str) -> str:
+    if text.isascii():
+        return _ASCII_CONTROLS.sub("", text)
+    return "".join(
+        ch
+        for ch in text
+        if ch == "\t" or ch == "\n" or unicodedata.category(ch) not in _STRIPPED_CATEGORIES
+    )
 
 
 def sanitize_untrusted(text: str, limit: int, *, keep_newlines: bool = False) -> str:
     """Return ``text`` safe for storage/display, at most ``limit`` characters long.
 
-    Strips ANSI escape sequences and control/format characters, converts line
-    breaks to spaces (or ``\\n`` when ``keep_newlines``), NFC-normalises and
-    truncates with :data:`TRUNCATION_MARKER` when the result would exceed ``limit``.
+    Strips ANSI escape sequences, control characters (C0, C1), every Unicode format
+    character (bidi controls, zero-width characters, TAG characters, soft hyphen, BOM),
+    surrogates and private-use characters; converts line breaks (CR, LF, NEL, U+2028,
+    U+2029) to spaces (or ``\\n`` when ``keep_newlines``), NFC-normalises and truncates
+    with :data:`TRUNCATION_MARKER` when the result would exceed ``limit``.
     """
     if limit <= 0:
         return ""
@@ -180,7 +260,7 @@ def sanitize_untrusted(text: str, limit: int, *, keep_newlines: bool = False) ->
         return ""
     cleaned = _ANSI.sub("", text)
     cleaned = _NEWLINES.sub("\n" if keep_newlines else " ", cleaned)
-    cleaned = _CONTROLS.sub("", cleaned)
+    cleaned = _strip_invisible(cleaned)
     cleaned = unicodedata.normalize("NFC", cleaned)
     if len(cleaned) <= limit:
         return cleaned

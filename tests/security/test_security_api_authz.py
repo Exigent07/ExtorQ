@@ -44,7 +44,9 @@ def _dependency_calls(dependant: Any) -> set[Any]:
     return calls
 
 
-def _walk(routes: list[Any], prefix: str = "", inherited: tuple[Any, ...] = ()) -> Iterator[tuple[str, str, set[Any]]]:
+def _walk(
+    routes: list[Any], prefix: str = "", inherited: tuple[Any, ...] = ()
+) -> Iterator[tuple[str, str, set[Any]]]:
     for route in routes:
         if isinstance(route, APIRoute):
             calls = _dependency_calls(route.dependant)
@@ -84,7 +86,9 @@ def test_every_route_requires_the_service_principal(app: FastAPI) -> None:
     unprotected = [
         f"{method} {path}"
         for method, path, calls in routes
-        if (method, path) not in PUBLIC_ROUTES and get_principal not in calls and require_analyst not in calls
+        if (method, path) not in PUBLIC_ROUTES
+        and get_principal not in calls
+        and require_analyst not in calls
     ]
     assert not unprotected, f"routes without authentication: {unprotected}"
 
@@ -113,7 +117,9 @@ def test_missing_and_wrong_tokens_are_rejected(app: FastAPI) -> None:
 def test_identity_headers_are_validated(app: FastAPI, service_token: str) -> None:
     client = _client(app)
     auth = {"Authorization": f"Bearer {service_token}"}
-    assert client.get("/api/v1/alerts", headers={**auth, "X-ExtorQ-Role": "viewer"}).status_code == 401
+    assert (
+        client.get("/api/v1/alerts", headers={**auth, "X-ExtorQ-Role": "viewer"}).status_code == 401
+    )
     bad_user = {**auth, "X-ExtorQ-User": "<script>", "X-ExtorQ-Role": "viewer"}
     assert client.get("/api/v1/alerts", headers=bad_user).status_code == 401
     bad_role = {**auth, "X-ExtorQ-User": "alice", "X-ExtorQ-Role": "admin"}
@@ -128,7 +134,9 @@ def test_viewer_cannot_mutate(app: FastAPI, service_token: str) -> None:
         "X-ExtorQ-Role": "viewer",
     }
     alert_id = "0" * 32
-    state = client.post(f"/api/v1/alerts/{alert_id}/state", headers=viewer, json={"status": "acknowledged"})
+    state = client.post(
+        f"/api/v1/alerts/{alert_id}/state", headers=viewer, json={"status": "acknowledged"}
+    )
     assert state.status_code == 403
     summary = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=viewer, json={})
     assert summary.status_code == 403

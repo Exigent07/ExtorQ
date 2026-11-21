@@ -6,6 +6,279 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/assets/{asset_id}/services": {
+      "get": {
+        "tags": [
+          "services"
+        ],
+        "summary": "Services, applications and Kubernetes workloads/Services of one asset",
+        "operationId": "list_asset_services",
+        "security": [
+          {
+            "ServiceToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._:/-]{2,199}$",
+              "description": "Asset id, e.g. linux:lab-vm-01.",
+              "title": "Asset Id"
+            },
+            "description": "Asset id, e.g. linux:lab-vm-01."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Page size (1-200).",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Page size (1-200)."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 0,
+              "description": "Rows to skip (0-10000).",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Rows to skip (0-10000)."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ServiceKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "host_service | application | k8s_workload | k8s_service (a Kubernetes Service is never a host service).",
+              "title": "Kind"
+            },
+            "description": "host_service | application | k8s_workload | k8s_service (a Kubernetes Service is never a host service)."
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ServiceCategory"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "name": "adapter_support",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AdapterSupport"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "implemented | planned | none",
+              "title": "Adapter Support"
+            },
+            "description": "implemented | planned | none"
+          },
+          {
+            "name": "monitoring_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MonitoringStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Status as reported by the collector (see coverage for the effective one).",
+              "title": "Monitoring Status"
+            },
+            "description": "Status as reported by the collector (see coverage for the effective one)."
+          },
+          {
+            "name": "coverage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "monitored",
+                    "degraded",
+                    "unmonitored",
+                    "planned",
+                    "unsupported"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Effective coverage state at request time.",
+              "title": "Coverage"
+            },
+            "description": "Effective coverage state at request time."
+          },
+          {
+            "name": "include_removed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include services no longer observed (tombstones).",
+              "default": false,
+              "title": "Include Removed"
+            },
+            "description": "Include services no longer observed (tombstones)."
+          },
+          {
+            "name": "X-ExtorQ-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Signed-in console user, set by the Next.js server.",
+              "title": "X-Extorq-User"
+            },
+            "description": "Signed-in console user, set by the Next.js server."
+          },
+          {
+            "name": "X-ExtorQ-Role",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Role of the console user: `analyst` (may mutate) or `viewer` (read-only).",
+              "title": "X-Extorq-Role"
+            },
+            "description": "Role of the console user: `analyst` (may mutate) or `viewer` (read-only)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetServicesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token or user header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing/unsupported role or insufficient role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/overview": {
       "get": {
         "tags": [
@@ -603,6 +876,25 @@
               "title": "State"
             },
             "description": "Lifecycle filter; requires the findings lifecycle view (else 400)."
+          },
+          {
+            "name": "service_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{32}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by service id (32 hex, schema 1.1).",
+              "title": "Service Id"
+            },
+            "description": "Filter by service id (32 hex, schema 1.1)."
           },
           {
             "name": "X-ExtorQ-User",
@@ -1269,6 +1561,25 @@
               "default": "last_seen",
               "title": "Sort"
             }
+          },
+          {
+            "name": "service_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{32}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by service id (32 hex, schema 1.1).",
+              "title": "Service Id"
+            },
+            "description": "Filter by service id (32 hex, schema 1.1)."
           },
           {
             "name": "X-ExtorQ-User",
@@ -2338,6 +2649,25 @@
             }
           },
           {
+            "name": "service_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{32}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by service id (32 hex, schema 1.1).",
+              "title": "Service Id"
+            },
+            "description": "Filter by service id (32 hex, schema 1.1)."
+          },
+          {
             "name": "X-ExtorQ-User",
             "in": "header",
             "required": false,
@@ -2445,7 +2775,7 @@
         "tags": [
           "events"
         ],
-        "summary": "One stored SecurityEvent (contract schema 1.0) with ingest metadata",
+        "summary": "One stored SecurityEvent (contract schema 1.0/1.1) with ingest metadata",
         "operationId": "get_event",
         "security": [
           {
@@ -3205,6 +3535,452 @@
           }
         }
       }
+    },
+    "/api/v1/services": {
+      "get": {
+        "tags": [
+          "services"
+        ],
+        "summary": "Service inventory across assets with effective monitoring coverage",
+        "operationId": "list_services",
+        "security": [
+          {
+            "ServiceToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Page size (1-200).",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Page size (1-200)."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 0,
+              "description": "Rows to skip (0-10000).",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Rows to skip (0-10000)."
+          },
+          {
+            "name": "asset_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9._:/-]{2,199}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by asset id.",
+              "title": "Asset Id"
+            },
+            "description": "Filter by asset id."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ServiceKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "host_service | application | k8s_workload | k8s_service (a Kubernetes Service is never a host service).",
+              "title": "Kind"
+            },
+            "description": "host_service | application | k8s_workload | k8s_service (a Kubernetes Service is never a host service)."
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ServiceCategory"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "name": "adapter_support",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AdapterSupport"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "implemented | planned | none",
+              "title": "Adapter Support"
+            },
+            "description": "implemented | planned | none"
+          },
+          {
+            "name": "monitoring_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MonitoringStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Status as reported by the collector (see coverage for the effective one).",
+              "title": "Monitoring Status"
+            },
+            "description": "Status as reported by the collector (see coverage for the effective one)."
+          },
+          {
+            "name": "coverage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "monitored",
+                    "degraded",
+                    "unmonitored",
+                    "planned",
+                    "unsupported"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Effective coverage state at request time.",
+              "title": "Coverage"
+            },
+            "description": "Effective coverage state at request time."
+          },
+          {
+            "name": "include_removed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include services no longer observed (tombstones).",
+              "default": false,
+              "title": "Include Removed"
+            },
+            "description": "Include services no longer observed (tombstones)."
+          },
+          {
+            "name": "X-ExtorQ-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Signed-in console user, set by the Next.js server.",
+              "title": "X-Extorq-User"
+            },
+            "description": "Signed-in console user, set by the Next.js server."
+          },
+          {
+            "name": "X-ExtorQ-Role",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Role of the console user: `analyst` (may mutate) or `viewer` (read-only).",
+              "title": "X-Extorq-Role"
+            },
+            "description": "Role of the console user: `analyst` (may mutate) or `viewer` (read-only)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token or user header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing/unsupported role or insufficient role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/services/{service_id}": {
+      "get": {
+        "tags": [
+          "services"
+        ],
+        "summary": "Service detail: instances, endpoints, telemetry coverage, auth, findings, alerts",
+        "operationId": "get_service",
+        "security": [
+          {
+            "ServiceToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "description": "32-hex service id.",
+              "title": "Service Id"
+            },
+            "description": "32-hex service id."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive lower bound, ISO-8601 with timezone (e.g. 2026-11-21T10:00:00Z).",
+              "title": "Since"
+            },
+            "description": "Inclusive lower bound, ISO-8601 with timezone (e.g. 2026-11-21T10:00:00Z)."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exclusive upper bound, ISO-8601 with timezone.",
+              "title": "Until"
+            },
+            "description": "Exclusive upper bound, ISO-8601 with timezone."
+          },
+          {
+            "name": "X-ExtorQ-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Signed-in console user, set by the Next.js server.",
+              "title": "X-Extorq-User"
+            },
+            "description": "Signed-in console user, set by the Next.js server."
+          },
+          {
+            "name": "X-ExtorQ-Role",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Role of the console user: `analyst` (may mutate) or `viewer` (read-only).",
+              "title": "X-Extorq-Role"
+            },
+            "description": "Role of the console user: `analyst` (may mutate) or `viewer` (read-only)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token or user header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing/unsupported role or insufficient role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3213,9 +3989,9 @@
         "properties": {
           "schema_version": {
             "type": "string",
-            "pattern": "^1\\.0$",
+            "pattern": "^1\\.[01]$",
             "title": "Schema Version",
-            "default": "1.0"
+            "default": "1.1"
           },
           "assessment_id": {
             "type": "string",
@@ -3572,6 +4348,15 @@
         ],
         "title": "ActorType"
       },
+      "AdapterSupport": {
+        "type": "string",
+        "enum": [
+          "implemented",
+          "planned",
+          "none"
+        ],
+        "title": "AdapterSupport"
+      },
       "AlertDetailResponse": {
         "properties": {
           "alert": {
@@ -3742,6 +4527,13 @@
               }
             ],
             "title": "Assignee"
+          },
+          "service_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Service Ids"
           }
         },
         "additionalProperties": false,
@@ -3920,6 +4712,13 @@
           "detector_version": {
             "type": "string",
             "title": "Detector Version"
+          },
+          "service_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Service Ids"
           }
         },
         "additionalProperties": false,
@@ -4350,6 +5149,16 @@
             },
             "type": "array",
             "title": "Recent Alerts"
+          },
+          "services_summary": {
+            "$ref": "#/components/schemas/ServicesSummary"
+          },
+          "child_assets": {
+            "items": {
+              "$ref": "#/components/schemas/AssetBrief"
+            },
+            "type": "array",
+            "title": "Child Assets"
           }
         },
         "additionalProperties": false,
@@ -4362,7 +5171,8 @@
           "event_counts_range",
           "findings_summary",
           "findings",
-          "recent_alerts"
+          "recent_alerts",
+          "services_summary"
         ],
         "title": "AssetDetailResponse"
       },
@@ -4657,6 +5467,51 @@
         ],
         "title": "AssetRecord"
       },
+      "AssetServicesResponse": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ServicesSummary"
+          },
+          "invalid_records": {
+            "type": "integer",
+            "title": "Invalid Records",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "asset_id",
+          "items",
+          "page",
+          "summary"
+        ],
+        "title": "AssetServicesResponse"
+      },
       "AssetSummary": {
         "properties": {
           "asset_id": {
@@ -4696,12 +5551,43 @@
           "macos_host",
           "linux_host",
           "kubernetes_cluster",
+          "kubernetes_node",
           "kubernetes_namespace",
           "kubernetes_workload",
           "github_account",
           "github_repository"
         ],
         "title": "AssetType"
+      },
+      "AuthSourceActivity": {
+        "properties": {
+          "src_ip": {
+            "type": "string",
+            "title": "Src Ip"
+          },
+          "events": {
+            "type": "integer",
+            "title": "Events"
+          },
+          "failures": {
+            "type": "integer",
+            "title": "Failures"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "src_ip",
+          "events",
+          "failures",
+          "last_seen"
+        ],
+        "title": "AuthSourceActivity"
       },
       "CollectionHealthSummary": {
         "properties": {
@@ -4992,9 +5878,9 @@
         "properties": {
           "schema_version": {
             "type": "string",
-            "pattern": "^1\\.0$",
+            "pattern": "^1\\.[01]$",
             "title": "Schema Version",
-            "default": "1.0"
+            "default": "1.1"
           },
           "alert_id": {
             "type": "string",
@@ -5046,6 +5932,15 @@
             "type": "object",
             "maxProperties": 16,
             "title": "Entities"
+          },
+          "service_ids": {
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Service Ids"
           },
           "summary": {
             "type": "string",
@@ -5192,6 +6087,19 @@
           "detector_version"
         ],
         "title": "DetectionAlert"
+      },
+      "DiscoveryEvidence": {
+        "type": "string",
+        "enum": [
+          "systemd_unit",
+          "launchd_job",
+          "process",
+          "listening_socket",
+          "configuration",
+          "k8s_api",
+          "adapter_config"
+        ],
+        "title": "DiscoveryEvidence"
       },
       "Environment": {
         "type": "string",
@@ -5577,6 +6485,17 @@
             ],
             "title": "Http Request Id"
           },
+          "k8s_cluster": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Cluster"
+          },
           "k8s_namespace": {
             "anyOf": [
               {
@@ -5588,6 +6507,17 @@
             ],
             "title": "K8S Namespace"
           },
+          "k8s_node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Node"
+          },
           "k8s_pod_name": {
             "anyOf": [
               {
@@ -5598,6 +6528,39 @@
               }
             ],
             "title": "K8S Pod Name"
+          },
+          "k8s_pod_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Pod Uid"
+          },
+          "k8s_container": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Container"
+          },
+          "k8s_container_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Container Id"
           },
           "k8s_verb": {
             "anyOf": [
@@ -5719,6 +6682,50 @@
               }
             ],
             "title": "Gh Actor Login"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Id"
+          },
+          "service_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Name"
+          },
+          "service_instance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Instance Id"
+          },
+          "adapter_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adapter Id"
           },
           "simulation_run_id": {
             "anyOf": [
@@ -5848,6 +6855,30 @@
               }
             ],
             "title": "Src Ip"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Id"
+          },
+          "service_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Name"
           },
           "summary": {
             "type": "string",
@@ -6184,6 +7215,17 @@
             ],
             "title": "Http Request Id"
           },
+          "k8s_cluster": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Cluster"
+          },
           "k8s_namespace": {
             "anyOf": [
               {
@@ -6195,6 +7237,17 @@
             ],
             "title": "K8S Namespace"
           },
+          "k8s_node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Node"
+          },
           "k8s_pod_name": {
             "anyOf": [
               {
@@ -6205,6 +7258,39 @@
               }
             ],
             "title": "K8S Pod Name"
+          },
+          "k8s_pod_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Pod Uid"
+          },
+          "k8s_container": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Container"
+          },
+          "k8s_container_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K8S Container Id"
           },
           "k8s_verb": {
             "anyOf": [
@@ -6326,6 +7412,50 @@
               }
             ],
             "title": "Gh Actor Login"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Id"
+          },
+          "service_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Name"
+          },
+          "service_instance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Instance Id"
+          },
+          "adapter_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adapter Id"
           },
           "simulation_run_id": {
             "anyOf": [
@@ -6651,6 +7781,17 @@
               }
             ],
             "title": "Accepted Risk Reason"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Id"
           },
           "scope_hash": {
             "anyOf": [
@@ -7191,6 +8332,15 @@
         ],
         "title": "IngestSecuritySummary"
       },
+      "InstanceKind": {
+        "type": "string",
+        "enum": [
+          "process",
+          "container",
+          "pod"
+        ],
+        "title": "InstanceKind"
+      },
       "InventoryTypeSummary": {
         "properties": {
           "item_type": {
@@ -7226,9 +8376,9 @@
         "properties": {
           "schema_version": {
             "type": "string",
-            "pattern": "^1\\.0$",
+            "pattern": "^1\\.[01]$",
             "title": "Schema Version",
-            "default": "1.0"
+            "default": "1.1"
           },
           "context_id": {
             "type": "string",
@@ -7273,6 +8423,22 @@
           },
           "asset": {
             "$ref": "#/components/schemas/AssetSummary"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceSummary"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Services"
+          },
+          "related_assets": {
+            "items": {
+              "$ref": "#/components/schemas/AssetSummary"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Related Assets"
           },
           "evidence": {
             "items": {
@@ -7674,6 +8840,18 @@
             ],
             "title": "Container Name"
           },
+          "container_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Id"
+          },
           "node_name": {
             "anyOf": [
               {
@@ -7865,6 +9043,15 @@
         "type": "object",
         "title": "KubernetesInfo"
       },
+      "MonitoringStatus": {
+        "type": "string",
+        "enum": [
+          "monitored",
+          "degraded",
+          "unmonitored"
+        ],
+        "title": "MonitoringStatus"
+      },
       "Network": {
         "properties": {
           "src_ip": {
@@ -7997,6 +9184,9 @@
             },
             "type": "array",
             "title": "Recent Important Alerts"
+          },
+          "service_coverage": {
+            "$ref": "#/components/schemas/ServicesSummary"
           }
         },
         "additionalProperties": false,
@@ -8008,7 +9198,8 @@
           "open_findings",
           "alerts_over_time",
           "collection_health",
-          "recent_important_alerts"
+          "recent_important_alerts",
+          "service_coverage"
         ],
         "title": "OverviewResponse"
       },
@@ -8174,6 +9365,15 @@
           "dead_letter_total"
         ],
         "title": "PipelineComponentHealth"
+      },
+      "PortAttribution": {
+        "type": "string",
+        "enum": [
+          "confirmed",
+          "inferred",
+          "unknown"
+        ],
+        "title": "PortAttribution"
       },
       "ProcessInfo": {
         "properties": {
@@ -8374,6 +9574,10 @@
           "shared_source_ip",
           "shared_nat_source_ip",
           "same_asset_time_window",
+          "same_service",
+          "same_service_instance",
+          "cross_service_same_asset",
+          "cross_asset",
           "simulation_run"
         ],
         "title": "RelationshipBasis"
@@ -9336,9 +10540,9 @@
         "properties": {
           "schema_version": {
             "type": "string",
-            "pattern": "^1\\.0$",
+            "pattern": "^1\\.[01]$",
             "title": "Schema Version",
-            "default": "1.0"
+            "default": "1.1"
           },
           "event_id": {
             "type": "string",
@@ -9477,6 +10681,16 @@
               }
             ]
           },
+          "service": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServiceRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "message": {
             "anyOf": [
               {
@@ -9608,6 +10822,1275 @@
           "count"
         ],
         "title": "SeriesPoint"
+      },
+      "ServiceAuthActivity": {
+        "properties": {
+          "range": {
+            "$ref": "#/components/schemas/TimeRange"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "by_outcome": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By Outcome"
+          },
+          "distinct_actors": {
+            "type": "integer",
+            "title": "Distinct Actors"
+          },
+          "distinct_sources": {
+            "type": "integer",
+            "title": "Distinct Sources"
+          },
+          "top_sources": {
+            "items": {
+              "$ref": "#/components/schemas/AuthSourceActivity"
+            },
+            "type": "array",
+            "title": "Top Sources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "range",
+          "total",
+          "by_outcome",
+          "distinct_actors",
+          "distinct_sources",
+          "top_sources"
+        ],
+        "title": "ServiceAuthActivity",
+        "description": "Authentication events attributed to the service (category ``authentication``)."
+      },
+      "ServiceCategory": {
+        "type": "string",
+        "enum": [
+          "ssh",
+          "http_server",
+          "web_application",
+          "service_manager",
+          "ftp",
+          "database",
+          "dns",
+          "cache",
+          "kubernetes_component",
+          "security_agent",
+          "other",
+          "unknown"
+        ],
+        "title": "ServiceCategory"
+      },
+      "ServiceCoverageCounts": {
+        "properties": {
+          "monitored": {
+            "type": "integer",
+            "title": "Monitored",
+            "default": 0
+          },
+          "degraded": {
+            "type": "integer",
+            "title": "Degraded",
+            "default": 0
+          },
+          "unmonitored": {
+            "type": "integer",
+            "title": "Unmonitored",
+            "default": 0
+          },
+          "planned": {
+            "type": "integer",
+            "title": "Planned",
+            "default": 0
+          },
+          "unsupported": {
+            "type": "integer",
+            "title": "Unsupported",
+            "default": 0
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ServiceCoverageCounts"
+      },
+      "ServiceDetailResponse": {
+        "properties": {
+          "service": {
+            "$ref": "#/components/schemas/ServiceRecord"
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceInstanceItem"
+            },
+            "type": "array",
+            "title": "Instances"
+          },
+          "instances_total": {
+            "type": "integer",
+            "title": "Instances Total"
+          },
+          "telemetry_range": {
+            "$ref": "#/components/schemas/TimeRange"
+          },
+          "telemetry": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceTelemetrySource"
+            },
+            "type": "array",
+            "title": "Telemetry"
+          },
+          "auth_activity": {
+            "$ref": "#/components/schemas/ServiceAuthActivity"
+          },
+          "recent_events": {
+            "items": {
+              "$ref": "#/components/schemas/EventListItem"
+            },
+            "type": "array",
+            "title": "Recent Events"
+          },
+          "findings_lifecycle_available": {
+            "type": "boolean",
+            "title": "Findings Lifecycle Available"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/FindingItem"
+            },
+            "type": "array",
+            "title": "Findings"
+          },
+          "findings_total": {
+            "type": "integer",
+            "title": "Findings Total"
+          },
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/AlertListItem"
+            },
+            "type": "array",
+            "title": "Alerts"
+          },
+          "alerts_total": {
+            "type": "integer",
+            "title": "Alerts Total"
+          },
+          "alerts_range": {
+            "$ref": "#/components/schemas/TimeRange"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service",
+          "instances",
+          "instances_total",
+          "telemetry_range",
+          "telemetry",
+          "auth_activity",
+          "recent_events",
+          "findings_lifecycle_available",
+          "findings",
+          "findings_total",
+          "alerts",
+          "alerts_total",
+          "alerts_range",
+          "notes"
+        ],
+        "title": "ServiceDetailResponse"
+      },
+      "ServiceEndpointView": {
+        "properties": {
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "title": "Protocol"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          },
+          "exposure": {
+            "type": "string",
+            "enum": [
+              "loopback",
+              "private",
+              "any",
+              "unknown"
+            ],
+            "title": "Exposure"
+          },
+          "attribution": {
+            "$ref": "#/components/schemas/PortAttribution"
+          },
+          "attribution_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution Basis"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "protocol",
+          "port",
+          "exposure",
+          "attribution"
+        ],
+        "title": "ServiceEndpointView",
+        "description": "A port of a service. ``attribution`` states how the port was tied to the service:\n``confirmed`` (socket owner observed), ``inferred`` (configuration / well-known port),\n``unknown``. ``exposure`` derives from the bind address (``unknown`` also covers\npublic addresses)."
+      },
+      "ServiceInstanceItem": {
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id"
+          },
+          "service_id": {
+            "type": "string",
+            "title": "Service Id"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "instance_kind": {
+            "$ref": "#/components/schemas/InstanceKind"
+          },
+          "instance_key": {
+            "type": "string",
+            "title": "Instance Key"
+          },
+          "parent_instance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Instance Id"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "stopped",
+              "pending",
+              "failed",
+              "unknown"
+            ],
+            "title": "State"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "process_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Process Name"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          },
+          "pod_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pod Name"
+          },
+          "pod_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pod Uid"
+          },
+          "container_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Name"
+          },
+          "container_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Id"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          },
+          "node_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Name"
+          },
+          "workload_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workload Kind"
+          },
+          "workload_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workload Name"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Observed At"
+          },
+          "observed_by": {
+            "type": "string",
+            "title": "Observed By"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale"
+          },
+          "attributes": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attributes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "instance_id",
+          "service_id",
+          "instance_kind",
+          "instance_key",
+          "state",
+          "observed_at",
+          "observed_by",
+          "stale"
+        ],
+        "title": "ServiceInstanceItem",
+        "description": "A process, container or Pod of a service (``v_service_instances_current``)."
+      },
+      "ServiceKind": {
+        "type": "string",
+        "enum": [
+          "host_service",
+          "application",
+          "k8s_workload",
+          "k8s_service"
+        ],
+        "title": "ServiceKind"
+      },
+      "ServiceKindSummary": {
+        "properties": {
+          "service_kind": {
+            "$ref": "#/components/schemas/ServiceKind"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ServiceCoverageCounts"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service_kind",
+          "coverage"
+        ],
+        "title": "ServiceKindSummary"
+      },
+      "ServiceListItem": {
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "title": "Service Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "service_kind": {
+            "$ref": "#/components/schemas/ServiceKind"
+          },
+          "service_key": {
+            "type": "string",
+            "title": "Service Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ServiceCategory"
+          },
+          "product": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "discovered_via": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryEvidence"
+            },
+            "type": "array",
+            "title": "Discovered Via"
+          },
+          "adapter_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adapter Id"
+          },
+          "adapter_support": {
+            "$ref": "#/components/schemas/AdapterSupport"
+          },
+          "monitoring_status": {
+            "$ref": "#/components/schemas/MonitoringStatus"
+          },
+          "coverage_state": {
+            "type": "string",
+            "enum": [
+              "monitored",
+              "degraded",
+              "unmonitored",
+              "planned",
+              "unsupported"
+            ],
+            "title": "Coverage State"
+          },
+          "coverage_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Note"
+          },
+          "coverage_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Coverage Reasons"
+          },
+          "telemetry_sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Telemetry Sources"
+          },
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceEndpointView"
+            },
+            "type": "array",
+            "title": "Endpoints"
+          },
+          "exposures": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "any",
+                "unknown",
+                "private",
+                "loopback"
+              ]
+            },
+            "type": "array",
+            "title": "Exposures"
+          },
+          "config_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Config Refs"
+          },
+          "instance_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instance Count"
+          },
+          "last_telemetry_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Telemetry At"
+          },
+          "first_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen"
+          },
+          "report_age_seconds": {
+            "type": "number",
+            "title": "Report Age Seconds"
+          },
+          "report_stale": {
+            "type": "boolean",
+            "title": "Report Stale"
+          },
+          "present": {
+            "type": "boolean",
+            "title": "Present"
+          },
+          "observed_by": {
+            "type": "string",
+            "title": "Observed By"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service_id",
+          "asset_id",
+          "service_kind",
+          "service_key",
+          "name",
+          "category",
+          "discovered_via",
+          "adapter_support",
+          "monitoring_status",
+          "coverage_state",
+          "coverage_reasons",
+          "telemetry_sources",
+          "endpoints",
+          "exposures",
+          "config_refs",
+          "first_seen",
+          "last_seen",
+          "report_age_seconds",
+          "report_stale",
+          "present",
+          "observed_by"
+        ],
+        "title": "ServiceListItem"
+      },
+      "ServiceListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ServicesSummary"
+          },
+          "invalid_records": {
+            "type": "integer",
+            "title": "Invalid Records",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "summary"
+        ],
+        "title": "ServiceListResponse"
+      },
+      "ServiceRecord": {
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "title": "Service Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "service_kind": {
+            "$ref": "#/components/schemas/ServiceKind"
+          },
+          "service_key": {
+            "type": "string",
+            "title": "Service Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ServiceCategory"
+          },
+          "product": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "discovered_via": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryEvidence"
+            },
+            "type": "array",
+            "title": "Discovered Via"
+          },
+          "adapter_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adapter Id"
+          },
+          "adapter_support": {
+            "$ref": "#/components/schemas/AdapterSupport"
+          },
+          "monitoring_status": {
+            "$ref": "#/components/schemas/MonitoringStatus"
+          },
+          "coverage_state": {
+            "type": "string",
+            "enum": [
+              "monitored",
+              "degraded",
+              "unmonitored",
+              "planned",
+              "unsupported"
+            ],
+            "title": "Coverage State"
+          },
+          "coverage_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Note"
+          },
+          "coverage_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Coverage Reasons"
+          },
+          "telemetry_sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Telemetry Sources"
+          },
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceEndpointView"
+            },
+            "type": "array",
+            "title": "Endpoints"
+          },
+          "exposures": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "any",
+                "unknown",
+                "private",
+                "loopback"
+              ]
+            },
+            "type": "array",
+            "title": "Exposures"
+          },
+          "config_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Config Refs"
+          },
+          "instance_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instance Count"
+          },
+          "last_telemetry_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Telemetry At"
+          },
+          "first_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen"
+          },
+          "report_age_seconds": {
+            "type": "number",
+            "title": "Report Age Seconds"
+          },
+          "report_stale": {
+            "type": "boolean",
+            "title": "Report Stale"
+          },
+          "present": {
+            "type": "boolean",
+            "title": "Present"
+          },
+          "observed_by": {
+            "type": "string",
+            "title": "Observed By"
+          },
+          "attributes": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attributes"
+          },
+          "invalid_endpoints": {
+            "type": "integer",
+            "title": "Invalid Endpoints",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service_id",
+          "asset_id",
+          "service_kind",
+          "service_key",
+          "name",
+          "category",
+          "discovered_via",
+          "adapter_support",
+          "monitoring_status",
+          "coverage_state",
+          "coverage_reasons",
+          "telemetry_sources",
+          "endpoints",
+          "exposures",
+          "config_refs",
+          "first_seen",
+          "last_seen",
+          "report_age_seconds",
+          "report_stale",
+          "present",
+          "observed_by"
+        ],
+        "title": "ServiceRecord"
+      },
+      "ServiceRef": {
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Service Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Name"
+          },
+          "instance_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instance Id"
+          },
+          "adapter_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adapter Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service_id",
+          "name"
+        ],
+        "title": "ServiceRef",
+        "description": "Reference from a SecurityEvent to the service that produced it.\n\nSet only when the producing adapter can genuinely attribute the record (e.g.\nsshd journald lines → the ssh service; container log → its Pod's workload)."
+      },
+      "ServiceSourceCollector": {
+        "properties": {
+          "collector_id": {
+            "type": "string",
+            "title": "Collector Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "title": "Interval Seconds"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale"
+          },
+          "stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stale Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "collector_id",
+          "asset_id",
+          "status",
+          "interval_seconds",
+          "stale"
+        ],
+        "title": "ServiceSourceCollector"
+      },
+      "ServiceSummary": {
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Service Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:/-]{2,199}$",
+            "title": "Asset Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Name"
+          },
+          "service_kind": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Service Kind"
+          },
+          "category": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Category"
+          },
+          "adapter_support": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Adapter Support"
+          },
+          "monitoring_status": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Monitoring Status"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "evidence",
+              "related"
+            ],
+            "title": "Role"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service_id",
+          "asset_id",
+          "name",
+          "service_kind",
+          "category",
+          "adapter_support",
+          "monitoring_status",
+          "role"
+        ],
+        "title": "ServiceSummary"
+      },
+      "ServiceTelemetrySource": {
+        "properties": {
+          "source_type": {
+            "type": "string",
+            "title": "Source Type"
+          },
+          "declared": {
+            "type": "boolean",
+            "title": "Declared"
+          },
+          "collectors": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceSourceCollector"
+            },
+            "type": "array",
+            "title": "Collectors"
+          },
+          "collection": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "stale",
+              "no_collector_health"
+            ],
+            "title": "Collection"
+          },
+          "events": {
+            "type": "integer",
+            "title": "Events"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event At"
+          },
+          "last_ingested_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Ingested At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_type",
+          "declared",
+          "collectors",
+          "collection",
+          "events"
+        ],
+        "title": "ServiceTelemetrySource"
+      },
+      "ServicesSummary": {
+        "properties": {
+          "reported": {
+            "type": "boolean",
+            "title": "Reported"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ServiceCoverageCounts"
+          },
+          "by_kind": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceKindSummary"
+            },
+            "type": "array",
+            "title": "By Kind"
+          },
+          "removed": {
+            "type": "integer",
+            "title": "Removed"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reported",
+          "coverage",
+          "by_kind",
+          "removed",
+          "truncated"
+        ],
+        "title": "ServicesSummary",
+        "description": "Coverage of the services in scope (present services only; tombstones apart)."
       },
       "Severity": {
         "type": "string",
@@ -9808,6 +12291,7 @@
           "linux.journald",
           "linux.auditd",
           "linux.nginx",
+          "linux.apache",
           "linux.app",
           "linux.inventory",
           "linux.posture",

@@ -170,7 +170,7 @@ class ClickHouseConnectClient:
             rows = [tuple(_to_utc(v) for v in row) for row in result.result_rows]
             return QueryRows(columns=list(result.column_names), types=types, rows=rows)
 
-        return self._retry("select", run)  # type: ignore[no-any-return]
+        return self._retry("select", run)  # type: ignore[no-any-return,unused-ignore]
 
     def insert_rows(self, table: str, rows: Sequence[dict[str, Any]]) -> None:
         if not rows:
@@ -192,7 +192,7 @@ class ClickHouseConnectClient:
 def wrap(client: Any) -> DbClient:
     """Return ``client`` if it already speaks :class:`DbClient`, else adapt it."""
     if hasattr(client, "select") and hasattr(client, "insert_rows"):
-        return client  # type: ignore[no-any-return]
+        return client  # type: ignore[no-any-return,unused-ignore]
     return ClickHouseConnectClient(client)
 
 

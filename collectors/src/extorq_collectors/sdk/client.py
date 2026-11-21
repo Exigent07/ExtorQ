@@ -32,8 +32,9 @@ class GatewayError(Exception):
 
 
 class RetryableError(GatewayError):
-    def __init__(self, message: str, *, status_code: int | None = None,
-                 retry_after: float | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int | None = None, retry_after: float | None = None
+    ) -> None:
         super().__init__(message, status_code=status_code)
         self.retry_after = retry_after
 
@@ -127,20 +128,26 @@ class GatewayClient:
             try:
                 return IngestResult.model_validate(response.json())
             except ValueError as exc:
-                raise RetryableError(f"unparseable 202 response ({type(exc).__name__})",
-                                     status_code=status) from None
+                raise RetryableError(
+                    f"unparseable 202 response ({type(exc).__name__})", status_code=status
+                ) from None
         detail = _detail(response)
         if status == 401:
             raise AuthError("gateway rejected the producer token (401)", status_code=status)
         if status in (408, 429) or status >= 500:
-            raise RetryableError(f"gateway HTTP {status}: {detail}", status_code=status,
-                                 retry_after=parse_retry_after(response.headers.get("retry-after")))
-        raise RejectedError(f"gateway HTTP {status}: {detail}", status_code=status,
-                            detail=_json_or_none(response))
+            raise RetryableError(
+                f"gateway HTTP {status}: {detail}",
+                status_code=status,
+                retry_after=parse_retry_after(response.headers.get("retry-after")),
+            )
+        raise RejectedError(
+            f"gateway HTTP {status}: {detail}", status_code=status, detail=_json_or_none(response)
+        )
 
     def status(self) -> dict[str, Any]:
-        response = self._client.get("/v1/status",
-                                    headers={"Authorization": f"Bearer {self._token}"})
+        response = self._client.get(
+            "/v1/status", headers={"Authorization": f"Bearer {self._token}"}
+        )
         response.raise_for_status()
         data = response.json()
         return data if isinstance(data, dict) else {}

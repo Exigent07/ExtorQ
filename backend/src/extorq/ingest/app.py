@@ -41,7 +41,7 @@ from starlette.concurrency import run_in_threadpool
 from extorq.common.config import Settings, get_settings
 from extorq.common.logging import get_logger
 from extorq.common.redaction import sanitize_untrusted
-from extorq.contracts.common import HealthStatus, utc_now
+from extorq.contracts.common import SCHEMA_VERSION, HealthStatus, utc_now
 from extorq.contracts.health import PipelineHealth
 from extorq.contracts.identity import canonical_json, iso_utc, sha256_hex, stable_id
 from extorq.contracts.ingest import (
@@ -81,13 +81,23 @@ RETRY_AFTER_FULL = "30"
 RETRY_AFTER_UNAVAILABLE = "10"
 NORMALIZER_MODULE = "extorq.ingest.otlp_k8s"
 MAX_TOKEN_LENGTH = 512
+#: Contract versions accepted on the wire (1.1 is additive over 1.0; contracts enforce it).
+ACCEPTED_SCHEMA_VERSIONS = ("1.0", "1.1")
 
 Normalizer = Callable[..., tuple[list[Any], list[tuple[int, str]]]]
 
 
-class Reject(Exception):  # noqa: N818 - control-flow signal, not an error condition
-    def __init__(self, status_code: int, detail: str, *, headers: dict[str, str] | None = None,
-                 extra: dict[str, Any] | None = None) -> None:
+class Reject(Exception):
+    """Control-flow signal carrying an HTTP status (not an error condition)."""
+
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        *,
+        headers: dict[str, str] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
@@ -95,8 +105,9 @@ class Reject(Exception):  # noqa: N818 - control-flow signal, not an error condi
         self.extra = extra or {}
 
 
-def _json(status_code: int, body: dict[str, Any], headers: dict[str, str] | None = None
-          ) -> JSONResponse:
+def _json(
+    status_code: int, body: dict[str, Any], headers: dict[str, str] | None = None
+) -> JSONResponse:
     merged = {"Cache-Control": "no-store"}
     merged.update(headers or {})
     return JSONResponse(body, status_code=status_code, headers=merged)
@@ -157,8 +168,15 @@ class Gateway:
 
     # ── audit ─────────────────────────────────────────────────────────
 
-    def audit_record(self, *, request: Request, decision: str, reason: str,
-                     claimed: str | None, authenticated: str | None) -> NewRecord:
+    def audit_record(
+        self,
+        *,
+        request: Request,
+        decision: str,
+        reason: str,
+        claimed: str | None,
+        authenticated: str | None,
+    ) -> NewRecord:
         occurred = utc_now()
         audit_id = uuid.uuid4().hex
         remote = request.client.host if request.client else None
@@ -172,13 +190,17 @@ class Gateway:
             "reason": clean_reason(reason, 1024),
             "path": sanitize_untrusted(request.url.path, 256),
         }
-        return NewRecord(kind="ingest_audit", record_key=audit_id, payload=canonical_json(row),
-                         dedup=False)
+        return NewRecord(
+            kind="ingest_audit", record_key=audit_id, payload=canonical_json(row), dedup=False
+        )
 
     async def write_audit(self, record: NewRecord, *, status_code: int) -> None:
         try:
             await run_in_threadpool(
-                self.spool.append, [record], producer_id="gateway", batch_id="audit",
+                self.spool.append,
+                [record],
+                producer_id="gateway",
+                batch_id="audit",
                 ingested_at=iso_utc(utc_now()),
                 counters={"rejected_total": 1, f"rejected_{status_code}_total": 1},
             )
@@ -205,58 +227,74 @@ class Gateway:
         if producer is None:
             reason = "missing_bearer_token" if not header else "invalid_bearer_token"
             if self.audit_limiter.allow(time.monotonic()):
-                record = self.audit_record(request=request, decision="unauthenticated",
-                                           reason=reason, claimed=None, authenticated=None)
+                record = self.audit_record(
+                    request=request,
+                    decision="unauthenticated",
+                    reason=reason,
+                    claimed=None,
+                    authenticated=None,
+                )
                 await self.write_audit(record, status_code=401)
             else:
                 await self.count_rejection(401)
             log.warning("ingest_unauthenticated", reason=reason, path=request.url.path)
-            raise Reject(401, "authentication required",
-                         headers={"WWW-Authenticate": 'Bearer realm="extorq-ingest"'})
+            raise Reject(
+                401,
+                "authentication required",
+                headers={"WWW-Authenticate": 'Bearer realm="extorq-ingest"'},
+            )
         return producer
 
     async def ensure_capacity(self) -> None:
         try:
             depth = await run_in_threadpool(self.spool.depth)
             free = await run_in_threadpool(self.spool.free_bytes)
-        except Exception:  # noqa: BLE001 - any spool failure means "unavailable"
+        except Exception:  # any spool failure means "unavailable" (logged with traceback)
             log.exception("spool_capacity_check_failed")
-            raise Reject(503, "spool unavailable",
-                         headers={"Retry-After": RETRY_AFTER_UNAVAILABLE}) from None
+            raise Reject(
+                503, "spool unavailable", headers={"Retry-After": RETRY_AFTER_UNAVAILABLE}
+            ) from None
         if depth >= self.settings.spool_max_records:
             log.warning("spool_full", depth=depth, max_records=self.settings.spool_max_records)
             raise Reject(503, "spool full, retry later", headers={"Retry-After": RETRY_AFTER_FULL})
         if free < self.settings.spool_min_free_bytes:
             log.error("spool_disk_low", free_bytes=free)
-            raise Reject(503, "spool disk space low, retry later",
-                         headers={"Retry-After": RETRY_AFTER_FULL})
+            raise Reject(
+                503, "spool disk space low, retry later", headers={"Retry-After": RETRY_AFTER_FULL}
+            )
 
     async def read_body(self, request: Request) -> bytes:
         check_content_length(request.headers.get("content-length"), MAX_BODY_BYTES)
         encoding = content_encoding(request.headers.get("content-encoding"))
         try:
-            raw = await asyncio.wait_for(read_limited(request.stream(), MAX_BODY_BYTES),
-                                         timeout=BODY_READ_TIMEOUT_SECONDS)
+            raw = await asyncio.wait_for(
+                read_limited(request.stream(), MAX_BODY_BYTES), timeout=BODY_READ_TIMEOUT_SECONDS
+            )
         except TimeoutError:
             raise Reject(408, "request body not received in time") from None
         if encoding == "gzip":
             return await run_in_threadpool(gunzip_limited, raw, MAX_BODY_BYTES)
         return raw
 
-    async def deny(self, request: Request, producer: ProducerEntry, *, claimed: str | None,
-                   reasons: list[str]) -> Reject:
-        record = self.audit_record(request=request, decision="forbidden",
-                                   reason="; ".join(reasons), claimed=claimed,
-                                   authenticated=producer.producer_id)
+    async def deny(
+        self, request: Request, producer: ProducerEntry, *, claimed: str | None, reasons: list[str]
+    ) -> Reject:
+        record = self.audit_record(
+            request=request,
+            decision="forbidden",
+            reason="; ".join(reasons),
+            claimed=claimed,
+            authenticated=producer.producer_id,
+        )
         await self.write_audit(record, status_code=403)
         log.warning("ingest_forbidden", producer_id=producer.producer_id, reasons=reasons)
-        return Reject(403, "records not authorized for this producer",
-                      extra={"denied": reasons})
+        return Reject(403, "records not authorized for this producer", extra={"denied": reasons})
 
     # ── spool commit ──────────────────────────────────────────────────
 
-    def _quarantine_records(self, producer_id: str, batch_id: str, received: datetime,
-                            entries: list[QuarantineEntry]) -> list[NewRecord]:
+    def _quarantine_records(
+        self, producer_id: str, batch_id: str, received: datetime, entries: list[QuarantineEntry]
+    ) -> list[NewRecord]:
         records = []
         for entry in entries:
             qid = quarantine_id(producer_id, batch_id, entry.index, entry.payload_sha256)
@@ -271,20 +309,34 @@ class Gateway:
                 "payload_excerpt": entry.excerpt,
                 "payload_sha256": entry.payload_sha256,
             }
-            records.append(NewRecord(kind="quarantine", record_key=qid,
-                                     payload=canonical_json(row), dedup=False))
+            records.append(
+                NewRecord(
+                    kind="quarantine", record_key=qid, payload=canonical_json(row), dedup=False
+                )
+            )
         return records
 
-    def commit(self, *, producer: ProducerEntry, batch_id: str, content_sha256: str,
-               received: datetime, prepared: PreparedBatch) -> tuple[dict[str, Any], bool, bool]:
+    def commit(
+        self,
+        *,
+        producer: ProducerEntry,
+        batch_id: str,
+        content_sha256: str,
+        received: datetime,
+        prepared: PreparedBatch,
+    ) -> tuple[dict[str, Any], bool, bool]:
         """Commit a prepared batch; return (result, replayed, conflict)."""
         quarantined = prepared.quarantined
         notices = [QuarantineNotice(index=q.index, reason=q.reason) for q in quarantined]
 
         def build_result(accepted: int, duplicates: int) -> dict[str, Any]:
             return IngestResult(
-                batch_id=batch_id, accepted=accepted, duplicates=duplicates,
-                rejected=len(quarantined), quarantined=notices, replayed=False,
+                batch_id=batch_id,
+                accepted=accepted,
+                duplicates=duplicates,
+                rejected=len(quarantined),
+                quarantined=notices,
+                replayed=False,
             ).model_dump(mode="json")
 
         outcome = self.spool.commit_batch(
@@ -292,12 +344,17 @@ class Gateway:
             batch_id=batch_id,
             content_sha256=content_sha256,
             ingested_at=iso_utc(received),
-            records=[NewRecord(kind=c.kind, record_key=c.record_key, payload=c.payload)
-                     for c in prepared.candidates],
+            records=[
+                NewRecord(kind=c.kind, record_key=c.record_key, payload=c.payload)
+                for c in prepared.candidates
+            ],
             extra=self._quarantine_records(producer.producer_id, batch_id, received, quarantined),
             build_result=build_result,
-            counters={"quarantined_total": len(quarantined),
-                      "redactions_total": prepared.redactions, "batches_total": 1},
+            counters={
+                "quarantined_total": len(quarantined),
+                "redactions_total": prepared.redactions,
+                "batches_total": 1,
+            },
         )
         return outcome.result, outcome.replayed, outcome.conflict
 
@@ -308,8 +365,10 @@ class Gateway:
         depth = self.spool.depth(max_age_seconds=0)
         free = self.spool.free_bytes()
         status = HealthStatus.OK
-        if depth >= 0.8 * self.settings.spool_max_records or \
-                free < 2 * self.settings.spool_min_free_bytes:
+        if (
+            depth >= 0.8 * self.settings.spool_max_records
+            or free < 2 * self.settings.spool_min_free_bytes
+        ):
             status = HealthStatus.DEGRADED
         if depth >= self.settings.spool_max_records or free < self.settings.spool_min_free_bytes:
             status = HealthStatus.FAILED
@@ -338,13 +397,15 @@ class Gateway:
             },
         )
         key = stable_id("health.v1", "ingest", health.instance, iso_utc(now))
-        return NewRecord(kind="pipeline_health", record_key=key,
-                         payload=canonical_json(health), dedup=False)
+        return NewRecord(
+            kind="pipeline_health", record_key=key, payload=canonical_json(health), dedup=False
+        )
 
     def emit_health(self) -> None:
         record = self.health_record()
-        self.spool.append([record], producer_id="gateway", batch_id="health",
-                          ingested_at=iso_utc(utc_now()))
+        self.spool.append(
+            [record], producer_id="gateway", batch_id="health", ingested_at=iso_utc(utc_now())
+        )
 
     def maintenance(self) -> None:
         horizon = time.time() - self.settings.dedup_retention_hours * 3600
@@ -358,14 +419,22 @@ class Gateway:
 
 
 def _parse_envelope(body: bytes) -> IngestBatch:
+    """Strict JSON (no NaN/Infinity tokens, F-IC-1) then strict envelope validation."""
     try:
-        return IngestBatch.model_validate_json(body)
+        document = _strict_json_loads(body)
+    except (ValueError, RecursionError):
+        raise Reject(
+            400, "body is not valid JSON (NaN/Infinity and malformed input are rejected)"
+        ) from None
+    try:
+        return IngestBatch.model_validate(document)
     except ValidationError as exc:
         for err in exc.errors(include_url=False, include_input=False, include_context=False):
             if tuple(err.get("loc", ())) == ("records",) and err.get("type") == "too_long":
                 raise Reject(413, f"batch exceeds {MAX_BATCH_RECORDS} records") from None
-        raise Reject(422, "invalid batch envelope",
-                     extra={"errors": summarize_validation_error(exc)}) from None
+        raise Reject(
+            422, "invalid batch envelope", extra={"errors": summarize_validation_error(exc)}
+        ) from None
 
 
 def _reject_constant(name: str) -> Any:
@@ -384,6 +453,14 @@ def records_digest(records: list[Any]) -> str:
     except (TypeError, ValueError):
         text = json.dumps(records, sort_keys=True, default=str, allow_nan=True)
     return sha256_hex(text.encode("utf-8", "surrogatepass"))
+
+
+def _event_record(event: Any) -> Any:
+    """IngestRecord JSON for one normalised event; anything unexpected is quarantined later."""
+    try:
+        return {"kind": "event", "data": event.model_dump(mode="json")}
+    except Exception as exc:  # noqa: BLE001 - normaliser bug: keep a trace, never a 500
+        return {"kind": "event", "normalizer_output_error": type(exc).__name__}
 
 
 def _otlp_log_records(payload: dict[str, Any]) -> list[Any]:
@@ -415,15 +492,20 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-        gw_spool = spool or Spool(cfg.resolve(cfg.spool_path),
-                                  busy_timeout_ms=cfg.spool_busy_timeout_ms)
+        gw_spool = spool or Spool(
+            cfg.resolve(cfg.spool_path), busy_timeout_ms=cfg.spool_busy_timeout_ms
+        )
         gw_registry = registry or ProducerRegistry(cfg.resolve(cfg.producers_file))
-        gateway = Gateway(cfg, gw_spool, gw_registry,
-                          normalizer_loader or default_normalizer_loader)
+        gateway = Gateway(
+            cfg, gw_spool, gw_registry, normalizer_loader or default_normalizer_loader
+        )
         app.state.gateway = gateway
         task = asyncio.create_task(_background(gateway)) if background_tasks else None
-        log.info("gateway_started", producers=len(gw_registry.producer_ids),
-                 spool_max_records=cfg.spool_max_records)
+        log.info(
+            "gateway_started",
+            producers=len(gw_registry.producer_ids),
+            spool_max_records=cfg.spool_max_records,
+        )
         try:
             yield
         finally:
@@ -432,8 +514,13 @@ def create_app(
             if spool is None:
                 gw_spool.close()
 
-    app = FastAPI(title="ExtorQ ingest gateway", docs_url=None, redoc_url=None,
-                  openapi_url=None, lifespan=lifespan)
+    app = FastAPI(
+        title="ExtorQ ingest gateway",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+    )
 
     @app.exception_handler(Reject)
     async def _reject_handler(_request: Request, exc: Reject) -> JSONResponse:
@@ -464,19 +551,26 @@ def create_app(
         depth = await run_in_threadpool(gateway.spool.depth, 0)
         oldest = await run_in_threadpool(gateway.spool.oldest_age_seconds)
         dead = await run_in_threadpool(gateway.spool.dead_letter_count)
-        return _json(200, {
-            "producer_id": producer.producer_id,
-            "schema_version": "1.0",
-            "spool": {
-                "depth": depth,
-                "max_records": gateway.settings.spool_max_records,
-                "oldest_age_seconds": oldest,
-                "dead_letter": dead,
+        return _json(
+            200,
+            {
+                "producer_id": producer.producer_id,
+                "schema_version": SCHEMA_VERSION,
+                "accepted_schema_versions": list(ACCEPTED_SCHEMA_VERSIONS),
+                "spool": {
+                    "depth": depth,
+                    "max_records": gateway.settings.spool_max_records,
+                    "oldest_age_seconds": oldest,
+                    "dead_letter": dead,
+                },
+                "counters": counters,
+                "limits": {
+                    "max_body_bytes": MAX_BODY_BYTES,
+                    "max_batch_records": MAX_BATCH_RECORDS,
+                },
+                "otlp_normalizer_available": gateway.normalizer_loader() is not None,
             },
-            "counters": counters,
-            "limits": {"max_body_bytes": MAX_BODY_BYTES, "max_batch_records": MAX_BATCH_RECORDS},
-            "otlp_normalizer_available": gateway.normalizer_loader() is not None,
-        })
+        )
 
     @app.post(INGEST_PATH)
     async def ingest(request: Request) -> JSONResponse:
@@ -488,38 +582,57 @@ def create_app(
         body = await gateway.read_body(request)
         batch = await run_in_threadpool(_parse_envelope, body)
         if batch.producer_id != producer.producer_id:
-            raise await gateway.deny(request, producer, claimed=batch.producer_id,
-                                     reasons=["producer_id_mismatch"])
+            raise await gateway.deny(
+                request, producer, claimed=batch.producer_id, reasons=["producer_id_mismatch"]
+            )
         content_sha256 = await run_in_threadpool(records_digest, batch.records)
-        existing = await run_in_threadpool(gateway.spool.lookup_batch, producer.producer_id,
-                                           batch.batch_id)
+        existing = await run_in_threadpool(
+            gateway.spool.lookup_batch, producer.producer_id, batch.batch_id
+        )
         if existing is not None:
             return _replay_response(existing, content_sha256, batch.batch_id, producer)
         received = utc_now()
         prepared = await run_in_threadpool(
-            prepare_batch, batch.records, producer, batch_id=batch.batch_id, now=received,
+            prepare_batch,
+            batch.records,
+            producer,
+            batch_id=batch.batch_id,
+            now=received,
             limits=gateway.limits,
         )
         if prepared.denied:
-            raise await gateway.deny(request, producer, claimed=batch.producer_id,
-                                     reasons=prepared.denials)
+            raise await gateway.deny(
+                request, producer, claimed=batch.producer_id, reasons=prepared.denials
+            )
         try:
             result, replayed, conflict = await run_in_threadpool(
-                gateway.commit, producer=producer, batch_id=batch.batch_id,
-                content_sha256=content_sha256, received=received, prepared=prepared,
+                gateway.commit,
+                producer=producer,
+                batch_id=batch.batch_id,
+                content_sha256=content_sha256,
+                received=received,
+                prepared=prepared,
             )
         except SpoolUnavailable:
             log.exception("spool_commit_failed", producer_id=producer.producer_id)
-            raise Reject(503, "spool unavailable",
-                         headers={"Retry-After": RETRY_AFTER_UNAVAILABLE}) from None
+            raise Reject(
+                503, "spool unavailable", headers={"Retry-After": RETRY_AFTER_UNAVAILABLE}
+            ) from None
         if conflict:
             raise Reject(409, "batch_id already used with different content")
         result["replayed"] = replayed
-        log.info("ingest_batch", producer_id=producer.producer_id, batch_id=batch.batch_id,
-                 records=len(batch.records), accepted=result["accepted"],
-                 duplicates=result["duplicates"], quarantined=len(prepared.quarantined),
-                 redactions=prepared.redactions, replayed=replayed,
-                 duration_ms=int((time.monotonic() - started) * 1000))
+        log.info(
+            "ingest_batch",
+            producer_id=producer.producer_id,
+            batch_id=batch.batch_id,
+            records=len(batch.records),
+            accepted=result["accepted"],
+            duplicates=result["duplicates"],
+            quarantined=len(prepared.quarantined),
+            redactions=prepared.redactions,
+            replayed=replayed,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
         return _json(202, result)
 
     @app.post(OTLP_LOGS_PATH)
@@ -533,8 +646,11 @@ def create_app(
         check_json_content_type(request.headers.get("content-type"))
         normalizer = gateway.normalizer_loader()
         if normalizer is None:
-            raise Reject(503, f"OTLP normaliser not available yet ({NORMALIZER_MODULE} missing)",
-                         headers={"Retry-After": "60"})
+            raise Reject(
+                503,
+                f"OTLP normaliser not available yet ({NORMALIZER_MODULE} missing)",
+                headers={"Retry-After": "60"},
+            )
         await gateway.ensure_capacity()
         body = await gateway.read_body(request)
         try:
@@ -545,8 +661,9 @@ def create_app(
             raise Reject(400, "OTLP payload must be a JSON object")
         body_sha256 = sha256_hex(body)
         batch_id = sha256_hex(f"otlp\x1f{producer.producer_id}\x1f{body_sha256}")[:32]
-        existing = await run_in_threadpool(gateway.spool.lookup_batch, producer.producer_id,
-                                           batch_id)
+        existing = await run_in_threadpool(
+            gateway.spool.lookup_batch, producer.producer_id, batch_id
+        )
         if existing is not None:
             return _otlp_response(existing[1])
         received = utc_now()
@@ -556,14 +673,21 @@ def create_app(
                 normalizer, payload, producer_id=producer.producer_id, received_at=received
             )
         except Exception as exc:  # noqa: BLE001 - normaliser bug: keep evidence, do not loop
-            log.error("otlp_normalizer_failed", producer_id=producer.producer_id,
-                      error_type=type(exc).__name__)
+            log.error(
+                "otlp_normalizer_failed",
+                producer_id=producer.producer_id,
+                error_type=type(exc).__name__,
+            )
             events = []
             errors = [(0, f"normalizer_error:{type(exc).__name__}")]
             log_records = [payload]
-        raw_records = [{"kind": "event", "data": e.model_dump(mode="json")} for e in events]
+        raw_records = [_event_record(e) for e in events]
         prepared = await run_in_threadpool(
-            prepare_batch, raw_records, producer, batch_id=batch_id, now=received,
+            prepare_batch,
+            raw_records,
+            producer,
+            batch_id=batch_id,
+            now=received,
             limits=gateway.limits,
         )
         if prepared.denied:
@@ -571,29 +695,51 @@ def create_app(
         for index, reason in errors:
             source = log_records[index] if 0 <= index < len(log_records) else None
             excerpt, digest = make_excerpt(source)
-            prepared.quarantined.append(QuarantineEntry(
-                index=index, kind="event", reason=clean_reason(f"otlp_log_record: {reason}"),
-                excerpt=excerpt, payload_sha256=digest))
+            prepared.quarantined.append(
+                QuarantineEntry(
+                    index=index,
+                    kind="event",
+                    reason=clean_reason(f"otlp_log_record: {reason}"),
+                    excerpt=excerpt,
+                    payload_sha256=digest,
+                )
+            )
         try:
             result, _replayed, _conflict = await run_in_threadpool(
-                gateway.commit, producer=producer, batch_id=batch_id,
-                content_sha256=body_sha256, received=received, prepared=prepared,
+                gateway.commit,
+                producer=producer,
+                batch_id=batch_id,
+                content_sha256=body_sha256,
+                received=received,
+                prepared=prepared,
             )
         except SpoolUnavailable:
             log.exception("spool_commit_failed", producer_id=producer.producer_id)
-            raise Reject(503, "spool unavailable",
-                         headers={"Retry-After": RETRY_AFTER_UNAVAILABLE}) from None
-        log.info("otlp_batch", producer_id=producer.producer_id, batch_id=batch_id,
-                 log_records=len(log_records), events=len(events), accepted=result["accepted"],
-                 duplicates=result["duplicates"], quarantined=len(prepared.quarantined),
-                 duration_ms=int((time.monotonic() - started) * 1000))
+            raise Reject(
+                503, "spool unavailable", headers={"Retry-After": RETRY_AFTER_UNAVAILABLE}
+            ) from None
+        log.info(
+            "otlp_batch",
+            producer_id=producer.producer_id,
+            batch_id=batch_id,
+            log_records=len(log_records),
+            events=len(events),
+            accepted=result["accepted"],
+            duplicates=result["duplicates"],
+            quarantined=len(prepared.quarantined),
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
         return _otlp_response(result)
 
     return app
 
 
-def _replay_response(existing: tuple[str, dict[str, Any]], content_sha256: str, batch_id: str,
-                     producer: ProducerEntry) -> JSONResponse:
+def _replay_response(
+    existing: tuple[str, dict[str, Any]],
+    content_sha256: str,
+    batch_id: str,
+    producer: ProducerEntry,
+) -> JSONResponse:
     stored_sha, stored = existing
     if stored_sha != content_sha256:
         log.warning("batch_id_conflict", producer_id=producer.producer_id, batch_id=batch_id)
@@ -607,8 +753,10 @@ def _otlp_response(result: dict[str, Any]) -> JSONResponse:
     rejected = int(result.get("rejected", 0))
     if rejected:
         reasons = "; ".join(q.get("reason", "") for q in result.get("quarantined", [])[:3])
-        return _json(200, {"partialSuccess": {"rejectedLogRecords": rejected,
-                                              "errorMessage": reasons[:1000]}})
+        return _json(
+            200,
+            {"partialSuccess": {"rejectedLogRecords": rejected, "errorMessage": reasons[:1000]}},
+        )
     return _json(200, {})
 
 
@@ -626,4 +774,3 @@ async def _background(gateway: Gateway) -> None:
         except Exception as exc:  # noqa: BLE001 - keep the loop alive; visible in logs
             log.error("gateway_background_failed", error_type=type(exc).__name__)
         await asyncio.sleep(gateway.settings.health_interval_seconds)
-

@@ -1,0 +1,9 @@
+2026-11-21T14:44:52Z	INFO	[vex] Skipping VEX repository update
+2026-11-21T14:44:52Z	INFO	[vuln] Vulnerability scanning is enabled
+2026-11-21T14:44:52Z	INFO	[misconfig] Misconfiguration scanning is enabled
+2026-11-21T14:44:52Z	INFO	[checks-client] No downloadable checks were loaded as --skip-check-update is enabled, loading from existing cache...
+2026-11-21T14:44:52Z	ERROR	[misconfig] Falling back to embedded checks	err="failed to check cache: cache does not exist at \"/cache/policy/content\""
+2026-11-21T14:44:52Z	WARN	[pip] Unable to find python `site-packages` directory. License detection is skipped.	err="unable to find path to Python executable"
+2026-11-21T14:44:52Z	INFO	Number of language-specific files	num=1
+2026-11-21T14:44:52Z	INFO	[pip] Detecting vulnerabilities...
+2026-11-21T14:44:52Z	INFO	Detected config files	num=1

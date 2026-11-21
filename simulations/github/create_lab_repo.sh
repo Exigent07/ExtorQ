@@ -93,20 +93,20 @@ cat <<EOF
 
 Created ${REPO} (private). Next steps:
 
-1. Create a fine-grained personal access token (Settings > Developer settings >
-   Fine-grained tokens), resource owner ${REPO%%/*}, repository access "Only select
-   repositories" = ${REPO}, expiry <= 30 days, repository permissions (all READ-ONLY):
+1. Token. config/collectors/github.yaml already lists ${REPO}. Either set
+   gh_cli_token_fallback: true there (uses the gh CLI OAuth token, which is broader than
+   needed; the collector reports token_source=gh_cli and a warning in its health) or,
+   preferred, create a fine-grained personal access token (Settings > Developer settings > Fine-grained
+   tokens), resource owner ${REPO%%/*}, repository access "Only select repositories" =
+   ${REPO}, expiry <= 30 days, repository permissions (all READ-ONLY):
      Metadata: Read (mandatory), Contents: Read, Actions: Read,
-     Administration: Read (optional: branch protection, default workflow permissions,
-       Dependabot alert status; without it these are reported as data gaps),
+     Administration: Read (branch protection, default workflow permissions, Dependabot
+       alert status; without it these are reported as data gaps),
      Dependabot alerts: Read, Code scanning alerts: Read, Secret scanning alerts: Read
-       (optional; unavailable features are reported as data gaps, never as "no alerts").
-2. Store it in a file only you can read, e.g.:
-     install -m 600 /dev/null var/secrets/github/readonly-pat   # then paste the token into it
-   and export EXTORQ_GITHUB_TOKEN_FILE=\$PWD/var/secrets/github/readonly-pat
-3. Add the repository to config/collectors/github.yaml:
-     repos:
-       - ${REPO}
+       (unavailable features are reported as data gaps, never as "no alerts").
+   Store it in a file only you can read and point EXTORQ_GITHUB_TOKEN_FILE at it (a token
+   file takes precedence over the gh CLI fallback).
+2. Collect:  uv run extorq-collect run --only github-repos --once
    Asset id: github:${REPO_LC}
-4. Rehearse GH-001 offline:  simulations/github/gh_001_workflow_permissions.sh --repo ${REPO}
+3. Rehearse GH-001 offline:  simulations/github/gh_001_workflow_permissions.sh --repo ${REPO}
 EOF

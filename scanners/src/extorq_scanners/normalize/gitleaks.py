@@ -17,12 +17,12 @@ import re
 from typing import Any
 
 from extorq.contracts import FindingCategory, Resource
-
 from extorq_scanners.models import NormalizeContext, NormalizedScan, ReportFormatError
 from extorq_scanners.normalize.common import FindingBuilder
 from extorq_scanners.sanitize import (
     MEDIUM,
     RedactionCounter,
+    Verbatim,
     bounded_int,
     clean,
     clean_list,
@@ -94,8 +94,14 @@ def normalize_gitleaks(report: object, stderr: str, ctx: NormalizeContext) -> No
         evidence, ok = _redacted_match(leak.get("Match"), counter)
         if not ok or leak.get("Secret") not in (REDACTION_MARKER, None, ""):
             unredacted += 1
-        parts = ([commit] if commit else []) + [file_rel, rule, str(start if start is not None else "")]
-        fingerprint = ":".join(parts)
+        parts = [
+            *([commit] if commit else []),
+            file_rel,
+            rule,
+            str(start if start is not None else ""),
+        ]
+        # Gitleaks' native fingerprint format, rebuilt from validated/redacted parts only.
+        fingerprint = Verbatim(":".join(parts))
         severity = ctx.severity_overrides.get(rule, ctx.default_secret_severity)
         builder.add(
             check_id=f"gitleaks:{rule}",
@@ -109,7 +115,7 @@ def normalize_gitleaks(report: object, stderr: str, ctx: NormalizeContext) -> No
             evidence=f"redacted match: {evidence}",
             remediation=_REMEDIATION,
             attributes={
-                "rule_id": rule,
+                "rule_id": Verbatim(rule),
                 "line": start,
                 "end_line": end,
                 "commit": commit,

@@ -8,6 +8,7 @@ paths, ``..`` components, symlink escapes and characters that would break
 from __future__ import annotations
 
 import re
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -17,20 +18,39 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from extorq.contracts import Severity
 
 _IMAGE = re.compile(r"^[a-z0-9][a-z0-9./_-]*(:[A-Za-z0-9._-]{1,128})?@sha256:[0-9a-f]{64}$")
-_LOCAL_IMAGE = re.compile(r"^[a-z0-9][a-z0-9./_-]*(:[A-Za-z0-9._-]{1,128})?(@sha256:[0-9a-f]{64})?$")
+_LOCAL_IMAGE = re.compile(
+    r"^[a-z0-9][a-z0-9./_-]*(:[A-Za-z0-9._-]{1,128})?(@sha256:[0-9a-f]{64})?$"
+)
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 _ASSET = re.compile(r"^[a-z0-9][a-z0-9._:/-]{2,199}$")
 _REL_PATH = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_./ -]{0,511}$")
 _REGISTRY_ID = re.compile(r"^p/[a-z0-9][a-z0-9-]{0,63}$")
+_REPOSITORY = re.compile(r"^[a-z0-9][a-z0-9./_-]{0,254}$")
+_DEB_NAME = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,127}$")
+_UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,250}\.(service|socket)$")
 
 ScanKind = Literal["trivy", "gitleaks", "semgrep", "linux-packages"]
+
+
+class TrivyScanner(StrEnum):
+    """Trivy scanner modules that targets may enable (secret scanning is Gitleaks' job)."""
+
+    VULN = "vuln"
+    MISCONFIG = "misconfig"
+
+
 KIND_MODES: dict[str, set[str]] = {
     "trivy": {"fs", "config", "image"},
     "linux-packages": {"sbom"},
     "gitleaks": {"dir", "git"},
     "semgrep": {"scan"},
 }
-TOOL_BY_KIND = {"trivy": "trivy", "linux-packages": "trivy", "gitleaks": "gitleaks", "semgrep": "semgrep"}
+TOOL_BY_KIND = {
+    "trivy": "trivy",
+    "linux-packages": "trivy",
+    "gitleaks": "gitleaks",
+    "semgrep": "semgrep",
+}
 
 
 class ConfigError(ValueError):
@@ -56,7 +76,7 @@ def validate_rel_path(value: str) -> str:
 
 class GatewayConfig(_Model):
     url: str = "https://127.0.0.1:8443"
-    token_file: str = "var/secrets/tokens/scanner-runner.token"
+    token_file: str = "var/secrets/tokens/scanner-runner.token"  # noqa: S105 - a path
     ca_file: str = "var/tls/ca.crt"
     timeout_seconds: float = Field(default=30.0, gt=0, le=300)
 
@@ -173,6 +193,34 @@ class InventoryConfig(_Model):
         return validate_rel_path(v)
 
 
+class PackageServiceRule(_Model):
+    """Attribute OS-package findings to the host service whose unit the package ships.
+
+    Applied only with evidence: the unit must be present in the VM's systemd unit
+    inventory (dispatch ``inventory``) collected during the same scan. The
+    attribution is *inferred* (package -> unit is a packaging fact, not runtime
+    proof that the vulnerable code is loaded by that service) and is labelled so.
+    """
+
+    packages: list[str] = Field(min_length=1, max_length=32)
+    unit: str
+
+    @field_validator("packages")
+    @classmethod
+    def _packages(cls, v: list[str]) -> list[str]:
+        for name in v:
+            if not _DEB_NAME.match(name):
+                raise ValueError(f"invalid package name {name!r}")
+        return v
+
+    @field_validator("unit")
+    @classmethod
+    def _unit(cls, v: str) -> str:
+        if not _UNIT.match(v):
+            raise ValueError(f"invalid systemd unit name {v!r}")
+        return v
+
+
 class TargetConfig(_Model):
     name: str
     kind: ScanKind
@@ -180,14 +228,20 @@ class TargetConfig(_Model):
     asset_id: str
     paths: list[str] = Field(default_factory=list, max_length=64)
     image: str | None = None
+    #: image mode: ``exact`` scans ``image`` as given; ``newest`` scans the most recently
+    #: created local image of repository ``image`` (content-hashed tags such as lab-portal).
+    image_select: Literal["exact", "newest"] = "exact"
     #: trivy fs/image: scanner modules (vuln, misconfig).
-    scanners: list[Literal["vuln", "misconfig"]] = Field(default_factory=lambda: ["vuln"])
+    scanners: list[TrivyScanner] = Field(default_factory=lambda: [TrivyScanner("vuln")])
     #: semgrep: names of rulesets defined under semgrep.rulesets.
     rulesets: list[str] = Field(default_factory=list)
     description: str | None = Field(default=None, max_length=200)
     when_missing: Literal["skip", "fail"] = "fail"
     enabled: bool = True
-    interval_seconds: int = Field(default=86400, ge=60, le=7 * 86400)
+    #: Expected scan interval (CollectorHealth staleness = 3 x interval; contract max 86400).
+    interval_seconds: int = Field(default=86400, ge=60, le=86400)
+    #: linux-packages only: evidence-gated package -> host service attribution.
+    service_attribution: list[PackageServiceRule] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode="after")
     def _check(self) -> TargetConfig:
@@ -206,8 +260,14 @@ class TargetConfig(_Model):
         if self.mode == "image":
             if not self.image or not _LOCAL_IMAGE.match(self.image):
                 raise ValueError(f"target {self.name}: image mode needs a valid image reference")
+            if self.image_select == "newest" and not _REPOSITORY.match(self.image):
+                raise ValueError(
+                    f"target {self.name}: image_select newest needs a repository without tag/digest"
+                )
         elif self.image is not None:
             raise ValueError(f"target {self.name}: image is only valid for mode image")
+        if self.service_attribution and self.mode != "sbom":
+            raise ValueError(f"target {self.name}: service_attribution is only valid for sbom")
         if self.kind == "semgrep" and not self.rulesets:
             raise ValueError(f"target {self.name}: semgrep targets need rulesets")
         return self
@@ -215,6 +275,15 @@ class TargetConfig(_Model):
     @property
     def tool(self) -> str:
         return TOOL_BY_KIND[self.kind]
+
+    @property
+    def image_repository(self) -> str | None:
+        """Repository part of ``image`` (no tag, no digest), the stable scan scope of images."""
+        if self.image is None:
+            return None
+        name = self.image.split("@", 1)[0]
+        last = name.rsplit("/", 1)[-1]
+        return name.rsplit(":", 1)[0] if ":" in last else name
 
 
 class ScannersConfig(_Model):
@@ -246,6 +315,15 @@ class ScannersConfig(_Model):
             missing = [r for r in target.rulesets if r not in self.semgrep.rulesets]
             if missing:
                 raise ValueError(f"target {target.name}: unknown rulesets {missing}")
+        # Two targets sharing (asset, tool, scope) would resolve each other's findings.
+        from extorq_scanners.scope import scope_for
+
+        seen: dict[tuple[str, str, str], str] = {}
+        for target in self.targets:
+            key = (target.asset_id, target.tool, scope_for(target).scope_hash)
+            if key in seen:
+                raise ValueError(f"targets {seen[key]} and {target.name} share one lifecycle scope")
+            seen[key] = target.name
         return self
 
     def select(self, kind: str, names: list[str] | None = None) -> list[TargetConfig]:

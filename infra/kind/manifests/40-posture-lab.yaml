@@ -2,8 +2,12 @@
 # (extorq-posture-k8s) reports genuine findings against a real object.
 #
 # Weaknesses (intentional): runs as root (runAsUser 0), no resource limits,
-# hostPath /var/log mounted read-only, service-account token automounted,
+# a hostPath volume (read-only), service-account token automounted,
 # no seccomp profile, writable root filesystem.
+# The hostPath is a dedicated, empty node directory (/var/log/extorq-posture-lab),
+# NOT /var/log: on this single-node cluster /var/log holds the API audit log and
+# every pod log, which a root pod could read (review finding F-10). The posture
+# finding ("hostPath volume") stays genuine without granting that access.
 # Nothing here grants real privilege: not privileged, no host namespaces, no added
 # capabilities, no RBAC bindings (the default service account has no permissions
 # beyond the built-in discovery roles). The container only sleeps.
@@ -39,10 +43,10 @@ spec:
           command: ["/bin/sh", "-c", "trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done"]
           volumeMounts:
             - name: node-logs
-              mountPath: /host/var/log
+              mountPath: /host/var/log/extorq-posture-lab
               readOnly: true
       volumes:
         - name: node-logs
           hostPath:
-            path: /var/log
-            type: Directory
+            path: /var/log/extorq-posture-lab
+            type: DirectoryOrCreate

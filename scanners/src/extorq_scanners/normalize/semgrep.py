@@ -14,7 +14,6 @@ import re
 from typing import Any
 
 from extorq.contracts import FindingCategory, Resource, SkippedCheck
-
 from extorq_scanners import severity as sev
 from extorq_scanners.models import NormalizeContext, NormalizedScan, ReportFormatError
 from extorq_scanners.normalize.common import FindingBuilder, references
@@ -25,11 +24,35 @@ from extorq_scanners.sanitize import (
     bounded_int,
     clean,
     clean_list,
+    lst,
+    obj,
     relative_path,
     safe_identifier,
 )
 
 _SENTENCE = re.compile(r"^(.{20,200}?[.!?])(\s|$)")
+#: Semgrep's human scan summary on stderr: "◦ Files matching .semgrepignore patterns: 1".
+_SKIP_LINE = re.compile(r"^\s*[◦•*-]\s*(Files [^:]{3,120}):\s*(\d+)\s*$")
+_PARSED = re.compile(r"Parsed lines:\s*~?([0-9.]+)%")
+
+
+def parse_summary(stderr: str) -> tuple[list[str], float | None]:
+    """(skip notes, parsed-lines percentage) from Semgrep's stderr scan summary."""
+    notes: list[str] = []
+    parsed: float | None = None
+    for line in stderr.splitlines():
+        match = _SKIP_LINE.match(line)
+        if match and int(match.group(2)) > 0 and len(notes) < 10:
+            text = clean(f"semgrep skipped: {match.group(1).strip()}: {match.group(2)}", 200)
+            if text:
+                notes.append(text)
+        found = _PARSED.search(line)
+        if found:
+            try:
+                parsed = float(found.group(1))
+            except ValueError:
+                parsed = None
+    return notes, parsed
 
 
 def _first_sentence(text: str | None) -> str | None:
@@ -69,8 +92,12 @@ def _error_text(err: dict[str, Any]) -> str:
     return clean(f"{etype or 'error'} {where}: {message}".strip(), 300) or "semgrep error"
 
 
-def normalize_semgrep(report: object, ctx: NormalizeContext) -> NormalizedScan:
-    """Normalise a parsed Semgrep JSON report. Raises ReportFormatError if unusable."""
+def normalize_semgrep(report: object, ctx: NormalizeContext, stderr: str = "") -> NormalizedScan:
+    """Normalise a parsed Semgrep JSON report. Raises ReportFormatError if unusable.
+
+    ``stderr`` (Semgrep's human summary) adds skip notes that the JSON report only
+    lists with ``--verbose`` (e.g. files excluded by the default .semgrepignore).
+    """
     if not isinstance(report, dict) or not isinstance(report.get("results"), list):
         raise ReportFormatError("semgrep report is not an object with a 'results' list")
     out = NormalizedScan()
@@ -91,8 +118,8 @@ def normalize_semgrep(report: object, ctx: NormalizeContext) -> NormalizedScan:
             continue
         line, col = _position(result.get("start"))
         end_line, end_col = _position(result.get("end"))
-        extra = result.get("extra") if isinstance(result.get("extra"), dict) else {}
-        meta = extra.get("metadata") if isinstance(extra.get("metadata"), dict) else {}
+        extra = obj(result, "extra")
+        meta = obj(extra, "metadata")
         message = clean(extra.get("message"), MEDIUM, counter)
         severity, basis = sev.map_semgrep(extra.get("severity"))
         short_rule = rule.rsplit(".", 1)[-1]
@@ -120,7 +147,9 @@ def normalize_semgrep(report: object, ctx: NormalizeContext) -> NormalizedScan:
                 "likelihood": meta.get("likelihood"),
                 "impact": meta.get("impact"),
                 "rule_category": meta.get("category"),
-                "subcategory": clean_list(_as_list(meta.get("subcategory")), max_items=8, item_limit=64),
+                "subcategory": clean_list(
+                    _as_list(meta.get("subcategory")), max_items=8, item_limit=64
+                ),
                 "cwe": clean_list(_as_list(meta.get("cwe")), max_items=8, item_limit=256),
                 "owasp": clean_list(_as_list(meta.get("owasp")), max_items=8, item_limit=128),
                 "vulnerability_class": clean_list(
@@ -144,16 +173,20 @@ def normalize_semgrep(report: object, ctx: NormalizeContext) -> NormalizedScan:
         elif len(out.tool_errors) < 50:
             out.tool_errors.append(text)
 
-    paths = report.get("paths") if isinstance(report.get("paths"), dict) else {}
-    scanned = paths.get("scanned") if isinstance(paths.get("scanned"), list) else []
-    skipped_paths = paths.get("skipped") if isinstance(paths.get("skipped"), list) else []
-    skipped_rules = report.get("skipped_rules") if isinstance(report.get("skipped_rules"), list) else []
+    paths = obj(report, "paths")
+    scanned = lst(paths, "scanned")
+    skipped_paths = lst(paths, "skipped")
+    skipped_rules = lst(report, "skipped_rules")
     for item in skipped_rules[:100]:
         if isinstance(item, dict):
             rule_id = clean(item.get("rule_id") or item.get("id"), SHORT) or "unknown-rule"
-            reason = clean(item.get("details") or item.get("reason") or "skipped by semgrep", MEDIUM)
+            reason = clean(
+                item.get("details") or item.get("reason") or "skipped by semgrep", MEDIUM
+            )
             out.skipped.append(SkippedCheck(check=rule_id, reason=reason or "skipped by semgrep"))
     out.notes.append(f"{len(scanned)} files scanned")
+    skip_notes, parsed_pct = parse_summary(stderr)
+    out.notes.extend(skip_notes)
     if skipped_paths:
         out.notes.append(f"{len(skipped_paths)} paths skipped by semgrep")
     if ctx.rules_total is not None:
@@ -161,6 +194,8 @@ def normalize_semgrep(report: object, ctx: NormalizeContext) -> NormalizedScan:
         out.checks_run = max(0, ctx.rules_total - len(skipped_rules))
     out.nothing_scanned = not scanned and bool(out.tool_errors)
     out.attributes = {"files_scanned": len(scanned), "paths_skipped": len(skipped_paths)}
+    if parsed_pct is not None:
+        out.attributes["parsed_lines_pct"] = parsed_pct
     if ctx.ruleset_label:
         out.attributes["rulesets"] = ctx.ruleset_label
     out.redactions = counter.count

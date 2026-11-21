@@ -23,6 +23,7 @@ rule changes fail at load time, in review and in CI, not at runtime:
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 ALLOWED_TABLES: frozenset[str] = frozenset(
@@ -359,7 +360,7 @@ def _collect_ctes(tokens: list[Token]) -> set[str]:
 
 def check_rule_sql(
     sql: str,
-    declared_params: dict[str, object] | None = None,
+    declared_params: Mapping[str, object] | None = None,
     *,
     reserved: dict[str, str] | None = None,
 ) -> SqlCheck:

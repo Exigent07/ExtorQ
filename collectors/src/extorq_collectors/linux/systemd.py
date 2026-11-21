@@ -13,14 +13,15 @@ import re
 from typing import Any
 
 from extorq.contracts import Outcome, ProcessInfo, Resource, SecurityEvent, SourceType
-
 from extorq_collectors.linux.common import ParseContext, build_event, clean, severity_from_priority
 from extorq_collectors.linux.journal import SYSTEMD_EXES, JournalEntry, is_self
 
 PARSER_SYSTEMD = "linux-systemd"
 
-_UNIT = (r"(?P<unit>[A-Za-z0-9@:._\\-]{1,200}\.(?:service|socket|timer|target|mount|automount|"
-         r"path|scope|slice|swap|device))")
+_UNIT = (
+    r"(?P<unit>[A-Za-z0-9@:._\\-]{1,200}\.(?:service|socket|timer|target|mount|automount|"
+    r"path|scope|slice|swap|device))"
+)
 STATE_LINE = re.compile(
     rf"^(?P<state>Started|Stopped|Reloaded|Finished|Failed to start|Failed to stop|"
     rf"Failed to reload) {_UNIT}(?: - (?P<desc>.{{0,300}}?))?\.?$"
@@ -36,8 +37,12 @@ RELOAD_REQUEST = re.compile(
 )
 
 _STATE_NAMES = {
-    "Started": "started", "Stopped": "stopped", "Reloaded": "reloaded", "Finished": "finished",
-    "Failed to start": "start_failed", "Failed to stop": "stop_failed",
+    "Started": "started",
+    "Stopped": "stopped",
+    "Reloaded": "reloaded",
+    "Finished": "finished",
+    "Failed to start": "start_failed",
+    "Failed to stop": "stop_failed",
     "Failed to reload": "reload_failed",
 }
 
@@ -48,8 +53,11 @@ def _self_unit(unit: str, desc: str | None, ctx: ParseContext) -> bool:
         return True
     if ctx.self_uid is not None:
         uid = str(ctx.self_uid)
-        return unit in (f"user@{uid}.service", f"user-runtime-dir@{uid}.service",
-                        f"user-{uid}.slice")
+        return unit in (
+            f"user@{uid}.service",
+            f"user-runtime-dir@{uid}.service",
+            f"user-{uid}.slice",
+        )
     return False
 
 
@@ -63,25 +71,29 @@ def parse_systemd(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]
 
     reload_match = RELOAD_REQUEST.match(msg)
     if reload_match:
-        return [build_event(
-            ctx,
-            event_type="system.systemd.daemon_reload",
-            source_type=SourceType.LINUX_JOURNALD,
-            native_key=entry.cursor,
-            source_native_id=entry.cursor,
-            event_time=entry.time,
-            parser=PARSER_SYSTEMD,
-            action="daemon_reload",
-            outcome=Outcome.SUCCESS,
-            severity_hint=severity_from_priority(entry.priority),
-            process=process,
-            message=msg,
-            raw=msg,
-            attributes={"requested_by_pid": int(reload_match.group("pid")),
-                        "requested_by_comm": reload_match.group("comm") or None,
-                        "requested_by_unit": reload_match.group("unit"),
-                        "boot_id": entry.boot_id},
-        )]
+        return [
+            build_event(
+                ctx,
+                event_type="system.systemd.daemon_reload",
+                source_type=SourceType.LINUX_JOURNALD,
+                native_key=entry.cursor,
+                source_native_id=entry.cursor,
+                event_time=entry.time,
+                parser=PARSER_SYSTEMD,
+                action="daemon_reload",
+                outcome=Outcome.SUCCESS,
+                severity_hint=severity_from_priority(entry.priority),
+                process=process,
+                message=msg,
+                raw=msg,
+                attributes={
+                    "requested_by_pid": int(reload_match.group("pid")),
+                    "requested_by_comm": reload_match.group("comm") or None,
+                    "requested_by_unit": reload_match.group("unit"),
+                    "boot_id": entry.boot_id,
+                },
+            )
+        ]
 
     state: str | None = None
     unit: str | None = None
@@ -110,22 +122,29 @@ def parse_systemd(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]
                 extra["restart_counter"] = int(result.group("restarts"))
     if state is None or unit is None:
         return []
-    return [build_event(
-        ctx,
-        event_type="system.service.state_changed",
-        source_type=SourceType.LINUX_JOURNALD,
-        native_key=entry.cursor,
-        source_native_id=entry.cursor,
-        event_time=entry.time,
-        parser=PARSER_SYSTEMD,
-        action=f"unit.{state}",
-        outcome=outcome,
-        severity_hint=severity_from_priority(entry.priority),
-        resource=Resource(type="systemd_unit", name=clean(unit)),
-        process=process,
-        message=msg,
-        raw=msg,
-        attributes={"state": state, "unit_description": desc, "boot_id": entry.boot_id, **extra},
-        sim_texts=(unit,),
-        is_self=_self_unit(unit, desc, ctx) or is_self(entry, ctx),
-    )]
+    return [
+        build_event(
+            ctx,
+            event_type="system.service.state_changed",
+            source_type=SourceType.LINUX_JOURNALD,
+            native_key=entry.cursor,
+            source_native_id=entry.cursor,
+            event_time=entry.time,
+            parser=PARSER_SYSTEMD,
+            action=f"unit.{state}",
+            outcome=outcome,
+            severity_hint=severity_from_priority(entry.priority),
+            resource=Resource(type="systemd_unit", name=clean(unit)),
+            process=process,
+            message=msg,
+            raw=msg,
+            attributes={
+                "state": state,
+                "unit_description": desc,
+                "boot_id": entry.boot_id,
+                **extra,
+            },
+            sim_texts=(unit,),
+            is_self=_self_unit(unit, desc, ctx) or is_self(entry, ctx),
+        )
+    ]

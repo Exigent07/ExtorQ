@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from typing import Any
 
 from extorq.common.redaction import redact_text, sanitize_untrusted
 
@@ -31,6 +32,20 @@ ATTR_LIST_ITEM = 512
 _SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$")
 _HEX_SHA = re.compile(r"^[0-9a-f]{7,64}$")
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
+
+
+class Verbatim(str):
+    """A string composed ONLY of components that were each redacted or strictly validated.
+
+    Example: a gitleaks fingerprint ``<commit hex>:<redacted path>:<rule id>:<line>``.
+    Running generic ``key: value`` redaction over the composed string produces false
+    positives (``extorq-test-secret:9`` looks like ``secret: 9``) that destroy the
+    identifier, so :func:`normalize.common.bounded_attributes` stores Verbatim values
+    after control-character sanitisation and length bounding only. Never wrap raw
+    tool output in Verbatim.
+    """
+
+    __slots__ = ()
 
 
 class RedactionCounter:
@@ -57,7 +72,9 @@ def clean(value: object, limit: int, counter: RedactionCounter | None = None) ->
     return text or None
 
 
-def clean_required(value: object, limit: int, fallback: str, counter: RedactionCounter | None) -> str:
+def clean_required(
+    value: object, limit: int, fallback: str, counter: RedactionCounter | None
+) -> str:
     return clean(value, limit, counter) or fallback
 
 
@@ -121,3 +138,15 @@ def relative_path(path: object, mount_point: str) -> str | None:
     elif text == mount_point.rstrip("/"):
         text = "."
     return text.lstrip("/") or "."
+
+
+def obj(container: Any, key: str) -> dict[str, Any]:
+    """``container[key]`` when both are JSON objects, else ``{}`` (typed narrowing helper)."""
+    value = container.get(key) if isinstance(container, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def lst(container: Any, key: str) -> list[Any]:
+    """``container[key]`` when it is a JSON array, else ``[]`` (typed narrowing helper)."""
+    value = container.get(key) if isinstance(container, dict) else None
+    return value if isinstance(value, list) else []

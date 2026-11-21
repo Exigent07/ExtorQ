@@ -1,0 +1,1 @@
+{"type":"version","protocol":1,"dispatcher":"extorq-collect-dispatch","version":"1.1.0","commands":["version","audit","inventory","journal","packages","posture"],"limits":{"journal_max_entries":5000,"audit_max_bytes":1048576},"hostname":"lab-vm-01","user":"extorq-collector"}

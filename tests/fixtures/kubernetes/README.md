@@ -28,6 +28,7 @@ was a manual fixture run with objects named `b2-fixture-*` (all deleted afterwar
 | `anonymous_forbidden_secret_list` / `unauthenticated_401` | anonymous request -> 403; invalid bearer token -> 401 (audited only at stage ResponseStarted) |
 | `watch_response_started` | an in-progress watch (stage ResponseStarted; skipped by the normaliser) |
 | `bootstrap_mirror_pod_admission_denied` / `bootstrap_rbac_forbidden` / `metadata_list_nodes` | cluster bootstrap traffic (admission and RBAC denials, kind's readiness polling) |
+| `rbac_crb_annotate_patch` | session 2: `kind.sh` `kubectl annotate --overwrite clusterrolebinding kubeadm:cluster-admins extorq.io/accepted-risk=...` (annotation-only merge patch of a cluster-admin binding) |
 
 **Synthetic content inside genuine records:** the privileged pod spec carries an
 environment variable `FIXTURE_FAKE_PASSWORD=synthetic-not-a-secret-123`. The value
@@ -52,3 +53,30 @@ from the capture; their content and wrapping are unmodified.
 * `lab_portal_sample.json`: real lab-portal (B1's app) output from deployment
   `extorq-apps/lab-portal` after a scripted run of failed logins, an unknown user,
   `/admin` without a session, a successful login, and a 404.
+
+## `otlp/enriched_sample.json` (session 2)
+
+Real OTLP/JSON captured on 2026-11-21 14:32Z from the collector running the production
+config of `infra/kind/otel/collector.yaml` with `container.id`/`container.image.*`
+extraction, plus a temporary `file` exporter (removed afterwards; the capture file was
+deleted from the node). Selected resourceLogs, unmodified: lab-portal lines (Deployment,
+with container id) from a scripted run of three wrong-password logins, an unknown user,
+`/admin` without a session, a successful login (password read from its 0600 file, never
+logged by the app), `/admin` with the session and a 404; two kindnet lines (DaemonSet); one
+kube-controller-manager line (static pod: no container id, kubelet config-hash UID); one line
+from the short-lived pod `b2-fixture-barepod` whose stdout is **synthetic and labelled
+`SYNTHETIC FIXTURE`**; and audit records. Checked for JWTs, keys and credential values
+before committing (none).
+
+## `api/*.json` (session 2)
+
+Raw LIST responses (`kubectl get --raw <path>`) captured on 2026-11-21 ~14:41Z with the
+read-only `extorq-system/extorq-inventory` identity (TokenRequest token): namespaces,
+nodes, pods, services, serviceaccounts, events, deployments, daemonsets, statefulsets,
+replicasets, jobs, cronjobs, roles, rolebindings, clusterroles, clusterrolebindings,
+networkpolicies, and `/version`. Pretty-printed with sorted keys, otherwise unmodified
+(managedFields kept). The identity cannot read Secrets or ConfigMaps; the files were checked
+for JWTs, private keys, password hashes and credential-like env values (only paths and
+non-secret settings such as `LAB_PORTAL_PASSWORD_HASH_FILE=/var/run/secrets/...` appear).
+Tests that need a change (a new binding, a deletion, a failed list, an unready agent) derive
+it from these real objects and say so in the test.

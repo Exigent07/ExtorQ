@@ -36,10 +36,12 @@ params:
     - statuses
   dangerous_triggers: [pull_request_target, workflow_run]
 false_positives:
-  - Legitimate release or deployment workflows that need contents/packages/id-token write
+  - >-
+    Legitimate release or deployment workflows that need contents/packages/id-token write
     (review the commit author and whether the scope is limited to the job that needs it).
-  - Repository maintainers adding pull_request_target for labelling bots that never check
-    out untrusted code (still review: the trigger runs with a write token).
+  - >-
+    Repository maintainers adding pull_request_target for labelling bots that never check
+    out untrusted code (still review it: the trigger runs with a write token).
 blind_spots:
   - Privilege changes made outside workflow files (repository or organisation default
     workflow permissions, environment protection rules) are not workflow commits; they

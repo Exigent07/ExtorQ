@@ -4,9 +4,13 @@ The tests talk to a throwaway ``clickhouse/clickhouse-server:26.8.42.13``
 container through ``docker exec ... clickhouse-client``. The container runs with
 ``--network none`` and publishes no port, so nothing is exposed on the host.
 
-* If a container named ``extorq-c3-lifecycle-ch`` (override with
-  ``EXTORQ_C3_LIFECYCLE_CH``) is already running it is reused and left running.
-* Otherwise it is started here and removed again when the test module finishes.
+* Two variants: ``0003`` (container ``extorq-c3-lifecycle-ch``, override with
+  ``EXTORQ_C3_LIFECYCLE_CH``; migrations 0001 + 0003) and ``0005`` (container
+  ``extorq-c3-services-ch``, override with ``EXTORQ_C3_SERVICES_CH``; 0001, the
+  roles 0004 grants to, 0003, 0004, 0005), i.e. the view before and after the
+  service-model migration.
+* A container that is already running is reused and left running; otherwise it
+  is started here and removed again when the test module finishes.
 * Tests are skipped when Docker or the pinned image is not available locally;
   nothing is pulled from a registry during unit tests.
 
@@ -30,12 +34,35 @@ from pathlib import Path
 from typing import Any
 
 from extorq.contracts import PostureFinding, ScanRun, ScanStatus
-from extorq.contracts.identity import canonical_json
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS = REPO_ROOT / "infra" / "clickhouse" / "migrations"
 IMAGE = "clickhouse/clickhouse-server:26.8.42.13"
 CONTAINER = os.environ.get("EXTORQ_C3_LIFECYCLE_CH", "extorq-c3-lifecycle-ch")
+SERVICES_CONTAINER = os.environ.get("EXTORQ_C3_SERVICES_CH", "extorq-c3-services-ch")
+#: Roles created by 0002 (whose users need rendered passwords, not applied here)
+#: that 0004 grants to.
+ROLES_0004 = (
+    "extorq_role_ingest",
+    "extorq_role_detect",
+    "extorq_role_rules_ro",
+    "extorq_role_api_ro",
+    "extorq_role_grafana",
+)
+#: name -> (container, steps). A step is a migration file name or "roles".
+VARIANTS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "0003": (CONTAINER, ("0001_core_tables.sql", "0003_findings_views.sql")),
+    "0005": (
+        SERVICES_CONTAINER,
+        (
+            "0001_core_tables.sql",
+            "roles",
+            "0003_findings_views.sql",
+            "0004_services.sql",
+            "0005_findings_services.sql",
+        ),
+    ),
+}
 _TIMEOUT = 60
 
 
@@ -155,9 +182,13 @@ class ClickHouse:
         out = self.execute(f"{query} FORMAT JSONEachRow", **kwargs)
         return [json.loads(line) for line in out.splitlines() if line.strip()]
 
-    def apply_migrations(self) -> None:
-        for name in ("0001_core_tables.sql", "0003_findings_views.sql"):
-            self.execute_script((MIGRATIONS / name).read_text(encoding="utf-8"))
+    def apply_migrations(self, steps: tuple[str, ...] = VARIANTS["0003"][1]) -> None:
+        for step in steps:
+            if step == "roles":
+                for role in ROLES_0004:
+                    self.execute(f"CREATE ROLE IF NOT EXISTS {role}")
+            else:
+                self.execute_script((MIGRATIONS / step).read_text(encoding="utf-8"))
 
 
 def _container_running(name: str) -> bool:
@@ -174,20 +205,32 @@ def _container_running(name: str) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
-def clickhouse_session() -> Iterator[ClickHouse]:
-    """Yield a ready ClickHouse with 0001 + 0003 applied; clean up what we started."""
+def clickhouse_session(variant: str = "0003") -> Iterator[ClickHouse]:
+    """Yield a ready ClickHouse with the variant's migrations applied; clean up what we started."""
+    container, steps = VARIANTS[variant]
     docker = _docker() or "docker"
     started = False
-    if not _container_running(CONTAINER):
+    if not _container_running(container):
         _run(
             [
-                docker, "run", "-d", "--rm", "--name", CONTAINER, "--network", "none",
-                "--memory", "1536m", "--ulimit", "nofile=262144:262144", IMAGE,
+                docker,
+                "run",
+                "-d",
+                "--rm",
+                "--name",
+                container,
+                "--network",
+                "none",
+                "--memory",
+                "1536m",
+                "--ulimit",
+                "nofile=262144:262144",
+                IMAGE,
             ],
             timeout=120,
         )
         started = True
-    ch = ClickHouse(CONTAINER)
+    ch = ClickHouse(container)
     try:
         deadline = time.monotonic() + 90
         while True:
@@ -198,11 +241,11 @@ def clickhouse_session() -> Iterator[ClickHouse]:
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(1)
-        ch.apply_migrations()
+        ch.apply_migrations(steps)
         yield ch
     finally:
         if started:
-            subprocess.run([docker, "rm", "-f", CONTAINER], capture_output=True, timeout=60)
+            subprocess.run([docker, "rm", "-f", container], capture_output=True, timeout=60)
 
 
 def unique_asset(prefix: str = "linux:c3-test") -> str:

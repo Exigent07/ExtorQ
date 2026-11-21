@@ -91,12 +91,41 @@ def build_scan_records(
     attributes: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> ScanRecords:
+    scan_run_id = stable_id("github.scan.v1", scanner, asset_id, iso_utc(started_at))
+    findings: list[PostureFinding] = []
+    invalid_checks: set[str] = set()
+    for outcome in outcomes:
+        if not outcome.evaluated:
+            continue
+        built: list[PostureFinding] = []
+        try:
+            built = [
+                _finding(draft, scan_run_id, asset_id, scanner, finished_at)
+                for draft in outcome.findings
+            ]
+        except ValueError:
+            # Unconvertible upstream data (e.g. an out-of-range score): never drop a finding
+            # silently from a successful scan, which would "resolve" it. Treat the whole
+            # check as failed: it stays in scope and the scan becomes PARTIAL.
+            invalid_checks.add(outcome.check_id)
+            continue
+        findings.extend(built)
+    if invalid_checks:
+        outcomes = [
+            CheckOutcome.skip(
+                o.check_id, "upstream data not convertible to a finding", transient=True
+            )
+            if o.check_id in invalid_checks
+            else o
+            for o in outcomes
+        ]
+        if error is None:
+            error = f"{len(invalid_checks)} check(s) returned unconvertible data; scan is partial"
     in_scope = sorted(o.check_id for o in outcomes if o.evaluated or o.transient)
     targets = [repo_target] + [f"check:{check}" for check in in_scope]
     scope = ScanScope(
         targets=targets, description=description, scope_hash=scope_hash(targets, description)
     )
-    scan_run_id = stable_id("github.scan.v1", scanner, asset_id, iso_utc(started_at))
     evaluated = [o for o in outcomes if o.evaluated]
     transient = [o for o in outcomes if o.transient]
     skipped = [
@@ -109,31 +138,6 @@ def build_scan_records(
         error = "no check could be evaluated (see coverage.skipped)"
     elif transient and error is None:
         error = f"{len(transient)} check(s) failed transiently; scan is partial"
-    findings: list[PostureFinding] = []
-    for outcome in evaluated:
-        for draft in outcome.findings:
-            findings.append(
-                PostureFinding(
-                    finding_id=finding_id(asset_id, scanner, draft.check_id, draft.resource_key),
-                    scan_run_id=scan_run_id,
-                    asset_id=asset_id,
-                    scanner=scanner,
-                    check_id=clean_text(draft.check_id, 256),
-                    category=draft.category,
-                    severity=draft.severity,
-                    title=clean_text(draft.title, 256),
-                    description=clean_text(draft.description, 2000) if draft.description else None,
-                    resource=draft.resource,
-                    package=draft.package,
-                    cve_ids=list(draft.cve_ids)[:32],
-                    cvss_score=draft.cvss_score,
-                    evidence=clean_text(draft.evidence, 2000) if draft.evidence else None,
-                    remediation=clean_text(draft.remediation, 2000) if draft.remediation else None,
-                    references=[clean_text(r, 2000) for r in draft.references][:10],
-                    observed_at=finished_at,
-                    attributes=draft.attributes,
-                )
-            )
     scan_run = ScanRun(
         scan_run_id=scan_run_id,
         scanner=scanner,
@@ -155,3 +159,28 @@ def build_scan_records(
         attributes=attributes or {},
     )
     return ScanRecords(scan_run=scan_run, findings=tuple(findings))
+
+
+def _finding(
+    draft: FindingDraft, scan_run_id: str, asset_id: str, scanner: str, observed: datetime
+) -> PostureFinding:
+    return PostureFinding(
+        finding_id=finding_id(asset_id, scanner, draft.check_id, draft.resource_key),
+        scan_run_id=scan_run_id,
+        asset_id=asset_id,
+        scanner=scanner,
+        check_id=clean_text(draft.check_id, 256),
+        category=draft.category,
+        severity=draft.severity,
+        title=clean_text(draft.title, 256),
+        description=clean_text(draft.description, 2000) if draft.description else None,
+        resource=draft.resource,
+        package=draft.package,
+        cve_ids=list(draft.cve_ids)[:32],
+        cvss_score=draft.cvss_score,
+        evidence=clean_text(draft.evidence, 2000) if draft.evidence else None,
+        remediation=clean_text(draft.remediation, 2000) if draft.remediation else None,
+        references=[clean_text(r, 2000) for r in draft.references][:10],
+        observed_at=observed,
+        attributes=draft.attributes,
+    )

@@ -21,3 +21,29 @@ description = "Public OpenPGP v4 fingerprints assigned to *_KEY_FPR shell variab
 targetRules = ["generic-api-key"]
 regexTarget = "line"
 regexes = ['''^\s*[A-Z][A-Z0-9_]*_KEY_FPR="[0-9A-F]{40}"\s*$''']
+
+[[allowlists]]
+description = "F-22 (owner E, pending): synthetic 'api_key: ...' parametrize sample in E's sanitiser unit test. Both conditions must hold: this file AND this exact list-literal line shape. Remove once E generates the sample at runtime."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)tests/unit/ai/test_ai_sanitize\.py$''']
+regexTarget = "line"
+regexes = ['''^\s*"api_key: '[A-Za-z0-9_-]+'",\s*$''']
+
+[[allowlists]]
+description = "SSH public-key fingerprints in sshd log lines ('key ED25519 SHA256:<43 base64>'): public identifiers, not secrets (B1 journald fixtures)"
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = ['''key (?:RSA|DSA|ECDSA|ED25519|ECDSA-SK|ED25519-SK) SHA256:[A-Za-z0-9+/]{43}''']
+
+[[allowlists]]
+description = "Public OpenPGP v4 fingerprint in the official python image's GPG_KEY environment variable (C3 Trivy image fixtures)"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''GPG_KEY=[0-9A-F]{40}(?:[^0-9A-Za-z]|$)''']
+
+[[allowlists]]
+description = "64-character upper-case hex launchd label suffix that merely starts with EAAA (Square tokens are mixed-case base64url) (B3 launchctl fixture; see F-24)"
+targetRules = ["square-access-token"]
+regexTarget = "secret"
+regexes = ['''^EAAA[0-9A-F]{60}$''']

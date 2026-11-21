@@ -82,3 +82,28 @@ a review; reasons are mandatory and greppable:
 
 Secret-scan allowlist entries live in `tests/security/gitleaks.toml` (F-owned);
 request additions here.
+
+## F-IC-6 Bind service identities to the authorised asset (owners: A gateway, D1 API)
+
+**What.** (A) In `prepare_batch`, quarantine (`identity_mismatch`) a `service` record
+whose `service_id != identity.service_id(asset_id, service_kind, service_key)` and a
+`service_instance` whose `instance_id != identity.instance_id(service_id,
+instance_kind, instance_key)`. (D1) Read a service's instances and events by
+`service_id` **and** the service's asset scope (`asset_id = <service asset>` or, for a
+cluster, `startsWith(asset_id, <cluster> || '/node/')`), and resolve `GET
+/services/{id}` to the row whose recomputed id matches.
+
+**Why (verified 2026-11-21, review finding F-19).** Service ids are computable from
+public facts and are not recomputed at the gateway. A synthetic probe through
+`prepare_batch` with a producer authorised only for `linux:lab-vm-01` accepted a
+`Service` (asset `linux:lab-vm-01`) carrying the macOS host's ssh `service_id` and an
+instance attached to it. The API selects services, instances and events by
+`service_id` alone (`SERVICE_GET_SQL ... ORDER BY last_seen DESC LIMIT 1`), so a
+compromised or buggy producer could shadow another asset's service and inject
+instances or events into its view. Legitimate collectors already derive ids with the
+same helpers (`ServiceCandidate.service_id`, `make_instance_id`), so the check rejects
+nothing valid.
+
+**Affected.** A (gateway), D1 (API queries), B1/B2/B3 (no change expected).
+F adds a regression case to `tests/security/test_security_ingest_redaction.py`'s
+sibling suite once merged.

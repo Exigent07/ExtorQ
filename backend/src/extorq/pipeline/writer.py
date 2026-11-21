@@ -75,7 +75,10 @@ def decode_row(row: SpoolRow) -> tuple[str, dict[str, Any]]:
         if record.kind != row.kind:
             raise RowError(f"spool kind {row.kind} does not match payload kind {record.kind}")
         return TABLE_BY_KIND[RecordKind(row.kind)], to_row(
-            row.kind, record.data, producer_id=row.producer_id, batch_id=row.batch_id,
+            row.kind,
+            record.data,
+            producer_id=row.producer_id,
+            batch_id=row.batch_id,
             ingested_at=_parse_time(row.ingested_at),
         )
     if row.kind == "pipeline_health":
@@ -150,13 +153,16 @@ class Writer:
     def _insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         columns = list(rows[0].keys())
         data = [[row[column] for column in columns] for row in rows]
-        self._get_client().insert(table, data, column_names=columns,
-                                  database=self.settings.clickhouse_database)
+        self._get_client().insert(
+            table, data, column_names=columns, database=self.settings.clickhouse_database
+        )
 
     def backoff_seconds(self) -> float:
         failures = max(1, self.stats.consecutive_failures)
-        ceiling = min(self.settings.writer_backoff_max_seconds,
-                      self.settings.writer_backoff_initial_seconds * (2 ** (failures - 1)))
+        ceiling = min(
+            self.settings.writer_backoff_max_seconds,
+            self.settings.writer_backoff_initial_seconds * (2 ** (failures - 1)),
+        )
         return ceiling * (0.5 + 0.5 * self.rng())  # "equal jitter"
 
     # ── batch processing ──────────────────────────────────────────────
@@ -222,8 +228,13 @@ class Writer:
         for error, rows in by_error.items():
             moved = self.spool.fail(rows, retry_at, error, self.settings.writer_max_attempts)
             self.stats.dead_lettered_session += moved
-            log.error("records_failed_permanently", count=len(rows), dead_lettered=moved,
-                      kinds=sorted({r.kind for r in rows}), error=error)
+            log.error(
+                "records_failed_permanently",
+                count=len(rows),
+                dead_lettered=moved,
+                kinds=sorted({r.kind for r in rows}),
+                error=error,
+            )
 
     def _on_transient(self, exc: BaseException) -> None:
         self.stats.consecutive_failures += 1
@@ -236,8 +247,12 @@ class Writer:
         except SpoolUnavailable:
             log.error("counter_write_failed")
         delay = self.backoff_seconds()
-        log.warning("clickhouse_unavailable", consecutive_failures=self.stats.consecutive_failures,
-                    retry_in_seconds=round(delay, 2), error=self.stats.last_error)
+        log.warning(
+            "clickhouse_unavailable",
+            consecutive_failures=self.stats.consecutive_failures,
+            retry_in_seconds=round(delay, 2),
+            error=self.stats.last_error,
+        )
         self._interruptible_sleep(delay)
 
     def _on_success(self, written: int) -> None:
@@ -261,8 +276,7 @@ class Writer:
     def health(self) -> PipelineHealth:
         counters = self.spool.counters()
         last_write_ms = counters.get("last_write_ms")
-        last_write = (datetime.fromtimestamp(last_write_ms / 1000, tz=UTC)
-                      if last_write_ms else None)
+        last_write = datetime.fromtimestamp(last_write_ms / 1000, tz=UTC) if last_write_ms else None
         return PipelineHealth(
             component="writer",
             instance=self.settings.instance_name[:256],
@@ -287,12 +301,25 @@ class Writer:
         health = self.health()
         key = stable_id("health.v1", "writer", health.instance, iso_utc(health.reported_at))
         self.spool.append(
-            [NewRecord(kind="pipeline_health", record_key=key, payload=canonical_json(health),
-                       dedup=False)],
-            producer_id="writer", batch_id="health", ingested_at=iso_utc(utc_now()),
+            [
+                NewRecord(
+                    kind="pipeline_health",
+                    record_key=key,
+                    payload=canonical_json(health),
+                    dedup=False,
+                )
+            ],
+            producer_id="writer",
+            batch_id="health",
+            ingested_at=iso_utc(utc_now()),
         )
-        log.info("writer_health", status=health.status.value, queue_depth=health.queue_depth,
-                 written_total=health.written_total, dead_letter_total=health.dead_letter_total)
+        log.info(
+            "writer_health",
+            status=health.status.value,
+            queue_depth=health.queue_depth,
+            written_total=health.written_total,
+            dead_letter_total=health.dead_letter_total,
+        )
 
     def _maybe_periodic(self) -> None:
         now = time.monotonic()
@@ -317,8 +344,11 @@ class Writer:
             self.sleep(seconds)
 
     def run(self) -> None:
-        log.info("writer_started", batch_size=self.settings.writer_batch_size,
-                 max_attempts=self.settings.writer_max_attempts)
+        log.info(
+            "writer_started",
+            batch_size=self.settings.writer_batch_size,
+            max_attempts=self.settings.writer_max_attempts,
+        )
         while not self.stop_event.is_set():
             self._maybe_periodic()
             try:
@@ -342,7 +372,9 @@ def main() -> int:
     settings = get_settings()
     if check_startup("writer", settings, clickhouse_roles=("ingest",)):
         return 2
-    spool = Spool(settings.resolve(settings.spool_path), busy_timeout_ms=settings.spool_busy_timeout_ms)
+    spool = Spool(
+        settings.resolve(settings.spool_path), busy_timeout_ms=settings.spool_busy_timeout_ms
+    )
     writer = Writer(settings, spool, lambda: get_client("ingest", settings=settings))
 
     def _stop(signum: int, _frame: FrameType | None) -> None:

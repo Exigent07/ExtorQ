@@ -1,0 +1,4 @@
+# Build context of the Grafana image: only provisioning/ and dashboards/ are copied.
+__pycache__/
+*.py
+*.md

@@ -66,14 +66,25 @@ def _entries(document: Any, path: Path) -> list[dict[str, Any]]:
     raise ConfigLoadError(f"{path.name}: expected a mapping, a list or {{collectors: [...]}}")
 
 
-def load_collector_configs(directory: Path, *, include_disabled: bool = False
-                           ) -> list[CollectorConfig]:
+def load_collector_configs(
+    directory: Path, *, include_disabled: bool = False
+) -> list[CollectorConfig]:
     """Load every ``*.yaml``/``*.yml`` in ``directory`` (sorted); collector ids must be unique."""
     if not directory.is_dir():
         raise ConfigLoadError(f"collector config directory not found: {directory}")
+    paths = sorted([*directory.glob("*.yaml"), *directory.glob("*.yml")])
+    return load_collector_files(paths, include_disabled=include_disabled)
+
+
+def load_collector_files(
+    paths: list[Path], *, include_disabled: bool = False
+) -> list[CollectorConfig]:
+    """Load the given YAML files in order; collector ids must be unique across them."""
     configs: list[CollectorConfig] = []
     seen: dict[str, str] = {}
-    for path in sorted([*directory.glob("*.yaml"), *directory.glob("*.yml")]):
+    for path in paths:
+        if not path.is_file():
+            raise ConfigLoadError(f"collector config file not found: {path}")
         try:
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as exc:

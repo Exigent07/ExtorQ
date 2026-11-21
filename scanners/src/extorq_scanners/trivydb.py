@@ -75,9 +75,14 @@ def update_spec(image: str, cache_dir: Path) -> ContainerSpec:
     return ContainerSpec(
         image=image,
         args=[
-            "--cache-dir", "/cache", "image", "--download-db-only",
-            "--disable-telemetry", "--skip-version-check", "--no-progress",
-        ],  # fmt: skip
+            "--cache-dir",
+            "/cache",
+            "image",
+            "--download-db-only",
+            "--disable-telemetry",
+            "--skip-version-check",
+            "--no-progress",
+        ],
         mounts=[Mount(cache_dir, "/cache", read_only=False)],
         env={"TMPDIR": "/cache/.tmp"},
         network="bridge",

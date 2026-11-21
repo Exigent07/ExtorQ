@@ -30,15 +30,15 @@ import re
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from extorq.ai._compat import get_logger
 from extorq.ai.projection import GEMINI_LIMITS, Projection, project_context
-from extorq.ai.sanitize import clean_output, clean_token, redact_secrets
+from extorq.ai.sanitize import clean_output, clean_token, clean_untrusted, redact_secrets
 from extorq.ai.settings import AISettings, ProviderKey, get_ai_settings, get_provider_key
 from extorq.contracts.ai import (
     AIAssessment,
@@ -54,8 +54,16 @@ from extorq.contracts.common import utc_now
 from extorq.contracts.context import InvestigationContext
 from extorq.contracts.identity import assessment_id
 
-SUMMARY_PROMPT_VERSION = "summary-v1"
+SUMMARY_PROMPT_VERSION = "summary-v2"
+#: Room reserved for the user-message text around the evidence bundle: instructions,
+#: boundary lines and the ALLOWED_EVIDENCE_IDS list (<= 50 ids x 36 chars).
+PROMPT_FRAMING_CHARS = 3_000
 RETRY_STATUSES = (408, 429, 500, 502, 503, 504)
+#: Pinned Gemini Developer API root. Passed explicitly so ``GOOGLE_GEMINI_BASE_URL`` in the
+#: environment can never redirect requests (and the API key) to another host.
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/"
+#: Pinned API version (the SDK default); ``GOOGLE_GENAI_API_VERSION`` cannot change it.
+GEMINI_API_VERSION = "v1"
 
 _log = get_logger("extorq.ai.gemini")
 
@@ -82,48 +90,73 @@ SYSTEM_INSTRUCTION = "\n".join(
         "rules own severity and the analyst owns the verdict.",
         "6. Write plain text only: no HTML, no Markdown, no links.",
         "7. Reply with one JSON object that matches the provided response schema.",
+        "",
+        "Response fields:",
+        "- what_happened: up to 8 factual statements, each with the evidence_ids supporting it.",
+        "- timeline: up to 20 entries in time order; time is an ISO-8601 UTC timestamp copied "
+        "from the evidence; each entry cites evidence_ids.",
+        "- why_rule_fired: one statement explaining which evidence met the rule's condition.",
+        "- related_activity: up to 8 statements about related events (relationships in the "
+        "bundle are correlations, not proof of causation).",
+        "- benign_explanations: up to 5 plausible innocent explanations.",
+        "- missing_information and limitations: what is unknown, stale or not collected.",
+        "- recommended_next_steps: up to 8 read-only investigative steps.",
+        "- overall_confidence: low, medium or high confidence in this summary.",
+        "Cite at most 8 evidence ids per statement.",
     ]
 )
 
 # ── internal structured-output model (converted into the contract model) ──
 
 
+# The response schema sent to Gemini is purely structural (types, required fields, one enum):
+# no descriptions, titles or array-length bounds. Gemini compiles the schema into a decoding
+# automaton, and nested ``maxItems`` bounds plus descriptive text made summary-v1's schema
+# exceed its serving limit (HTTP 400 "too many states"). Field guidance lives in
+# SYSTEM_INSTRUCTION and list bounds are enforced here by truncation (``to_contract``).
+
+
 class _Statement(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    text: str = Field(description="One factual sentence in plain text.")
-    evidence_ids: list[str] = Field(
-        max_length=8, description="Ids from ALLOWED_EVIDENCE_IDS that support this statement."
-    )
+    text: str
+    evidence_ids: list[str]
 
 
 class _TimelineItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    time: str = Field(description="ISO-8601 UTC time copied from the evidence.")
-    description: str = Field(description="What happened at this time, in plain text.")
-    evidence_ids: list[str] = Field(max_length=8, description="Ids from ALLOWED_EVIDENCE_IDS.")
+    time: str
+    description: str
+    evidence_ids: list[str]
 
 
 class _SummaryOutput(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    what_happened: list[_Statement] = Field(max_length=8)
-    timeline: list[_TimelineItem] = Field(max_length=20)
+    what_happened: list[_Statement]
+    timeline: list[_TimelineItem]
     why_rule_fired: _Statement
-    related_activity: list[_Statement] = Field(max_length=8)
-    benign_explanations: list[str] = Field(max_length=5)
-    missing_information: list[str] = Field(max_length=8)
-    limitations: list[str] = Field(max_length=8)
-    recommended_next_steps: list[str] = Field(max_length=8)
+    related_activity: list[_Statement]
+    benign_explanations: list[str]
+    missing_information: list[str]
+    limitations: list[str]
+    recommended_next_steps: list[str]
     overall_confidence: Literal["low", "medium", "high"]
 
 
-#: JSON Schema keywords accepted by Gemini's response_json_schema.
-_SCHEMA_KEYWORDS = frozenset(
-    {
-        "$id", "$defs", "$ref", "$anchor", "type", "format", "title", "description", "enum",
-        "items", "prefixItems", "minItems", "maxItems", "minimum", "maximum", "anyOf", "oneOf",
-        "properties", "additionalProperties", "required", "propertyOrdering",
-    }
-)  # fmt: skip
+#: Display bounds applied to model output (all within the contract's limits).
+MAX_STATEMENTS = 8
+MAX_TIMELINE = 20
+MAX_RELATED = 8
+MAX_BENIGN = 5
+MAX_TEXT_ITEMS = 8
+MAX_IDS_PER_STATEMENT = 8
+
+
+#: Structural JSON Schema keywords kept in ``response_json_schema``. Dropped on purpose:
+#: ``title``/``description`` (text inflates the decoding automaton), ``minItems``/``maxItems``
+#: (bounds are enforced by truncation after parsing) and Gemini's non-standard
+#: ``propertyOrdering`` (an OpenAPI ``response_schema`` feature; with JSON Schema the output
+#: follows the key order of ``properties``).
+_SCHEMA_KEYWORDS = frozenset({"$defs", "$ref", "type", "properties", "required", "items", "enum"})
 
 
 def _filter_schema(node: Any) -> Any:
@@ -143,8 +176,6 @@ def _filter_schema(node: Any) -> Any:
             out[key] = _filter_schema(value)
         else:
             out[key] = value
-    if out.get("type") == "object" and isinstance(out.get("properties"), dict):
-        out["propertyOrdering"] = list(out["properties"])
     return out
 
 
@@ -177,9 +208,14 @@ def boundary_token(ctx: InvestigationContext) -> str:
 def build_prompt(
     ctx: InvestigationContext, settings: AISettings, *, known_secrets: tuple[str, ...] = ()
 ) -> PromptBundle:
+    # The bundle shrinks itself to the prompt cap minus the fixed framing text.
+    bundle_cap = max(
+        1_000,
+        min(GEMINI_LIMITS.max_chars, settings.gemini_max_prompt_chars - PROMPT_FRAMING_CHARS),
+    )
     projection = project_context(
         ctx,
-        GEMINI_LIMITS,
+        replace(GEMINI_LIMITS, max_chars=bundle_cap),
         known_secrets=known_secrets,
         include_excerpts=settings.ai_include_excerpts,
         include_simulation_marker=True,
@@ -221,16 +257,20 @@ class _Counters:
     verified: int = 0
     rejected: int = 0
     without_evidence: int = 0
+    #: Items beyond the display bounds (lists and per-statement ids), dropped not rejected.
+    truncated: int = 0
 
 
 def _check_ids(
     raw_ids: list[str], allowed: frozenset[str], counters: _Counters
 ) -> tuple[list[str], list[str]]:
     seen: list[str] = []
-    for raw in raw_ids[:32]:
+    for raw in raw_ids[:64]:
         norm = _ID_CHARS.sub("", str(raw).strip().lower())[:64]
         if norm and norm not in seen:
             seen.append(norm)
+    counters.truncated += max(0, len(seen) - MAX_IDS_PER_STATEMENT)
+    seen = seen[:MAX_IDS_PER_STATEMENT]
     good = [i for i in seen if i in allowed]
     bad = [i for i in seen if i not in allowed]
     counters.cited += len(seen)
@@ -267,9 +307,19 @@ def to_contract(
     """Convert validated model output into the contract model, verifying every cited id."""
     c = _Counters()
     secrets = known_secrets
-    what = [_statement(s, allowed, c, secrets) for s in out.what_happened]
+    for items, cap in (
+        (out.what_happened, MAX_STATEMENTS),
+        (out.timeline, MAX_TIMELINE),
+        (out.related_activity, MAX_RELATED),
+        (out.benign_explanations, MAX_BENIGN),
+        (out.missing_information, MAX_TEXT_ITEMS),
+        (out.limitations, MAX_TEXT_ITEMS),
+        (out.recommended_next_steps, MAX_TEXT_ITEMS),
+    ):
+        c.truncated += max(0, len(items) - cap)
+    what = [_statement(s, allowed, c, secrets) for s in out.what_happened[:MAX_STATEMENTS]]
     timeline: list[SummaryTimelineItem] = []
-    for item in out.timeline:
+    for item in out.timeline[:MAX_TIMELINE]:
         good, bad = _check_ids(item.evidence_ids, allowed, c)
         timeline.append(
             SummaryTimelineItem(
@@ -281,16 +331,21 @@ def to_contract(
             )
         )
     why = _statement(out.why_rule_fired, allowed, c, secrets)
-    related = [_statement(s, allowed, c, secrets) for s in out.related_activity]
+    related = [_statement(s, allowed, c, secrets) for s in out.related_activity[:MAX_RELATED]]
 
     steps: list[str] = []
     withheld = 0
-    for step in _texts(out.recommended_next_steps, 8, secrets):
+    for step in _texts(out.recommended_next_steps, MAX_TEXT_ITEMS, secrets):
         if _DESTRUCTIVE.search(step):
             withheld += 1
         else:
             steps.append(step)
-    limitations = _texts(out.limitations, 8, secrets)
+    limitations = _texts(out.limitations, MAX_TEXT_ITEMS, secrets)
+    if c.truncated:
+        limitations.append(
+            f"ExtorQ truncated the model output to its display limits ({c.truncated} item(s) "
+            "dropped)."
+        )
     if withheld:
         limitations.append(
             f"ExtorQ withheld {withheld} recommended step(s) that proposed changes or containment; "
@@ -306,8 +361,8 @@ def to_contract(
         timeline=timeline,
         why_rule_fired=why,
         related_activity=related,
-        benign_explanations=_texts(out.benign_explanations, 5, secrets),
-        missing_information=_texts(out.missing_information, 8, secrets),
+        benign_explanations=_texts(out.benign_explanations, MAX_BENIGN, secrets),
+        missing_information=_texts(out.missing_information, MAX_TEXT_ITEMS, secrets),
         limitations=limitations,
         recommended_next_steps=steps,
         overall_confidence=out.overall_confidence,
@@ -349,6 +404,8 @@ def build_http_options(settings: AISettings) -> Any:
     from google.genai import types
 
     return types.HttpOptions(
+        base_url=GEMINI_BASE_URL,
+        api_version=GEMINI_API_VERSION,
         timeout=int(settings.gemini_timeout_seconds * 1000),  # milliseconds
         retry_options=types.HttpRetryOptions(
             attempts=settings.gemini_max_attempts,
@@ -362,10 +419,24 @@ def build_http_options(settings: AISettings) -> Any:
 
 
 def _default_client_factory(api_key: str, settings: AISettings) -> GeminiClient:
+    """Gemini Developer API client with every environment-driven switch pinned.
+
+    * ``vertexai=False``: ``GOOGLE_GENAI_USE_VERTEXAI`` cannot switch the backend;
+    * explicit ``api_key``: ``GOOGLE_API_KEY`` / ``GEMINI_API_KEY`` are not consulted;
+    * ``base_url`` pinned in :func:`build_http_options`;
+    * ``DebugConfig`` with no client mode: ``GOOGLE_GENAI_CLIENT_MODE=record|replay`` (which
+      would write prompts and responses to disk) cannot be enabled from the environment.
+    """
     from google import genai
+    from google.genai.client import DebugConfig
 
     logging.getLogger("google_genai").setLevel(logging.WARNING)
-    client: GeminiClient = genai.Client(api_key=api_key, http_options=build_http_options(settings))
+    client: GeminiClient = genai.Client(
+        api_key=api_key,
+        vertexai=False,
+        http_options=build_http_options(settings),
+        debug_config=DebugConfig(client_mode=None, replays_directory=None, replay_id=None),
+    )
     return client
 
 
@@ -397,6 +468,14 @@ class _Failure:
 
 
 _STATUS_TOKEN = re.compile(r"[^A-Z_]")
+_PROVIDER_MESSAGE_LIMIT = 400
+
+
+def _provider_message(exc: BaseException) -> str:
+    message = getattr(exc, "message", None)
+    if not isinstance(message, str) or not message.strip():
+        return ""
+    return clean_untrusted(message, _PROVIDER_MESSAGE_LIMIT).text
 
 
 def classify_gemini_error(exc: BaseException) -> _Failure:
@@ -414,7 +493,12 @@ def classify_gemini_error(exc: BaseException) -> _Failure:
         if code in (401, 403):
             return _Failure(AIStatus.ERROR, f"authentication_failed ({suffix})")
         if 400 <= code < 500:
-            return _Failure(AIStatus.ERROR, f"request_rejected ({suffix})")
+            # Client errors name the rejected field/value; keep a sanitised, bounded copy so an
+            # operator can fix configuration (never prompt text: hex ids masked, secrets redacted).
+            detail = _provider_message(exc)
+            return _Failure(
+                AIStatus.ERROR, f"request_rejected ({suffix}{': ' + detail if detail else ''})"
+            )
         return _Failure(AIStatus.ERROR, f"provider_error ({suffix})")
     names = {cls.__name__ for cls in type(exc).__mro__}
     if isinstance(exc, TimeoutError) or names & {

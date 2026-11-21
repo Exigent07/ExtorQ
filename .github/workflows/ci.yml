@@ -1,0 +1,164 @@
+# ExtorQ CI (owner: agent A). Least privilege: read-only token, no secrets, no
+# pull_request_target, credentials not persisted, every third-party action pinned to
+# a full commit SHA (resolved with `gh api repos/<repo>/commits/<tag>` on 2026-11-21;
+# the tag is noted next to each pin), scanner images pinned by tag AND digest.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.13"
+  PYTHON_VERSION: "3.12"
+  GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+
+jobs:
+  ruff:
+    name: lint (ruff)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install (locked)
+        run: uv sync --frozen
+      - name: ruff check
+        run: uv run ruff check backend/src collectors/src scanners/src tests scripts eval
+
+  mypy:
+    name: typecheck (mypy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install (locked)
+        run: uv sync --frozen
+      - name: mypy
+        run: uv run mypy
+
+  pytest:
+    name: tests (unit, security, rules)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the secret-scan tests also check git history
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install (locked)
+        run: uv sync --frozen
+      - name: pytest (markers integration/lab/live_ai/failure are excluded by default)
+        # No live stack, no AI keys: integration, lab, live_ai and failure tests never run here.
+        run: uv run pytest -q
+
+  frontend:
+    name: console (lint, typecheck, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Detect console
+        id: detect
+        working-directory: .
+        run: |
+          if [ -f frontend/package.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: steps.detect.outputs.present == 'true'
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.detect.outputs.present == 'true'
+        with:
+          node-version: "20.11"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install (frozen lockfile, no lifecycle scripts beyond the allow-list)
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm lint
+      - name: Typecheck
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm typecheck
+      - name: Build
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm build
+
+  gitleaks:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: gitleaks (full git history, redacted report)
+        run: |
+          set -o pipefail  # keep gitleaks' exit code through tee
+          # safe.directory via env: without it git refuses the mounted repo ("dubious
+          # ownership") and gitleaks would scan 0 commits and pass vacuously.
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory \
+            -e GIT_CONFIG_VALUE_0=/repo \
+            -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" \
+            git /repo --config /repo/tests/security/gitleaks.toml \
+            --redact --no-banner --no-color --exit-code 1 2>&1 | tee gitleaks.log
+          # Fail if the scan did not actually cover any commit.
+          grep -Eq "[1-9][0-9]* commits scanned" gitleaks.log
+
+  trivy:
+    name: dependency + config scan (trivy fs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Vulnerabilities in lockfiles (fails on fixable HIGH/CRITICAL)
+        # lab/ holds deliberately vulnerable demo content (e.g. the GH-001 lab repository's
+        # pinned old Flask/urllib3); it is scanned and reported by C3's scanners, not gated.
+        run: |
+          docker run --rm --cap-drop ALL --security-opt no-new-privileges \
+            -v "$PWD:/repo:ro" "$TRIVY_IMAGE" \
+            fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --skip-dirs /repo/lab --exit-code 1 --no-progress /repo
+      - name: Misconfigurations and secrets (report only; lab/ is deliberately weak)
+        run: |
+          docker run --rm --cap-drop ALL --security-opt no-new-privileges \
+            -v "$PWD:/repo:ro" "$TRIVY_IMAGE" \
+            fs --scanners misconfig,secret --severity HIGH,CRITICAL \
+            --skip-dirs /repo/lab --exit-code 0 --no-progress /repo

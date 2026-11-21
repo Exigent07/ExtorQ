@@ -88,6 +88,8 @@ def build_engine(settings: DetectorSettings) -> tuple[DetectionEngine, list[Load
         ingest_delay_seconds=settings.ingest_delay_seconds,
         max_rows_per_rule=settings.max_rows_per_rule,
         max_episode_seconds=settings.max_episode_seconds,
+        catchup_max_seconds=settings.catchup_max_seconds,
+        catchup_margin_seconds=settings.catchup_margin_seconds,
     )
     if settings.instance:
         config.instance = settings.instance

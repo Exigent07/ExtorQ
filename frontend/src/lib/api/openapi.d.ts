@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/assets/{asset_id}/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Services, applications and Kubernetes workloads/Services of one asset */
+        get: operations["list_asset_services"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/overview": {
         parameters: {
             query?: never;
@@ -232,7 +249,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One stored SecurityEvent (contract schema 1.0) with ingest metadata */
+        /** One stored SecurityEvent (contract schema 1.0/1.1) with ingest metadata */
         get: operations["get_event"];
         put?: never;
         post?: never;
@@ -293,6 +310,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Service inventory across assets with effective monitoring coverage */
+        get: operations["list_services"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/services/{service_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Service detail: instances, endpoints, telemetry coverage, auth, findings, alerts */
+        get: operations["get_service"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -301,7 +352,7 @@ export interface components {
         AIAssessment: {
             /**
              * Schema Version
-             * @default 1.0
+             * @default 1.1
              */
             schema_version: string;
             /** Assessment Id */
@@ -398,6 +449,11 @@ export interface components {
          * @enum {string}
          */
         ActorType: "user" | "service_account" | "process" | "github_user" | "github_app" | "system" | "unknown";
+        /**
+         * AdapterSupport
+         * @enum {string}
+         */
+        AdapterSupport: "implemented" | "planned" | "none";
         /** AlertDetailResponse */
         AlertDetailResponse: {
             alert: components["schemas"]["AlertRecord"];
@@ -469,6 +525,8 @@ export interface components {
             analyst_state_recorded: boolean;
             /** Assignee */
             assignee?: string | null;
+            /** Service Ids */
+            service_ids?: string[];
         };
         /** AlertListResponse */
         AlertListResponse: {
@@ -550,6 +608,8 @@ export interface components {
             updated_at: string;
             /** Detector Version */
             detector_version: string;
+            /** Service Ids */
+            service_ids?: string[];
         };
         /** AlertStateResponse */
         AlertStateResponse: {
@@ -677,6 +737,9 @@ export interface components {
             findings: components["schemas"]["FindingItem"][];
             /** Recent Alerts */
             recent_alerts: components["schemas"]["AlertListItem"][];
+            services_summary: components["schemas"]["ServicesSummary"];
+            /** Child Assets */
+            child_assets?: components["schemas"]["AssetBrief"][];
         };
         /** AssetListItem */
         AssetListItem: {
@@ -782,6 +845,21 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** AssetServicesResponse */
+        AssetServicesResponse: {
+            /** Asset Id */
+            asset_id: string;
+            asset?: components["schemas"]["AssetBrief"] | null;
+            /** Items */
+            items: components["schemas"]["ServiceListItem"][];
+            page: components["schemas"]["PageInfo"];
+            summary: components["schemas"]["ServicesSummary"];
+            /**
+             * Invalid Records
+             * @default 0
+             */
+            invalid_records: number;
+        };
         /** AssetSummary */
         AssetSummary: {
             /** Asset Id */
@@ -796,7 +874,21 @@ export interface components {
          * AssetType
          * @enum {string}
          */
-        AssetType: "macos_host" | "linux_host" | "kubernetes_cluster" | "kubernetes_namespace" | "kubernetes_workload" | "github_account" | "github_repository";
+        AssetType: "macos_host" | "linux_host" | "kubernetes_cluster" | "kubernetes_node" | "kubernetes_namespace" | "kubernetes_workload" | "github_account" | "github_repository";
+        /** AuthSourceActivity */
+        AuthSourceActivity: {
+            /** Src Ip */
+            src_ip: string;
+            /** Events */
+            events: number;
+            /** Failures */
+            failures: number;
+            /**
+             * Last Seen
+             * Format: date-time
+             */
+            last_seen: string;
+        };
         /** CollectionHealthSummary */
         CollectionHealthSummary: {
             /** Collectors Total */
@@ -904,7 +996,7 @@ export interface components {
         DetectionAlert: {
             /**
              * Schema Version
-             * @default 1.0
+             * @default 1.1
              */
             schema_version: string;
             /** Alert Id */
@@ -926,6 +1018,8 @@ export interface components {
             entities?: {
                 [key: string]: string;
             };
+            /** Service Ids */
+            service_ids?: string[];
             /** Summary */
             summary: string;
             /**
@@ -978,6 +1072,11 @@ export interface components {
             /** Detector Version */
             detector_version: string;
         };
+        /**
+         * DiscoveryEvidence
+         * @enum {string}
+         */
+        DiscoveryEvidence: "systemd_unit" | "launchd_job" | "process" | "listening_socket" | "configuration" | "k8s_api" | "adapter_config";
         /**
          * Environment
          * @enum {string}
@@ -1087,10 +1186,20 @@ export interface components {
             http_status?: number | null;
             /** Http Request Id */
             http_request_id?: string | null;
+            /** K8S Cluster */
+            k8s_cluster?: string | null;
             /** K8S Namespace */
             k8s_namespace?: string | null;
+            /** K8S Node */
+            k8s_node?: string | null;
             /** K8S Pod Name */
             k8s_pod_name?: string | null;
+            /** K8S Pod Uid */
+            k8s_pod_uid?: string | null;
+            /** K8S Container */
+            k8s_container?: string | null;
+            /** K8S Container Id */
+            k8s_container_id?: string | null;
             /** K8S Verb */
             k8s_verb?: string | null;
             /** K8S Resource */
@@ -1113,6 +1222,14 @@ export interface components {
             gh_workflow_run_id?: number | null;
             /** Gh Actor Login */
             gh_actor_login?: string | null;
+            /** Service Id */
+            service_id?: string | null;
+            /** Service Name */
+            service_name?: string | null;
+            /** Service Instance Id */
+            service_instance_id?: string | null;
+            /** Adapter Id */
+            adapter_id?: string | null;
             /** Simulation Run Id */
             simulation_run_id?: string | null;
             /** Scenario Id */
@@ -1147,6 +1264,10 @@ export interface components {
             actor_name?: string | null;
             /** Src Ip */
             src_ip?: string | null;
+            /** Service Id */
+            service_id?: string | null;
+            /** Service Name */
+            service_name?: string | null;
             /** Summary */
             summary: string;
             /** Key Fields */
@@ -1227,10 +1348,20 @@ export interface components {
             http_status?: number | null;
             /** Http Request Id */
             http_request_id?: string | null;
+            /** K8S Cluster */
+            k8s_cluster?: string | null;
             /** K8S Namespace */
             k8s_namespace?: string | null;
+            /** K8S Node */
+            k8s_node?: string | null;
             /** K8S Pod Name */
             k8s_pod_name?: string | null;
+            /** K8S Pod Uid */
+            k8s_pod_uid?: string | null;
+            /** K8S Container */
+            k8s_container?: string | null;
+            /** K8S Container Id */
+            k8s_container_id?: string | null;
             /** K8S Verb */
             k8s_verb?: string | null;
             /** K8S Resource */
@@ -1253,6 +1384,14 @@ export interface components {
             gh_workflow_run_id?: number | null;
             /** Gh Actor Login */
             gh_actor_login?: string | null;
+            /** Service Id */
+            service_id?: string | null;
+            /** Service Name */
+            service_name?: string | null;
+            /** Service Instance Id */
+            service_instance_id?: string | null;
+            /** Adapter Id */
+            adapter_id?: string | null;
             /** Simulation Run Id */
             simulation_run_id?: string | null;
             /** Scenario Id */
@@ -1335,6 +1474,14 @@ export interface components {
             remediation?: string | null;
             /** Accepted Risk Reason */
             accepted_risk_reason?: string | null;
+            /** Service Id */
+            service_id?: string | null;
+            /** Scope Hash */
+            scope_hash?: string | null;
+            /** Last Success At */
+            last_success_at?: string | null;
+            /** Latest Scan Status */
+            latest_scan_status?: string | null;
         };
         /** FindingListResponse */
         FindingListResponse: {
@@ -1383,6 +1530,7 @@ export interface components {
              */
             source: "v_findings_current" | "finding_observations";
             counts: components["schemas"]["SeverityCounts"];
+            unverified?: components["schemas"]["SeverityCounts"] | null;
             /** Note */
             note?: string | null;
         };
@@ -1466,6 +1614,11 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /**
+         * InstanceKind
+         * @enum {string}
+         */
+        InstanceKind: "process" | "container" | "pod";
         /** InventoryTypeSummary */
         InventoryTypeSummary: {
             /** Item Type */
@@ -1479,7 +1632,7 @@ export interface components {
         InvestigationContext: {
             /**
              * Schema Version
-             * @default 1.0
+             * @default 1.1
              */
             schema_version: string;
             /** Context Id */
@@ -1508,6 +1661,10 @@ export interface components {
             alert: components["schemas"]["DetectionAlert"];
             rule: components["schemas"]["RuleMetadata"];
             asset: components["schemas"]["AssetSummary"];
+            /** Services */
+            services?: components["schemas"]["ServiceSummary"][];
+            /** Related Assets */
+            related_assets?: components["schemas"]["AssetSummary"][];
             /** Evidence */
             evidence: components["schemas"]["EventSummary"][];
             /** Timeline */
@@ -1602,6 +1759,8 @@ export interface components {
             pod_uid?: string | null;
             /** Container Name */
             container_name?: string | null;
+            /** Container Id */
+            container_id?: string | null;
             /** Node Name */
             node_name?: string | null;
             /** Workload Kind */
@@ -1635,6 +1794,11 @@ export interface components {
             /** User Agent */
             user_agent?: string | null;
         };
+        /**
+         * MonitoringStatus
+         * @enum {string}
+         */
+        MonitoringStatus: "monitored" | "degraded" | "unmonitored";
         /** Network */
         Network: {
             /** Src Ip */
@@ -1670,6 +1834,7 @@ export interface components {
             collection_health: components["schemas"]["CollectionHealthSummary"];
             /** Recent Important Alerts */
             recent_important_alerts: components["schemas"]["AlertListItem"][];
+            service_coverage: components["schemas"]["ServicesSummary"];
         };
         /** PageInfo */
         PageInfo: {
@@ -1729,6 +1894,11 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * PortAttribution
+         * @enum {string}
+         */
+        PortAttribution: "confirmed" | "inferred" | "unknown";
         /** ProcessInfo */
         ProcessInfo: {
             /** Pid */
@@ -1786,7 +1956,7 @@ export interface components {
          * RelationshipBasis
          * @enum {string}
          */
-        RelationshipBasis: "evidence" | "shared_request_id" | "shared_pod_uid" | "shared_audit_id" | "shared_commit_sha" | "shared_workflow_run" | "shared_resource" | "shared_principal" | "shared_source_ip" | "shared_nat_source_ip" | "same_asset_time_window" | "simulation_run";
+        RelationshipBasis: "evidence" | "shared_request_id" | "shared_pod_uid" | "shared_audit_id" | "shared_commit_sha" | "shared_workflow_run" | "shared_resource" | "shared_principal" | "shared_source_ip" | "shared_nat_source_ip" | "same_asset_time_window" | "same_service" | "same_service_instance" | "cross_service_same_asset" | "cross_asset" | "simulation_run";
         /**
          * RelationshipType
          * @enum {string}
@@ -2089,7 +2259,7 @@ export interface components {
         SecurityEvent: {
             /**
              * Schema Version
-             * @default 1.0
+             * @default 1.1
              */
             schema_version: string;
             /** Event Id */
@@ -2120,6 +2290,7 @@ export interface components {
             http?: components["schemas"]["HttpInfo"] | null;
             kubernetes?: components["schemas"]["KubernetesInfo"] | null;
             github?: components["schemas"]["GitHubInfo"] | null;
+            service?: components["schemas"]["ServiceRef"] | null;
             /** Message */
             message?: string | null;
             /** Attributes */
@@ -2146,6 +2317,425 @@ export interface components {
             group?: string | null;
             /** Count */
             count: number;
+        };
+        /**
+         * ServiceAuthActivity
+         * @description Authentication events attributed to the service (category ``authentication``).
+         */
+        ServiceAuthActivity: {
+            range: components["schemas"]["TimeRange"];
+            /** Total */
+            total: number;
+            /** By Outcome */
+            by_outcome: {
+                [key: string]: number;
+            };
+            /** Distinct Actors */
+            distinct_actors: number;
+            /** Distinct Sources */
+            distinct_sources: number;
+            /** Top Sources */
+            top_sources: components["schemas"]["AuthSourceActivity"][];
+        };
+        /**
+         * ServiceCategory
+         * @enum {string}
+         */
+        ServiceCategory: "ssh" | "http_server" | "web_application" | "service_manager" | "ftp" | "database" | "dns" | "cache" | "kubernetes_component" | "security_agent" | "other" | "unknown";
+        /** ServiceCoverageCounts */
+        ServiceCoverageCounts: {
+            /**
+             * Monitored
+             * @default 0
+             */
+            monitored: number;
+            /**
+             * Degraded
+             * @default 0
+             */
+            degraded: number;
+            /**
+             * Unmonitored
+             * @default 0
+             */
+            unmonitored: number;
+            /**
+             * Planned
+             * @default 0
+             */
+            planned: number;
+            /**
+             * Unsupported
+             * @default 0
+             */
+            unsupported: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+        };
+        /** ServiceDetailResponse */
+        ServiceDetailResponse: {
+            service: components["schemas"]["ServiceRecord"];
+            asset?: components["schemas"]["AssetBrief"] | null;
+            /** Instances */
+            instances: components["schemas"]["ServiceInstanceItem"][];
+            /** Instances Total */
+            instances_total: number;
+            telemetry_range: components["schemas"]["TimeRange"];
+            /** Telemetry */
+            telemetry: components["schemas"]["ServiceTelemetrySource"][];
+            auth_activity: components["schemas"]["ServiceAuthActivity"];
+            /** Recent Events */
+            recent_events: components["schemas"]["EventListItem"][];
+            /** Findings Lifecycle Available */
+            findings_lifecycle_available: boolean;
+            /** Findings */
+            findings: components["schemas"]["FindingItem"][];
+            /** Findings Total */
+            findings_total: number;
+            /** Alerts */
+            alerts: components["schemas"]["AlertListItem"][];
+            /** Alerts Total */
+            alerts_total: number;
+            alerts_range: components["schemas"]["TimeRange"];
+            /** Notes */
+            notes: string[];
+        };
+        /**
+         * ServiceEndpointView
+         * @description A port of a service. ``attribution`` states how the port was tied to the service:
+         *     ``confirmed`` (socket owner observed), ``inferred`` (configuration / well-known port),
+         *     ``unknown``. ``exposure`` derives from the bind address (``unknown`` also covers
+         *     public addresses).
+         */
+        ServiceEndpointView: {
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "tcp" | "udp";
+            /** Address */
+            address?: string | null;
+            /** Port */
+            port: number;
+            /**
+             * Exposure
+             * @enum {string}
+             */
+            exposure: "loopback" | "private" | "any" | "unknown";
+            attribution: components["schemas"]["PortAttribution"];
+            /** Attribution Basis */
+            attribution_basis?: string | null;
+        };
+        /**
+         * ServiceInstanceItem
+         * @description A process, container or Pod of a service (``v_service_instances_current``).
+         */
+        ServiceInstanceItem: {
+            /** Instance Id */
+            instance_id: string;
+            /** Service Id */
+            service_id: string;
+            /** Asset Id */
+            asset_id?: string | null;
+            instance_kind: components["schemas"]["InstanceKind"];
+            /** Instance Key */
+            instance_key: string;
+            /** Parent Instance Id */
+            parent_instance_id?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "stopped" | "pending" | "failed" | "unknown";
+            /** Pid */
+            pid?: number | null;
+            /** Process Name */
+            process_name?: string | null;
+            /** User */
+            user?: string | null;
+            /** Namespace */
+            namespace?: string | null;
+            /** Pod Name */
+            pod_name?: string | null;
+            /** Pod Uid */
+            pod_uid?: string | null;
+            /** Container Name */
+            container_name?: string | null;
+            /** Container Id */
+            container_id?: string | null;
+            /** Image */
+            image?: string | null;
+            /** Node Name */
+            node_name?: string | null;
+            /** Workload Kind */
+            workload_kind?: string | null;
+            /** Workload Name */
+            workload_name?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Observed By */
+            observed_by: string;
+            /** Stale */
+            stale: boolean;
+            /** Attributes */
+            attributes?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * ServiceKind
+         * @enum {string}
+         */
+        ServiceKind: "host_service" | "application" | "k8s_workload" | "k8s_service";
+        /** ServiceKindSummary */
+        ServiceKindSummary: {
+            service_kind: components["schemas"]["ServiceKind"];
+            coverage: components["schemas"]["ServiceCoverageCounts"];
+        };
+        /** ServiceListItem */
+        ServiceListItem: {
+            /** Service Id */
+            service_id: string;
+            /** Asset Id */
+            asset_id: string;
+            service_kind: components["schemas"]["ServiceKind"];
+            /** Service Key */
+            service_key: string;
+            /** Name */
+            name: string;
+            category: components["schemas"]["ServiceCategory"];
+            /** Product */
+            product?: string | null;
+            /** Version */
+            version?: string | null;
+            /** Discovered Via */
+            discovered_via: components["schemas"]["DiscoveryEvidence"][];
+            /** Adapter Id */
+            adapter_id?: string | null;
+            adapter_support: components["schemas"]["AdapterSupport"];
+            monitoring_status: components["schemas"]["MonitoringStatus"];
+            /**
+             * Coverage State
+             * @enum {string}
+             */
+            coverage_state: "monitored" | "degraded" | "unmonitored" | "planned" | "unsupported";
+            /** Coverage Note */
+            coverage_note?: string | null;
+            /** Coverage Reasons */
+            coverage_reasons: string[];
+            /** Telemetry Sources */
+            telemetry_sources: string[];
+            /** Endpoints */
+            endpoints: components["schemas"]["ServiceEndpointView"][];
+            /** Exposures */
+            exposures: ("any" | "unknown" | "private" | "loopback")[];
+            /** Config Refs */
+            config_refs: string[];
+            /** Instance Count */
+            instance_count?: number | null;
+            /** Last Telemetry At */
+            last_telemetry_at?: string | null;
+            /**
+             * First Seen
+             * Format: date-time
+             */
+            first_seen: string;
+            /**
+             * Last Seen
+             * Format: date-time
+             */
+            last_seen: string;
+            /** Report Age Seconds */
+            report_age_seconds: number;
+            /** Report Stale */
+            report_stale: boolean;
+            /** Present */
+            present: boolean;
+            /** Observed By */
+            observed_by: string;
+        };
+        /** ServiceListResponse */
+        ServiceListResponse: {
+            /** Items */
+            items: components["schemas"]["ServiceListItem"][];
+            page: components["schemas"]["PageInfo"];
+            summary: components["schemas"]["ServicesSummary"];
+            /**
+             * Invalid Records
+             * @default 0
+             */
+            invalid_records: number;
+        };
+        /** ServiceRecord */
+        ServiceRecord: {
+            /** Service Id */
+            service_id: string;
+            /** Asset Id */
+            asset_id: string;
+            service_kind: components["schemas"]["ServiceKind"];
+            /** Service Key */
+            service_key: string;
+            /** Name */
+            name: string;
+            category: components["schemas"]["ServiceCategory"];
+            /** Product */
+            product?: string | null;
+            /** Version */
+            version?: string | null;
+            /** Discovered Via */
+            discovered_via: components["schemas"]["DiscoveryEvidence"][];
+            /** Adapter Id */
+            adapter_id?: string | null;
+            adapter_support: components["schemas"]["AdapterSupport"];
+            monitoring_status: components["schemas"]["MonitoringStatus"];
+            /**
+             * Coverage State
+             * @enum {string}
+             */
+            coverage_state: "monitored" | "degraded" | "unmonitored" | "planned" | "unsupported";
+            /** Coverage Note */
+            coverage_note?: string | null;
+            /** Coverage Reasons */
+            coverage_reasons: string[];
+            /** Telemetry Sources */
+            telemetry_sources: string[];
+            /** Endpoints */
+            endpoints: components["schemas"]["ServiceEndpointView"][];
+            /** Exposures */
+            exposures: ("any" | "unknown" | "private" | "loopback")[];
+            /** Config Refs */
+            config_refs: string[];
+            /** Instance Count */
+            instance_count?: number | null;
+            /** Last Telemetry At */
+            last_telemetry_at?: string | null;
+            /**
+             * First Seen
+             * Format: date-time
+             */
+            first_seen: string;
+            /**
+             * Last Seen
+             * Format: date-time
+             */
+            last_seen: string;
+            /** Report Age Seconds */
+            report_age_seconds: number;
+            /** Report Stale */
+            report_stale: boolean;
+            /** Present */
+            present: boolean;
+            /** Observed By */
+            observed_by: string;
+            /** Attributes */
+            attributes?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Invalid Endpoints
+             * @default 0
+             */
+            invalid_endpoints: number;
+        };
+        /**
+         * ServiceRef
+         * @description Reference from a SecurityEvent to the service that produced it.
+         *
+         *     Set only when the producing adapter can genuinely attribute the record (e.g.
+         *     sshd journald lines → the ssh service; container log → its Pod's workload).
+         */
+        ServiceRef: {
+            /** Service Id */
+            service_id: string;
+            /** Name */
+            name: string;
+            /** Instance Id */
+            instance_id?: string | null;
+            /** Adapter Id */
+            adapter_id?: string | null;
+        };
+        /** ServiceSourceCollector */
+        ServiceSourceCollector: {
+            /** Collector Id */
+            collector_id: string;
+            /** Asset Id */
+            asset_id: string;
+            status: components["schemas"]["HealthStatus"];
+            /** Last Success At */
+            last_success_at?: string | null;
+            /** Interval Seconds */
+            interval_seconds: number;
+            /** Stale */
+            stale: boolean;
+            /** Stale Reason */
+            stale_reason?: string | null;
+        };
+        /** ServiceSummary */
+        ServiceSummary: {
+            /** Service Id */
+            service_id: string;
+            /** Asset Id */
+            asset_id: string;
+            /** Name */
+            name: string;
+            /** Service Kind */
+            service_kind: string;
+            /** Category */
+            category: string;
+            /** Adapter Support */
+            adapter_support: string;
+            /** Monitoring Status */
+            monitoring_status: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "evidence" | "related";
+        };
+        /** ServiceTelemetrySource */
+        ServiceTelemetrySource: {
+            /** Source Type */
+            source_type: string;
+            /** Declared */
+            declared: boolean;
+            /** Collectors */
+            collectors: components["schemas"]["ServiceSourceCollector"][];
+            /**
+             * Collection
+             * @enum {string}
+             */
+            collection: "fresh" | "stale" | "no_collector_health";
+            /** Events */
+            events: number;
+            /** Last Event At */
+            last_event_at?: string | null;
+            /** Last Ingested At */
+            last_ingested_at?: string | null;
+        };
+        /**
+         * ServicesSummary
+         * @description Coverage of the services in scope (present services only; tombstones apart).
+         */
+        ServicesSummary: {
+            /** Reported */
+            reported: boolean;
+            coverage: components["schemas"]["ServiceCoverageCounts"];
+            /** By Kind */
+            by_kind: components["schemas"]["ServiceKindSummary"][];
+            /** Removed */
+            removed: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Note */
+            note?: string | null;
         };
         /**
          * Severity
@@ -2229,7 +2819,7 @@ export interface components {
          * SourceType
          * @enum {string}
          */
-        SourceType: "linux.journald" | "linux.auditd" | "linux.nginx" | "linux.app" | "linux.inventory" | "linux.posture" | "macos.unified_log" | "macos.launchd" | "macos.inventory" | "macos.posture" | "k8s.audit" | "k8s.api_inventory" | "k8s.events" | "k8s.container_log" | "k8s.posture" | "github.api" | "github.posture" | "scanner.trivy" | "scanner.gitleaks" | "scanner.semgrep" | "extorq.pipeline" | "extorq.simulation";
+        SourceType: "linux.journald" | "linux.auditd" | "linux.nginx" | "linux.apache" | "linux.app" | "linux.inventory" | "linux.posture" | "macos.unified_log" | "macos.launchd" | "macos.inventory" | "macos.posture" | "k8s.audit" | "k8s.api_inventory" | "k8s.events" | "k8s.container_log" | "k8s.posture" | "github.api" | "github.posture" | "scanner.trivy" | "scanner.gitleaks" | "scanner.semgrep" | "extorq.pipeline" | "extorq.simulation";
         /** SourceTypeEventCount */
         SourceTypeEventCount: {
             /** Source Type */
@@ -2357,6 +2947,104 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_asset_services: {
+        parameters: {
+            query?: {
+                /** @description Page size (1-200). */
+                limit?: number;
+                /** @description Rows to skip (0-10000). */
+                offset?: number;
+                /** @description host_service | application | k8s_workload | k8s_service (a Kubernetes Service is never a host service). */
+                kind?: components["schemas"]["ServiceKind"] | null;
+                category?: components["schemas"]["ServiceCategory"] | null;
+                /** @description implemented | planned | none */
+                adapter_support?: components["schemas"]["AdapterSupport"] | null;
+                /** @description Status as reported by the collector (see coverage for the effective one). */
+                monitoring_status?: components["schemas"]["MonitoringStatus"] | null;
+                /** @description Effective coverage state at request time. */
+                coverage?: ("monitored" | "degraded" | "unmonitored" | "planned" | "unsupported") | null;
+                /** @description Include services no longer observed (tombstones). */
+                include_removed?: boolean;
+            };
+            header?: {
+                /** @description Signed-in console user, set by the Next.js server. */
+                "X-ExtorQ-User"?: string | null;
+                /** @description Role of the console user: `analyst` (may mutate) or `viewer` (read-only). */
+                "X-ExtorQ-Role"?: string | null;
+            };
+            path: {
+                /** @description Asset id, e.g. linux:lab-vm-01. */
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetServicesResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing/invalid bearer token or user header */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing/unsupported role or insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Dependency unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     get_overview: {
         parameters: {
             query?: never;
@@ -2596,6 +3284,8 @@ export interface operations {
                 category?: components["schemas"]["FindingCategory"] | null;
                 /** @description Lifecycle filter; requires the findings lifecycle view (else 400). */
                 state?: ("open" | "unverified" | "resolved")[] | null;
+                /** @description Filter by service id (32 hex, schema 1.1). */
+                service_id?: string | null;
             };
             header?: {
                 /** @description Signed-in console user, set by the Next.js server. */
@@ -2839,6 +3529,8 @@ export interface operations {
                 open_only?: boolean;
                 simulation_run_id?: string | null;
                 sort?: "last_seen" | "first_seen" | "severity";
+                /** @description Filter by service id (32 hex, schema 1.1). */
+                service_id?: string | null;
             };
             header?: {
                 /** @description Signed-in console user, set by the Next.js server. */
@@ -3370,6 +4062,8 @@ export interface operations {
                 /** @description Exact IP (also matches k8s source IPs). */
                 src_ip?: string | null;
                 simulation_run_id?: string | null;
+                /** @description Filter by service id (32 hex, schema 1.1). */
+                service_id?: string | null;
             };
             header?: {
                 /** @description Signed-in console user, set by the Next.js server. */
@@ -3728,6 +4422,181 @@ export interface operations {
             };
             /** @description Missing/unsupported role or insufficient role */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Dependency unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_services: {
+        parameters: {
+            query?: {
+                /** @description Page size (1-200). */
+                limit?: number;
+                /** @description Rows to skip (0-10000). */
+                offset?: number;
+                /** @description Filter by asset id. */
+                asset_id?: string | null;
+                /** @description host_service | application | k8s_workload | k8s_service (a Kubernetes Service is never a host service). */
+                kind?: components["schemas"]["ServiceKind"] | null;
+                category?: components["schemas"]["ServiceCategory"] | null;
+                /** @description implemented | planned | none */
+                adapter_support?: components["schemas"]["AdapterSupport"] | null;
+                /** @description Status as reported by the collector (see coverage for the effective one). */
+                monitoring_status?: components["schemas"]["MonitoringStatus"] | null;
+                /** @description Effective coverage state at request time. */
+                coverage?: ("monitored" | "degraded" | "unmonitored" | "planned" | "unsupported") | null;
+                /** @description Include services no longer observed (tombstones). */
+                include_removed?: boolean;
+            };
+            header?: {
+                /** @description Signed-in console user, set by the Next.js server. */
+                "X-ExtorQ-User"?: string | null;
+                /** @description Role of the console user: `analyst` (may mutate) or `viewer` (read-only). */
+                "X-ExtorQ-Role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceListResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing/invalid bearer token or user header */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing/unsupported role or insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Dependency unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_service: {
+        parameters: {
+            query?: {
+                /** @description Inclusive lower bound, ISO-8601 with timezone (e.g. 2026-11-21T10:00:00Z). */
+                since?: string | null;
+                /** @description Exclusive upper bound, ISO-8601 with timezone. */
+                until?: string | null;
+            };
+            header?: {
+                /** @description Signed-in console user, set by the Next.js server. */
+                "X-ExtorQ-User"?: string | null;
+                /** @description Role of the console user: `analyst` (may mutate) or `viewer` (read-only). */
+                "X-ExtorQ-Role"?: string | null;
+            };
+            path: {
+                /** @description 32-hex service id. */
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceDetailResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing/invalid bearer token or user header */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing/unsupported role or insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

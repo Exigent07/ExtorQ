@@ -9,6 +9,7 @@ import { AlertRows } from "@/components/views/alerts/alert-rows";
 import { CollectionHealthPanel } from "@/components/views/overview/collection-health";
 import { CoverageLanes } from "@/components/views/overview/coverage-lanes";
 import { PosturePanel } from "@/components/views/overview/posture-panel";
+import { ServiceCoveragePanel } from "@/components/views/overview/service-coverage";
 import { SeverityLanes } from "@/components/views/overview/severity-lanes";
 import type { OverviewResponse } from "@/lib/api/schemas";
 import { assetTypeLabel, formatCount, formatDuration } from "@/lib/format";
@@ -35,7 +36,7 @@ function finding(data: OverviewResponse): string {
     for (const c of unhealthy.slice(0, 2)) {
       parts.push(`${assetTypeLabel(c.asset_type)} coverage ${c.status}`);
     }
-  if (unhealthy.length > 2) parts.push(`${unhealthy.length - 2} more classes degraded`);
+  if (unhealthy.length > 2) parts.push(`${unhealthy.length - 2} more class${unhealthy.length - 2 === 1 ? "" : "es"} need attention`);
   return parts.join(" · ");
 }
 
@@ -65,6 +66,7 @@ export default async function OverviewPage() {
       <PageHeader title="Overview" finding={finding(data)} actions={<Freshness at={result.receivedAt} />} />
       <div className="grid gap-6">
         <CoverageLanes coverage={data.asset_coverage} now={now} />
+        <ServiceCoveragePanel summary={data.service_coverage} />
 
         <div className="grid gap-6 xl:grid-cols-3">
           <Panel
@@ -88,7 +90,7 @@ export default async function OverviewPage() {
           <PosturePanel summary={data.open_findings} />
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-3">
+        <div className="grid items-start gap-6 xl:grid-cols-3">
           <Panel
             titleId="recent-alerts-title"
             title="Recent important alerts"

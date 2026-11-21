@@ -1,0 +1,75 @@
+# Native macOS endpoint collector (owner: B3). No secrets in this file: the
+# gateway token is read from var/secrets/tokens/macos-workstation-01.token.
+# Field reference and data-minimisation decisions: docs/telemetry/macos.md.
+collectors:
+  - collector_id: macos-workstation-01
+    producer_id: macos-workstation-01
+    asset_id: macos:workstation-01
+    module: extorq_collectors.macos.collector:MacOSCollector
+    # The runner calls the collector every 60 s; each source below runs when due.
+    interval_seconds: 60
+    enabled: true
+    settings:
+      unified_log:
+        enabled: true
+        interval_seconds: 60
+        # Names only; predicates are fixed in code (unified_log.PRODUCERS).
+        producers:
+          - sudo
+          - sshd
+          - screensharing
+          - opendirectory_auth
+          - authorization
+          - screen_lock
+          - xprotect
+          - gatekeeper
+        initial_lookback_seconds: 900
+        overlap_seconds: 10
+        settle_seconds: 5
+        max_window_seconds: 900
+        max_backfill_seconds: 86400
+        max_records_per_cycle: 5000
+        max_output_bytes: 33554432
+        command_timeout_seconds: 120
+        resolve_generated_uid: true
+      launchd:
+        enabled: true
+        interval_seconds: 60
+        full_inventory_seconds: 3600
+        # Known-legitimate labels: events are STILL emitted, with attributes.allowlisted=true.
+        allowlist:
+          - "homebrew.mxcl.*"
+          - "sh.brew.*"
+          - "com.docker.*"
+          - "com.google.keystone.*"
+          - "com.google.GoogleUpdater.*"
+      inventory:
+        enabled: true
+        interval_seconds: 300
+        include_udp: true
+        include_process_args: false
+        verify_executable_paths: true
+        accounts: true
+        full_inventory_seconds: 3600
+        command_timeout_seconds: 30
+      services:
+        enabled: true
+        stale_after_seconds: 600
+      posture:
+        enabled: true
+        interval_seconds: 300
+        max_admin_accounts: 1
+        os_update_medium_after_days: 14
+        command_timeout_seconds: 20
+      applications:
+        enabled: true
+        interval_seconds: 3600
+        command_timeout_seconds: 180
+      asset:
+        name: workstation-01
+        # hostname is reported only when set here (the collector never reads it).
+        hostname: null
+        environment: lab
+        criticality: medium
+        interval_seconds: 300
+        refresh_seconds: 900

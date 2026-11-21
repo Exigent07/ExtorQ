@@ -1,0 +1,38 @@
+{
+ "gitleaks-dir-lab-repo.json": {
+  "target": "gitleaks-lab-repo",
+  "trimmed": false
+ },
+ "linux-inventory-units.json": {
+  "source": "dispatch inventory",
+  "trimmed": "only type + systemd_units (name, unit_dir, role, kind, symlink_target, exists) kept"
+ },
+ "linux-packages-dispatch.json": {
+  "source": "dispatch packages",
+  "trimmed": false
+ },
+ "semgrep-lab-repo.json": {
+  "target": "semgrep-lab-repo",
+  "trimmed": false
+ },
+ "trivy-config-kind.json": {
+  "target": "trivy-kind-config",
+  "trimmed": false
+ },
+ "trivy-fs-lab-repo.json": {
+  "target": "trivy-lab-repo",
+  "trimmed": false
+ },
+ "trivy-image-lab-portal.json": {
+  "target": "trivy-lab-portal-image",
+  "trimmed": "os-pkgs vulnerabilities of sources glibc(6 ids), openssl(6), systemd(4) and the packages they reference; lang-pkgs result complete"
+ },
+ "trivy-image-otel.json": {
+  "target": "trivy-otel-collector-image",
+  "trimmed": "Packages list cut to the first 10 + vulnerable ones; vulnerabilities complete"
+ },
+ "trivy-sbom-linux-vm.json": {
+  "target": "linux-vm-packages",
+  "trimmed": "os-pkgs vulnerabilities of sources linux (first 4 ids, all binaries), openssh, sudo, openssl, glibc (all ids) and the packages they reference"
+ }
+}

@@ -182,7 +182,37 @@ def _scope_assignments(scope: ast.AST) -> dict[str, list[ast.AST]]:
             found.setdefault(node.target.id, []).append(
                 ast.BinOp(left=ast.Constant(value=""), op=node.op, right=node.value)
             )
+        elif isinstance(node, ast.For | ast.AsyncFor) and isinstance(node.target, ast.Name):
+            # `for table in ALLOWED_TABLES:` binds `table` to elements of the iterable.
+            # The iterable itself stands in for the element: a module constant
+            # (UPPER_CASE) is static, anything else (a parameter, a call) stays dynamic.
+            found.setdefault(node.target.id, []).append(node.iter)
     return found
+
+
+def enclosing_function(tree: ast.Module, line: int) -> str:
+    """Qualified name (``Class.method``) of the innermost def containing ``line``.
+
+    Used to key reviewed exceptions by function instead of by line number, so
+    unrelated edits that shift lines do not invalidate a review.
+    """
+    best: tuple[int, str] = (-1, "<module>")
+
+    def visit(node: ast.AST, prefix: str, depth: int) -> None:
+        nonlocal best
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+                name = f"{prefix}{child.name}"
+                start, end = child.lineno, child.end_lineno or child.lineno
+                if start <= line <= end:
+                    if not isinstance(child, ast.ClassDef) and depth >= best[0]:
+                        best = (depth, name)
+                    visit(child, f"{name}.", depth + 1)
+            else:
+                visit(child, prefix, depth)
+
+    visit(tree, "", 0)
+    return best[1]
 
 
 def _pragma_lines(source_lines: list[str]) -> dict[int, str]:
@@ -300,8 +330,36 @@ def check_shell_usage(tree: ast.Module) -> list[Finding]:
             value = keyword.value
             if isinstance(value, ast.Constant) and value.value in (False, None, 0):
                 continue
-            findings.append((node.lineno, "shell= must be False (use argument lists)"))
+            literal_true = isinstance(value, ast.Constant) and value.value is True
+            # A non-literal shell= only matters on process-spawning calls; elsewhere
+            # ``shell`` is ordinary data (e.g. a user's login shell). Wrappers that pass
+            # it through are caught at their inner subprocess call.
+            if literal_true or _is_process_call(name, node.func):
+                findings.append((node.lineno, "shell= must be False (use argument lists)"))
     return findings
+
+
+_PROCESS_CALLS = frozenset(
+    {
+        "run",
+        "Popen",
+        "call",
+        "check_call",
+        "check_output",
+        "create_subprocess_exec",
+        "create_subprocess_shell",
+        "spawn",
+        "run_fixed",
+        "run_command",
+    }
+)
+
+
+def _is_process_call(dotted: str, func: ast.AST) -> bool:
+    if dotted.startswith(("subprocess.", "asyncio.", "os.")):
+        return True
+    last = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    return last in _PROCESS_CALLS
 
 
 _SAFE_YAML_LOADERS = {"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader"}

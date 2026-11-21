@@ -1,18 +1,20 @@
-"use client";
-
 import { cn } from "cn";
 import { TriangleAlert } from "lucide-react";
-import { useId, useState } from "react";
 
 import { DASH } from "@/lib/format";
 import { sanitizeForDisplay, truncateText } from "@/lib/security/display";
+
+import { ExpandableText } from "./expandable-text";
 
 /**
  * Renders attacker-controlled telemetry as plain text only.
  *
  * - React text nodes (never HTML); URLs inside the text are not linkified.
- * - Bidi overrides, zero-width and control characters become visible ⟨U+XXXX⟩ markers.
- * - Long values are truncated with an accessible expand control.
+ * - Bidi overrides, zero-width, tag and control characters become visible ⟨U+XXXX⟩ markers.
+ * - Long values are truncated, with an accessible expand control.
+ *
+ * Isomorphic on purpose (no "use client"): in server components it renders on the server,
+ * and only values that need the expand control ship a small client component.
  */
 export function UntrustedText({
   value,
@@ -27,37 +29,19 @@ export function UntrustedText({
   mono?: boolean;
   className?: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const textId = useId();
   if (value === null || value === undefined || value === "") {
     return <span className="text-muted-foreground">{DASH}</span>;
   }
   const { text, replaced } = sanitizeForDisplay(value, multiline);
   const { text: short, truncated } = truncateText(text, limit);
-  const shown = expanded ? text : short;
+  const textClass = cn(
+    multiline ? "whitespace-pre-wrap" : "",
+    "break-words [overflow-wrap:anywhere]",
+    mono && "font-mono text-xs",
+  );
   return (
     <span className={cn("min-w-0", className)}>
-      <span
-        id={textId}
-        className={cn(
-          multiline ? "whitespace-pre-wrap" : "",
-          "break-words [overflow-wrap:anywhere]",
-          mono && "font-mono text-xs",
-        )}
-      >
-        {shown}
-      </span>
-      {truncated ? (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={textId}
-          onClick={() => setExpanded((v) => !v)}
-          className="ml-1.5 inline whitespace-nowrap text-xs text-muted-foreground underline-offset-2 hover:text-ink hover:underline"
-        >
-          {expanded ? "Show less" : `Show all ${Array.from(text).length} characters`}
-        </button>
-      ) : null}
+      {truncated ? <ExpandableText short={short} full={text} className={textClass} /> : <span className={textClass}>{text}</span>}
       {replaced > 0 ? (
         <span
           className="ml-1.5 inline-flex items-center gap-1 align-middle text-xs whitespace-nowrap text-warn"

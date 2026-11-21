@@ -1,0 +1,26 @@
+[
+ {
+  "Author": "",
+  "Commit": "",
+  "Date": "",
+  "Description": "ExtorQ lab synthetic test secret (EXTORQ_TEST_SECRET_ + 24 upper-case alphanumerics)",
+  "Email": "",
+  "EndColumn": 56,
+  "EndLine": 9,
+  "Entropy": 4.4325657,
+  "File": "/src/deploy/legacy-staging.conf",
+  "Fingerprint": "/src/deploy/legacy-staging.conf:extorq-test-secret:[REDACTED:secret]",
+  "Match": "REDACTED",
+  "Message": "",
+  "RuleID": "extorq-test-secret",
+  "Secret": "REDACTED",
+  "StartColumn": 14,
+  "StartLine": 9,
+  "SymlinkFile": "",
+  "Tags": [
+   "extorq",
+   "lab",
+   "synthetic"
+  ]
+ }
+]

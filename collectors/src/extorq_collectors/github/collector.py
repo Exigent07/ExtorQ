@@ -19,6 +19,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
+import httpx
+
 from extorq_collectors import __version__
 from extorq_collectors.github.client import (
     GitHubClient,
@@ -49,8 +51,10 @@ class GitHubCollector(Collector):
     source_types: ClassVar[tuple[str, ...]] = ("github.api",)
     collector_version: ClassVar[str] = __version__
 
-    def __init__(self) -> None:
+    def __init__(self, *, transport: httpx.BaseTransport | None = None) -> None:
         self._workflow_cache: dict[str, WorkflowAnalysis] = {}
+        #: Test seam (httpx.MockTransport); production uses the default HTTPS transport.
+        self._transport = transport
 
     def setup(self, ctx: CollectorContext) -> None:
         GitHubCollectorConfig.from_mapping(ctx.config)  # fail fast on invalid settings
@@ -72,10 +76,13 @@ class GitHubCollector(Collector):
         reports: list[PollReport] = []
         failure: str | None = None
         rate_limited_until: float | None = None
+        timeout = cfg.request_timeout_seconds
         with GitHubClient(
             token.value,
             base_url=cfg.api_base_url,
+            timeout=httpx.Timeout(timeout, connect=min(10.0, timeout), pool=min(10.0, timeout)),
             max_rate_limit_wait=cfg.max_rate_limit_wait_seconds,
+            transport=self._transport,
         ) as client:
             for repo_cfg in cfg.repos:
                 key = checkpoint_key(repo_cfg.full_name)
@@ -121,7 +128,11 @@ class GitHubCollector(Collector):
             )
         if rate_limited_until is not None:
             details["rate_limited_until"] = iso(datetime.fromtimestamp(rate_limited_until, UTC))
-        gaps = [f"{r.repo}: {name}: {reason}" for r in reports for name, reason in sorted(r.gaps.items())]
+        gaps = [
+            f"{r.repo}: {name}: {reason}"
+            for r in reports
+            for name, reason in sorted(r.gaps.items())
+        ]
         errors = [f"{r.repo}: {error}" for r in reports for error in r.errors]
         warnings.extend(f"{r.repo}: {w}" for r in reports for w in r.warnings)
         details.update(

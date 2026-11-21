@@ -1,0 +1,151 @@
+# ExtorQ scanner runner configuration (owner: C3). Contains NO secrets.
+# Used by `extorq-scan` (scanners/src/extorq_scanners/cli.py); documented in
+# docs/telemetry/scanners.md. Paths are relative to the repository root and are
+# confined to it. Changing a target's mode/paths/image repository/scanners/rulesets
+# or description changes its lifecycle scope hash (see `extorq-scan list`).
+version: 1
+producer_id: scanner-runner
+work_dir: var/cache/scanners
+state_dir: var/state/scanners
+emit_health: true
+
+gateway:
+  url: https://127.0.0.1:8443
+  # Read at runtime, never logged (0600 file created by `make bootstrap`).
+  token_file: var/secrets/tokens/scanner-runner.token
+  ca_file: var/tls/ca.crt
+  timeout_seconds: 30
+
+docker:
+  binary: docker
+  container_prefix: extorq-c3-scan
+  memory: 3g
+  cpus: "4"
+  pids_limit: 512
+  tmpfs_mb: 512
+  # Semgrep publishes linux/amd64 images only (runs emulated on Apple Silicon).
+  semgrep_platform: linux/amd64
+
+# Pinned by digest; scans run with --pull never.
+images:
+  trivy: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+  gitleaks: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  semgrep: semgrep/semgrep:1.184.0@sha256:cc1b68266f267878b39739373ea9985b9a78e5d64497dd875c8de100b22695ed
+
+trivy:
+  cache_dir: var/cache/trivy
+  db_max_age_hours: 24
+  timeout_seconds: 900
+  db_update_timeout_seconds: 900
+  max_output_mb: 128
+
+gitleaks:
+  config_file: scanners/rules/gitleaks/extorq-gitleaks.toml
+  timeout_seconds: 600
+  max_output_mb: 16
+  max_target_megabytes: 10
+  default_severity: high
+  severity_overrides:
+    extorq-test-secret: medium
+
+semgrep:
+  timeout_seconds: 1200
+  max_output_mb: 64
+  per_rule_timeout_seconds: 30
+  max_target_bytes: 1000000
+  jobs: 4
+  registry_url: https://semgrep.dev/c/
+  cache_dir: var/cache/semgrep
+  fetch_timeout_seconds: 30
+  rulesets:
+    python:
+      # Fetched host-side (HTTPS, cached in var/cache/semgrep, never committed); the
+      # semgrep container itself runs with --network none and --metrics=off.
+      name: p/python
+      source: registry
+      registry_id: p/python
+      max_age_hours: 168
+
+inventory:
+  # B1's collector config holding the `ssh:` block; defaults (127.0.0.1:2222,
+  # var/vm/keys/extorq-collector, var/vm/known_hosts) apply when absent.
+  linux_collector_config: config/collectors/linux.yaml
+  timeout_seconds: 180
+
+targets:
+  # ── GitHub lab repository content (asset github:exigent07/extorq-lab) ──────────
+  - name: trivy-lab-repo
+    kind: trivy
+    mode: fs
+    asset_id: github:exigent07/extorq-lab
+    paths: [lab/github-repo]
+    scanners: [vuln, misconfig]
+  - name: gitleaks-lab-repo
+    kind: gitleaks
+    mode: dir
+    asset_id: github:exigent07/extorq-lab
+    paths: [lab/github-repo]
+  - name: semgrep-lab-repo
+    kind: semgrep
+    mode: scan
+    asset_id: github:exigent07/extorq-lab
+    paths: [lab/github-repo]
+    rulesets: [python]
+  # Full git history of the real lab repository once it has been cloned here
+  # (planned: the clone is created by the operator; skipped while absent).
+  - name: gitleaks-lab-repo-history
+    kind: gitleaks
+    mode: git
+    asset_id: github:exigent07/extorq-lab
+    paths: [var/cache/scanners/repos/extorq-lab]
+    when_missing: skip
+
+  # ── Kind cluster extorq-lab (asset k8s:extorq-lab) ─────────────────────────────
+  # The manifests as APPLIED: kind.sh renders templated manifests (image placeholders
+  # such as __LAB_PORTAL_IMAGE__) into var/kind/; placeholder-free ones are applied from
+  # infra/kind/manifests. Scanning templates would report placeholder artefacts (e.g.
+  # KSV-0013 ":latest") that are not deployed. 90-netcheck-pod is a short-lived
+  # diagnostic pod (kind.sh netcheck deletes it) and is not part of the standing posture.
+  - name: trivy-kind-config
+    kind: trivy
+    mode: config
+    asset_id: k8s:extorq-lab
+    paths:
+      - infra/kind/manifests/00-namespaces.yaml
+      - infra/kind/manifests/10-inventory-rbac.yaml
+      - infra/kind/manifests/20-otel-rbac.yaml
+      - var/kind/21-otel-daemonset.yaml
+      - var/kind/30-lab-portal.yaml
+      - var/kind/40-posture-lab.yaml
+      - infra/kind/apps/lab-portal/Dockerfile
+  - name: trivy-lab-portal-image
+    kind: trivy
+    mode: image
+    asset_id: k8s:extorq-lab
+    # Content-hashed tags (infra/kind/kind.sh): scan the newest local build.
+    image: extorq/lab-portal
+    image_select: newest
+    scanners: [vuln]
+    when_missing: skip
+  - name: trivy-otel-collector-image
+    kind: trivy
+    mode: image
+    asset_id: k8s:extorq-lab
+    image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
+    scanners: [vuln]
+    when_missing: skip
+
+  # ── Ubuntu 24.04 VM (asset linux:lab-vm-01) ────────────────────────────────────
+  - name: linux-vm-packages
+    kind: linux-packages
+    mode: sbom
+    asset_id: linux:lab-vm-01
+    # Package -> systemd unit it ships. Applied only when the unit is present and
+    # unmasked in the VM's unit inventory collected during the same scan.
+    service_attribution:
+      - packages: [openssh-server, openssh-sftp-server]
+        unit: ssh.service
+      - packages: [nginx, nginx-common, nginx-core]
+        unit: nginx.service
+      - packages: [auditd]
+        unit: auditd.service

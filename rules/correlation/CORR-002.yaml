@@ -1,0 +1,139 @@
+rule_id: CORR-002
+version: 1.1.0
+title: Ordered HTTP probing, SSH failures and systemd persistence on one host
+description: >-
+  Multi-stage sequence on one Linux host, in this order within 30 minutes: (1) HTTP probing
+  (at least 10 client-error responses to one source, including at least 5 distinct
+  probe-like routes, within 5 minutes), (2) SSH authentication failures (at least 3 failed
+  connections or 5 failed attempts from one source within 5 minutes), (3) an unexpected
+  systemd persistence change (unit created, modified or enabled outside the allowlist, or an
+  auditd write to a watched unit path). The rule shows ordered co-occurrence of independent
+  observations across three services (web server, sshd, systemd); it does not establish
+  that one stage caused the next or that one actor performed all of them.
+severity: high
+status: experimental
+mitre_techniques: [T1595.003, T1110, T1543.002]
+asset_types: [linux_host]
+requires:
+  # Apache (linux.apache) and lab-app (linux.app) access lines are also accepted by the SQL
+  # when present; only nginx is deployed in the lab, so only nginx is a declared requirement.
+  - source_type: linux.nginx
+    event_types: [http.request]
+  - source_type: linux.journald
+    event_types:
+      - auth.ssh.login_failed
+      - auth.ssh.invalid_user
+      - auth.ssh.preauth_closed
+      - auth.ssh.max_auth_exceeded
+  - source_type: linux.inventory
+    event_types:
+      - persistence.systemd.unit_created
+      - persistence.systemd.unit_modified
+      - persistence.systemd.unit_enabled
+  - source_type: linux.auditd
+    event_types: [file.audit.watch]
+    optional: true
+schedule:
+  interval_seconds: 120
+  lookback_seconds: 2700
+  late_tolerance_seconds: 900
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 1800
+group_by: [asset_id]
+params:
+  sequence_seconds: 1800
+  probe_window_seconds: 300
+  probe_min_requests: 10
+  probe_min_routes: 5
+  # Paths typically requested by scanners/exploit probes (RE2, case-insensitive).
+  probe_route_pattern: >-
+    (?i)(\.env|\.git|\.svn|\.aws|\.ssh|\.ht(access|passwd)|wp-|wordpress|phpmyadmin|xmlrpc|cgi-bin|server-status|actuator|/admin|/manager|/console|/shell|/backup|/config|/debug|/vendor/|/etc/passwd|\.\./|\.php|\.asp|\.jsp|/solr|/jenkins|/boaform|/hnap1|/owa|/remote/|/druid|/telescope)
+  ssh_window_seconds: 300
+  ssh_min_connections: 3
+  ssh_min_failures: 5
+  audit_key: extorq_systemd
+  # auditd watch hits that remove a file (e.g. a cleanup) are not persistence.
+  deletion_syscalls: [unlink, unlinkat, rmdir]
+  allowlist_paths: []
+  # Addresses that aggregate many origins: a shared source IP through them is not identity.
+  shared_nat_ips: ["10.0.2.2", "172.18.0.1", "127.0.0.1", "::1"]
+false_positives:
+  - >-
+    Unrelated activity that happens to line up: an internet scanner probing the web server,
+    a different client mistyping an SSH password and an administrator installing a service
+    within the same half hour. The confidence stays low unless the probing and the SSH
+    failures share a source IP that is not a shared NAT address, and even then a shared
+    IP is not proof of one actor.
+  - >-
+    Penetration tests and vulnerability scans that cover web and SSH, followed by planned
+    maintenance; check the persistence change against change records.
+  - >-
+    In this lab every connection from the Mac host reaches the VM from the QEMU gateway
+    10.0.2.2, so a shared source IP there carries no identity (confidence low).
+blind_spots:
+  - >-
+    Sequences slower than 30 minutes, probing below the thresholds, or SSH failures below
+    the thresholds (each stage alone is covered by HTTP/VM-001 style rules).
+  - >-
+    Persistence other than systemd units (cron, shell profiles, SSH keys) and changes the
+    inventory diff misses between snapshots without an auditd watch hit.
+  - >-
+    Web servers whose access logs are not collected (only nginx, Apache and the lab app are
+    parsed), probing over TLS-terminating proxies that hide the client address, and SSH on
+    hosts without journald collection.
+  - A stage that happened before the evaluation lookback (45 minutes) is not considered.
+references:
+  - https://attack.mitre.org/techniques/T1595/003/
+  - https://attack.mitre.org/techniques/T1110/
+  - https://attack.mitre.org/techniques/T1543/002/
+  - https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions#windowfunnel
+query: CORR-002.sql
+summary_template: >-
+  Ordered sequence on {asset_id}: HTTP probing from {probe_src_ips} ({probe_requests} client
+  errors, {probe_routes_distinct} probe-like routes), then SSH failures from {ssh_src_ips}
+  ({ssh_failed_connections} connections), then systemd change of {units} within
+  {sequence_seconds}s; same non-NAT source IP: {same_non_nat_source_ip}; shared NAT/gateway
+  address involved: {source_ip_shared_nat}; ordered co-occurrence, not proof of causation
+  ({confidence} confidence)
+tests:
+  - name: ordered-sequence-same-external-source
+    description: >-
+      Probing, SSH failures and a new unit from one documentation-range address within
+      20 minutes, corroborated by auditd.
+    fixture: tests/CORR-002/positive_same_external_source.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: ordered-sequence-through-qemu-nat
+    description: The same sequence arriving from the QEMU gateway 10.0.2.2 (simulation-tagged).
+    fixture: tests/CORR-002/positive_nat_gateway_sim.jsonl
+    expect: alert
+    alerts: 1
+    confidence: low
+  - name: different-sources
+    description: Probing and SSH failures from two different external addresses, then a unit.
+    fixture: tests/CORR-002/positive_different_sources.jsonl
+    expect: alert
+    alerts: 1
+    confidence: low
+  - name: wrong-order
+    description: The unit is created before the SSH failures (persistence first).
+    fixture: tests/CORR-002/negative_wrong_order.jsonl
+    expect: no_alert
+  - name: too-slow
+    description: The persistence change happens 40 minutes after the probing.
+    fixture: tests/CORR-002/negative_too_slow.jsonl
+    expect: no_alert
+  - name: missing-persistence-and-baseline
+    description: Probing and SSH failures, but only a baseline-snapshot unit event.
+    fixture: tests/CORR-002/negative_missing_stage_baseline.jsonl
+    expect: no_alert
+  - name: below-probe-threshold
+    description: Four probe-like 404s only, then SSH failures and a new unit.
+    fixture: tests/CORR-002/negative_below_probe_threshold.jsonl
+    expect: no_alert
+  - name: deletion-is-not-persistence
+    description: Probing and SSH failures followed only by an auditd unlinkat of a unit file.
+    fixture: tests/CORR-002/negative_deletion_only.jsonl
+    expect: no_alert

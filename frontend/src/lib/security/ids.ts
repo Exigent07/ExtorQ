@@ -50,3 +50,8 @@ export function assetHref(assetId: string): string {
 export function investigationHref(alertId: string): string | null {
   return isHexId(alertId) ? `/investigations/${alertId}` : null;
 }
+
+/** Console URL of a service. Returns null for ids that are not valid service ids. */
+export function serviceHref(serviceId: string): string | null {
+  return isHexId(serviceId) ? `/services/${serviceId}` : null;
+}

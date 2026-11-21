@@ -82,6 +82,10 @@ AssetIdPath = Annotated[
 AssetIdQuery = Annotated[
     str | None, Query(pattern=ASSET_ID_PATTERN, description="Filter by asset id.")
 ]
+ServiceIdQuery = Annotated[
+    str | None,
+    Query(pattern=HEX_ID_PATTERN, description="Filter by service id (32 hex, schema 1.1)."),
+]
 
 
 def now_ms(clock: Callable[[], datetime]) -> datetime:

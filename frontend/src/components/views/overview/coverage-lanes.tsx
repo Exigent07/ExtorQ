@@ -26,7 +26,11 @@ function sortCoverage(items: AssetClassCoverage[]): AssetClassCoverage[] {
  * the status in words, then the counts that justify it.
  */
 export function CoverageLanes({ coverage, now }: { coverage: AssetClassCoverage[]; now: string }) {
-  const lanes = sortCoverage(coverage.filter((c) => c.expected || c.assets_total > 0));
+  // The four monitored classes get a lane each; other reported classes (e.g. GitHub accounts
+  // that own the monitored repositories) are summarised in one line under the lanes.
+  const expected = coverage.filter((c) => c.expected);
+  const lanes = sortCoverage(expected.length > 0 ? expected : coverage.filter((c) => c.assets_total > 0));
+  const extra = coverage.filter((c) => !lanes.includes(c) && c.assets_total > 0);
   return (
     <section aria-labelledby="coverage-title" className="rounded-md border border-border bg-surface">
       <header className="flex items-center justify-between gap-4 px-5 pt-4 pb-1">
@@ -91,6 +95,14 @@ export function CoverageLanes({ coverage, now }: { coverage: AssetClassCoverage[
           );
         })}
       </ol>
+      {extra.length > 0 ? (
+        <p className="border-t border-border px-5 py-2.5 text-xs text-muted-foreground">
+          Also reported:{" "}
+          {extra
+            .map((c) => `${assetTypeLabel(c.asset_type)} ${formatCount(c.assets_total)} (${COVERAGE[c.status].label.toLowerCase()})`)
+            .join(" · ")}
+        </p>
+      ) : null}
     </section>
   );
 }

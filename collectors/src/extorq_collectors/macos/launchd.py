@@ -43,14 +43,15 @@ from extorq.contracts import (
     Outcome,
     Resource,
     SecurityEvent,
+    ServiceRef,
     SourceType,
 )
 from extorq_collectors.macos.common import (
     SourceContext,
     bounded_attributes,
+    launchd_simulation_tag,
     make_event,
     redact_list,
-    simulation_tag,
     to_ms,
 )
 
@@ -76,6 +77,62 @@ def default_locations(home: Path | None = None) -> list[Location]:
         Location(Path("/Library/LaunchAgents"), "system", "agent"),
         Location(Path("/Library/LaunchDaemons"), "system", "daemon"),
     ]
+
+
+MAX_SOCKET_SPECS = 16
+
+
+@dataclass(frozen=True, slots=True)
+class SocketSpec:
+    """One ``Sockets`` entry of a launchd job: launchd itself holds this socket
+    and starts the job on demand (socket activation)."""
+
+    name: str
+    #: SockServiceName: a service name from /etc/services ("ssh") or a port number.
+    service: str | None
+    #: SockNodeName: bind host ("localhost", an address); None = all addresses.
+    node: str | None
+    #: SockType: stream (TCP) | dgram (UDP) | seqpacket.
+    sock_type: str
+    #: SockFamily: IPv4 | IPv6 | Unix; None = both IPv4 and IPv6.
+    family: str | None
+    #: SockPathName for Unix domain sockets (not a network endpoint).
+    path: str | None
+
+    def render(self) -> str:
+        if self.path:
+            return f"unix:{self.path}"
+        proto = "udp" if self.sock_type == "dgram" else "tcp"
+        family = f"/{self.family}" if self.family else ""
+        return f"{proto}{family}:{self.node or '*'}:{self.service or '?'}"
+
+
+def parse_sockets(value: Any) -> list[SocketSpec]:
+    """Parse the ``Sockets`` dictionary (values are a dict or a list of dicts)."""
+    if not isinstance(value, dict):
+        return []
+    specs: list[SocketSpec] = []
+    for name, entry in sorted(value.items(), key=lambda kv: str(kv[0])):
+        entries = entry if isinstance(entry, list) else [entry]
+        for spec in entries:
+            if not isinstance(spec, dict) or len(specs) >= MAX_SOCKET_SPECS:
+                continue
+            service = spec.get("SockServiceName")
+            if isinstance(service, int) and not isinstance(service, bool):
+                service = str(service)
+            sock_type = spec.get("SockType")
+            family = spec.get("SockFamily")
+            specs.append(
+                SocketSpec(
+                    name=str(name)[:128],
+                    service=service[:64] if isinstance(service, str) and service else None,
+                    node=_str_or_none(spec.get("SockNodeName")),
+                    sock_type=sock_type if isinstance(sock_type, str) and sock_type else "stream",
+                    family=family if isinstance(family, str) and family else None,
+                    path=_str_or_none(spec.get("SockPathName")),
+                )
+            )
+    return specs
 
 
 @dataclass(slots=True)
@@ -104,6 +161,7 @@ class LaunchItem:
     session_types: list[str] = field(default_factory=list)
     env_var_names: list[str] = field(default_factory=list)
     sockets: bool | None = None
+    socket_specs: list[SocketSpec] = field(default_factory=list)
     mach_services: int | None = None
     bundle_ids: list[str] = field(default_factory=list)
     parse_error: str | None = None
@@ -144,6 +202,7 @@ class LaunchItem:
                 "session_types": self.session_types or None,
                 "env_var_names": self.env_var_names or None,
                 "sockets": self.sockets,
+                "socket_listeners": [s.render() for s in self.socket_specs] or None,
                 "mach_services": self.mach_services,
                 "bundle_ids": self.bundle_ids or None,
                 "sha256": self.sha256,
@@ -221,6 +280,7 @@ def apply_plist(item: LaunchItem, data: Mapping[str, Any]) -> None:
         # Names only: values frequently carry credentials.
         item.env_var_names = sorted(k for k in env if isinstance(k, str))[:32]
     item.sockets = True if isinstance(data.get("Sockets"), dict) else None
+    item.socket_specs = parse_sockets(data.get("Sockets"))
     mach = data.get("MachServices")
     item.mach_services = len(mach) if isinstance(mach, dict) else None
     bundles = data.get("AssociatedBundleIdentifiers")
@@ -412,7 +472,12 @@ _EVENT_TYPE = {
 
 
 def change_to_event(
-    change: Change, ctx: SourceContext, *, observed_at: datetime, snapshot: str
+    change: Change,
+    ctx: SourceContext,
+    *,
+    observed_at: datetime,
+    snapshot: str,
+    service: ServiceRef | None = None,
 ) -> SecurityEvent:
     item = change.item
     previous = change.previous or {}
@@ -460,8 +525,9 @@ def change_to_event(
         outcome=Outcome.SUCCESS,
         resource=Resource(type="launchd_plist", name=name, path=change.path),
         attributes=attrs,
-        simulation=simulation_tag(change.path, label),
+        simulation=launchd_simulation_tag(change.path, label),
         redaction_count=redactions,
+        service=service,
     )
 
 

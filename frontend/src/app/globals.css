@@ -299,6 +299,16 @@
   }
 }
 
+/* Evidence rows targeted from an AI statement chip or the timeline: the one selection mark. */
+@layer components {
+  .evidence-row:target,
+  .evidence-row:focus-visible {
+    background: var(--xq-raised);
+    box-shadow: inset 2px 0 0 var(--xq-line);
+    outline: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -48,8 +48,10 @@ EXIT_SSH = 255
 DEFAULT_MAX_OUTPUT = 32 * 1024 * 1024
 MAX_STDERR = 64 * 1024
 
-_HOST_RE = re.compile(r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9-]{1,63})*"
-                      r"|\d{1,3}(?:\.\d{1,3}){3}|\[?[0-9A-Fa-f:]{2,39}\]?)$")
+_HOST_RE = re.compile(
+    r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9-]{1,63})*"
+    r"|\d{1,3}(?:\.\d{1,3}){3}|\[?[0-9A-Fa-f:]{2,39}\]?)$"
+)
 _USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 _CURSOR_RE = re.compile(
     r"^s=[0-9a-f]{32};i=[0-9a-f]{1,16};b=[0-9a-f]{32};m=[0-9a-f]{1,16};"
@@ -110,14 +112,22 @@ def validate_command(command: str) -> str:
     name, args = tokens[0], tokens[1:]
     if name in ("version", "inventory", "packages", "posture") and not args:
         return command
-    if name == "journal" and len(args) == 2:
-        if (args[0] == "-" or _CURSOR_RE.match(args[0])) and _UINT_RE.match(args[1]) \
-                and 1 <= int(args[1]) <= 5000:
-            return command
+    if (
+        name == "journal"
+        and len(args) == 2
+        and (args[0] == "-" or _CURSOR_RE.match(args[0]))
+        and _UINT_RE.match(args[1])
+        and 1 <= int(args[1]) <= 5000
+    ):
+        return command
     if name == "audit" and len(args) == 3:
         inode_ok = args[0] == "-" or (_UINT_RE.match(args[0]) and int(args[0]) >= 1)
-        if inode_ok and _UINT_RE.match(args[1]) and _UINT_RE.match(args[2]) \
-                and 4096 <= int(args[2]) <= 1048576:
+        if (
+            inode_ok
+            and _UINT_RE.match(args[1])
+            and _UINT_RE.match(args[2])
+            and 4096 <= int(args[2]) <= 1048576
+        ):
             return command
     raise ValueError(f"dispatch command not allowed: {name!r}")
 
@@ -215,10 +225,18 @@ Runner = Callable[[list[str], float, int], RunResult]
 def _default_runner(argv: list[str], timeout: float, max_output: int) -> RunResult:
     """Run argv with a deadline and bounded output (no shell, stdin closed)."""
     start = time.monotonic()
-    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, close_fds=True, shell=False,
-                            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL": "C"})
-    assert proc.stdout is not None and proc.stderr is not None
+    proc = subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        close_fds=True,
+        shell=False,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL": "C"},
+    )
+    if proc.stdout is None or proc.stderr is None:  # pragma: no cover - PIPE always set
+        proc.kill()
+        raise SSHDispatchError("ssh pipes unavailable")
     out = bytearray()
     err = bytearray()
     sel = selectors.DefaultSelector()
@@ -266,8 +284,13 @@ def _stderr_summary(stderr: bytes) -> str:
 class SSHDispatchClient:
     """Run allow-listed dispatch commands on the VM over SSH."""
 
-    def __init__(self, target: SSHTarget, *, runner: Runner | None = None,
-                 sleep: Callable[[float], None] = time.sleep) -> None:
+    def __init__(
+        self,
+        target: SSHTarget,
+        *,
+        runner: Runner | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.target = target
         self._runner = runner or _default_runner
         self._sleep = sleep
@@ -283,34 +306,65 @@ class SSHDispatchClient:
         t = self.target
         argv = [
             # No -q: it would hide "Host key verification failed" (LogLevel=ERROR below).
-            t.ssh_binary, "-F", "/dev/null", "-T",
-            "-i", str(t.identity_file),
-            "-p", str(t.port),
-            "-l", t.user,
-            "-o", "IdentitiesOnly=yes",
-            "-o", "IdentityAgent=none",
-            "-o", "BatchMode=yes",
-            "-o", "PasswordAuthentication=no",
-            "-o", "KbdInteractiveAuthentication=no",
-            "-o", "PreferredAuthentications=publickey",
-            "-o", "StrictHostKeyChecking=yes",
-            "-o", f"UserKnownHostsFile={t.known_hosts_file}",
-            "-o", "GlobalKnownHostsFile=/dev/null",
-            "-o", "UpdateHostKeys=no",
-            "-o", f"HostKeyAlgorithms={t.host_key_algorithms}",
-            "-o", f"ConnectTimeout={t.connect_timeout_seconds}",
-            "-o", "ServerAliveInterval=15",
-            "-o", "ServerAliveCountMax=3",
-            "-o", "ForwardAgent=no",
-            "-o", "ForwardX11=no",
-            "-o", "ClearAllForwardings=yes",
-            "-o", "PermitLocalCommand=no",
-            "-o", "LogLevel=ERROR",
+            t.ssh_binary,
+            "-F",
+            "/dev/null",
+            "-T",
+            "-i",
+            str(t.identity_file),
+            "-p",
+            str(t.port),
+            "-l",
+            t.user,
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "IdentityAgent=none",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "PasswordAuthentication=no",
+            "-o",
+            "KbdInteractiveAuthentication=no",
+            "-o",
+            "PreferredAuthentications=publickey",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            f"UserKnownHostsFile={t.known_hosts_file}",
+            "-o",
+            "GlobalKnownHostsFile=/dev/null",
+            "-o",
+            "UpdateHostKeys=no",
+            "-o",
+            f"HostKeyAlgorithms={t.host_key_algorithms}",
+            "-o",
+            f"ConnectTimeout={t.connect_timeout_seconds}",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
+            "ForwardAgent=no",
+            "-o",
+            "ForwardX11=no",
+            "-o",
+            "ClearAllForwardings=yes",
+            "-o",
+            "PermitLocalCommand=no",
+            "-o",
+            "LogLevel=ERROR",
         ]
         control = self._control_path()
         if control is not None:
-            argv += ["-o", "ControlMaster=auto", "-o", f"ControlPath={control}",
-                     "-o", f"ControlPersist={t.control_persist_seconds}"]
+            argv += [
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                f"ControlPath={control}",
+                "-o",
+                f"ControlPersist={t.control_persist_seconds}",
+            ]
         else:
             argv += ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
         return argv
@@ -344,11 +398,14 @@ class SSHDispatchClient:
             if "permission denied" in lowered or "too many authentication failures" in lowered:
                 return SSHAuthenticationError("collector key rejected by the VM")
             return SSHConnectionError(f"ssh connection failed: {summary or 'exit 255'}")
-        return DispatchError(f"dispatcher failed (exit {result.returncode}): {summary}",
-                             retryable=result.returncode == EXIT_TEMPFAIL)
+        return DispatchError(
+            f"dispatcher failed (exit {result.returncode}): {summary}",
+            retryable=result.returncode == EXIT_TEMPFAIL,
+        )
 
-    def run_bytes(self, command: str, *, timeout: float | None = None,
-                  max_output: int = DEFAULT_MAX_OUTPUT) -> bytes:
+    def run_bytes(
+        self, command: str, *, timeout: float | None = None, max_output: int = DEFAULT_MAX_OUTPUT
+    ) -> bytes:
         argv = self.build_argv(command)
         self._prepare()
         deadline = timeout or self.target.command_timeout_seconds
@@ -366,16 +423,21 @@ class SSHDispatchClient:
             last = error
             if not error.retryable or attempt == self.target.max_attempts:
                 break
-            delay = min(self.target.backoff_cap_seconds,
-                        self.target.backoff_base_seconds * (2 ** (attempt - 1)))
+            delay = min(
+                self.target.backoff_cap_seconds,
+                self.target.backoff_base_seconds * (2 ** (attempt - 1)),
+            )
             self._sleep(delay * (0.5 + random.random() / 2))  # noqa: S311 - jitter only
-        assert last is not None
+        if last is None:  # pragma: no cover - max_attempts >= 1
+            raise SSHDispatchError("no ssh attempt was made")
         raise last
 
-    def run(self, command: str, *, timeout: float | None = None,
-            max_output: int = DEFAULT_MAX_OUTPUT) -> str:
+    def run(
+        self, command: str, *, timeout: float | None = None, max_output: int = DEFAULT_MAX_OUTPUT
+    ) -> str:
         return self.run_bytes(command, timeout=timeout, max_output=max_output).decode(
-            "utf-8", "replace")
+            "utf-8", "replace"
+        )
 
     def close(self) -> None:
         """Stop the ControlMaster connection (best effort)."""

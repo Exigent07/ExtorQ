@@ -59,8 +59,12 @@ def main() -> int:
         log.error("gateway_tls_not_configured")
         return 2
     harden_ssl_context(config.ssl)
-    log.info("gateway_listening", host=settings.gateway_bind_host, port=settings.gateway_port,
-             tls_min_version="TLSv1.2")
+    log.info(
+        "gateway_listening",
+        host=settings.gateway_bind_host,
+        port=settings.gateway_port,
+        tls_min_version="TLSv1.2",
+    )
     server = uvicorn.Server(config)
     server.run()
     return 0

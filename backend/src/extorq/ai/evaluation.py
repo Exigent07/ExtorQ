@@ -263,6 +263,12 @@ def compute_metrics(run: EvalRun) -> dict[str, Any]:
         "accuracy_on_confident": _rate(
             sum(1 for r in confident if r.jev == r.label), len(confident)
         ),
+        "accuracy_before_caution_guards": _rate(
+            sum(1 for r in answered if pre_guard_label(r) == r.label), total
+        ),
+        "caution_guard_changes": sum(
+            1 for r in answered if pre_guard_label(r) not in (None, r.jev)
+        ),
         "confusion": _confusion(
             [(r.label, r.jev or (r.jev_status or "error")) for r in results],
             [*LABELS, "error", "timeout", "rate_limited", "invalid_output", "not_run"],
@@ -289,6 +295,26 @@ def compute_metrics(run: EvalRun) -> dict[str, Any]:
         "models_reported": sorted({r.model for r in results if r.model}),
     }
     return metrics
+
+
+_PRIORITY_CODE_PREFIX = "priority_"
+
+
+def pre_guard_label(r: CaseResult) -> str | None:
+    """Jev's own priority choice before ExtorQ's deterministic caution guards.
+
+    Read from the rationale codes (``priority_<label>``); insufficient-context results have
+    no priority code and are returned unchanged.
+    """
+    if r.jev is None:
+        return None
+    if r.jev == TriageRecommendation.INSUFFICIENT_CONTEXT.value:
+        return r.jev
+    for code in r.rationale_codes:
+        label = code[len(_PRIORITY_CODE_PREFIX) :]
+        if code.startswith(_PRIORITY_CODE_PREFIX) and label in LABELS:
+            return label
+    return r.jev
 
 
 def _per_domain(results: list[CaseResult], which: str) -> dict[str, float | None]:
@@ -367,6 +393,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             "| accuracy on confident (not uncertain) answers | "
             f"{_pct(jev['accuracy_on_confident'])} "
             f"({jev['confident_cases']} cases) | n/a |",
+            "| accuracy of the raw priority choice, before caution guards | "
+            f"{_pct(jev['accuracy_before_caution_guards'])} "
+            f"({jev['caution_guard_changes']} answers changed by guards) | n/a |",
             f"| latency ms mean / p50 / p95 / max | {lat['mean']} / {lat['p50']} / {lat['p95']} / "
             f"{lat['max']} | ~0 (local) |",
             f"| tokens input total / mean | {tok['input_total']} / {tok['input_mean']} | 0 |",

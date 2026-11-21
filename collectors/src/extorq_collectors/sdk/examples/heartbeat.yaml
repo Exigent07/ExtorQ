@@ -1,0 +1,13 @@
+# SDK self-test (agent A). Not part of config/collectors/: run it explicitly with
+#   uv run extorq-collect run --once --config collectors/src/extorq_collectors/sdk/examples/heartbeat.yaml
+# It reports only its own CollectorHealth (collector_type heartbeat, source extorq.pipeline)
+# under the least-privilege producer "extorq-selftest". No secrets in this file: the token
+# is read from var/secrets/tokens/extorq-selftest.token.
+collectors:
+  - collector_id: sdk-heartbeat-example
+    producer_id: extorq-selftest
+    asset_id: macos:workstation-01
+    module: extorq_collectors.sdk.examples.heartbeat:HeartbeatCollector
+    interval_seconds: 60
+    enabled: true
+    settings: {}

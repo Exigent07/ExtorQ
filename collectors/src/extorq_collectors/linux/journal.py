@@ -26,7 +26,6 @@ from enum import StrEnum
 from typing import Any
 
 from extorq.contracts import Actor, ActorType, Outcome, ProcessInfo, SecurityEvent, SourceType
-
 from extorq_collectors.linux.common import (
     ParseContext,
     build_event,
@@ -109,8 +108,9 @@ def entry_from_json(obj: dict[str, Any]) -> JournalEntry | None:
 
 # ── trust checks ──────────────────────────────────────────────────────────────
 
-SSHD_EXES = frozenset({"/usr/sbin/sshd", "/usr/lib/openssh/sshd-session",
-                       "/usr/lib/openssh/sshd-auth"})
+SSHD_EXES = frozenset(
+    {"/usr/sbin/sshd", "/usr/lib/openssh/sshd-session", "/usr/lib/openssh/sshd-auth"}
+)
 SUDO_EXES = frozenset({"/usr/bin/sudo"})
 SYSTEMD_EXES = frozenset({"/usr/lib/systemd/systemd", "/lib/systemd/systemd"})
 PYTHON_EXE_RE = re.compile(r"^/usr/bin/python3(\.[0-9]{1,2})?$")
@@ -165,8 +165,10 @@ def forged_identity_event(entry: JournalEntry, ctx: ParseContext, claimed: str) 
         action="forged_identity_suspected",
         outcome=Outcome.UNKNOWN,
         severity_hint=severity_from_priority(entry.priority),
-        actor=Actor(type=ActorType.USER if entry.uid else ActorType.UNKNOWN,
-                    id=str(entry.uid) if entry.uid is not None else None),
+        actor=Actor(
+            type=ActorType.USER if entry.uid else ActorType.UNKNOWN,
+            id=str(entry.uid) if entry.uid is not None else None,
+        ),
         process=process_of(entry),
         message=entry.message,
         raw=entry.message,
@@ -183,15 +185,26 @@ def forged_identity_event(entry: JournalEntry, ctx: ParseContext, claimed: str) 
             "boot_id": entry.boot_id,
         },
         is_self=is_self(entry, ctx),
+        attach_service=False,
     )
 
 
-def notable_event(entry: JournalEntry, ctx: ParseContext, *, subsystem: str, action: str,
-                  trust: Trust, actor_name: str | None = None,
-                  attributes: dict[str, Any] | None = None,
-                  outcome: Outcome = Outcome.UNKNOWN) -> SecurityEvent:
-    attrs: dict[str, Any] = {"subsystem": subsystem, "boot_id": entry.boot_id,
-                             "transport": entry.transport}
+def notable_event(
+    entry: JournalEntry,
+    ctx: ParseContext,
+    *,
+    subsystem: str,
+    action: str,
+    trust: Trust,
+    actor_name: str | None = None,
+    attributes: dict[str, Any] | None = None,
+    outcome: Outcome = Outcome.UNKNOWN,
+) -> SecurityEvent:
+    attrs: dict[str, Any] = {
+        "subsystem": subsystem,
+        "boot_id": entry.boot_id,
+        "transport": entry.transport,
+    }
     if trust is not Trust.VERIFIED:
         attrs["source_verified"] = False
     attrs.update(attributes or {})
@@ -217,13 +230,32 @@ def notable_event(entry: JournalEntry, ctx: ParseContext, *, subsystem: str, act
 
 # ── account-management and boundary lines kept as notable context ─────────────
 
-ACCOUNT_TOOLS = frozenset({"useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod",
-                           "gpasswd", "passwd", "chpasswd", "chage", "chsh", "chfn"})
+ACCOUNT_TOOLS = frozenset(
+    {
+        "useradd",
+        "userdel",
+        "usermod",
+        "groupadd",
+        "groupdel",
+        "groupmod",
+        "gpasswd",
+        "passwd",
+        "chpasswd",
+        "chage",
+        "chsh",
+        "chfn",
+    }
+)
 _ACCOUNT_NAME = re.compile(r"(?:name=|user ')([a-z_][a-z0-9_.-]{0,31})")
-_SU_LINE = re.compile(r"^(?:\(to (?P<target>[^)]{1,64})\) (?P<user>\S{1,64}) on (?P<tty>\S{1,64})"
-                      r"|FAILED SU \(to (?P<ftarget>[^)]{1,64})\) (?P<fuser>\S{1,64}) on (?P<ftty>\S+))$")
-_DENIAL = re.compile(r"^denied command: first_token=(?P<token>\S{1,16}) length=(?P<length>\d{1,6}) "
-                     r"sha256=(?P<sha>[0-9a-f]{16}) reason=(?P<reason>.{1,120})$")
+_SU_LINE = re.compile(
+    r"^(?:\(to (?P<target>[^)]{1,64})\) (?P<user>\S{1,64}) on (?P<tty>\S{1,64})"
+    r"|FAILED SU \(to (?P<ftarget>[^)]{1,64})\) (?P<fuser>\S{1,64}) on (?P<ftty>\S+))$"
+)
+_DENIAL = re.compile(
+    r"^denied command: (?:first_token|command_word)=(?P<token>\S{1,16}) "
+    r"length=(?P<length>\d{1,6}) "
+    r"sha256=(?P<sha>[0-9a-f]{16}) reason=(?P<reason>.{1,120})$"
+)
 
 
 def parse_account_tool(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
@@ -232,11 +264,23 @@ def parse_account_tool(entry: JournalEntry, ctx: ParseContext) -> list[SecurityE
     if trust is Trust.MISMATCH:
         return [forged_identity_event(entry, ctx, ident)]
     match = _ACCOUNT_NAME.search(entry.message)
-    return [notable_event(entry, ctx, subsystem=ident, action=f"account.{ident}", trust=trust,
-                          attributes={"account": match.group(1) if match else None})]
+    return [
+        notable_event(
+            entry,
+            ctx,
+            subsystem=ident,
+            action=f"account.{ident}",
+            trust=trust,
+            attributes={"account": match.group(1) if match else None},
+        )
+    ]
 
 
 def parse_su(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
+    if entry.message.startswith("pam_unix(") and "authentication failure" in entry.message:
+        from extorq_collectors.linux import auth  # local import: avoid cycles
+
+        return auth.parse_pam_failure(entry, ctx)
     match = _SU_LINE.match(entry.message)
     if not match:
         return []
@@ -244,13 +288,21 @@ def parse_su(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
     if trust is Trust.MISMATCH:
         return [forged_identity_event(entry, ctx, "su")]
     failed = match.group("fuser") is not None
-    return [notable_event(
-        entry, ctx, subsystem="su", action="su.failed" if failed else "su.session", trust=trust,
-        actor_name=match.group("fuser") or match.group("user"),
-        outcome=Outcome.FAILURE if failed else Outcome.SUCCESS,
-        attributes={"run_as": match.group("ftarget") or match.group("target"),
-                    "tty": match.group("ftty") or match.group("tty")},
-    )]
+    return [
+        notable_event(
+            entry,
+            ctx,
+            subsystem="su",
+            action="su.failed" if failed else "su.session",
+            trust=trust,
+            actor_name=match.group("fuser") or match.group("user"),
+            outcome=Outcome.FAILURE if failed else Outcome.SUCCESS,
+            attributes={
+                "run_as": match.group("ftarget") or match.group("target"),
+                "tty": match.group("ftty") or match.group("tty"),
+            },
+        )
+    ]
 
 
 def parse_dispatch_denial(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
@@ -261,14 +313,23 @@ def parse_dispatch_denial(entry: JournalEntry, ctx: ParseContext) -> list[Securi
     if entry.exe is not None and not PYTHON_EXE_RE.match(entry.exe):
         return [forged_identity_event(entry, ctx, "extorq-collect-dispatch")]
     trust = Trust.VERIFIED if entry.exe else Trust.UNVERIFIED
-    return [notable_event(
-        entry, ctx, subsystem="extorq-collect-dispatch", action="dispatch.denied", trust=trust,
-        outcome=Outcome.DENIED,
-        attributes={"boundary_violation": True, "first_token": match.group("token"),
-                    "command_length": int(match.group("length")),
-                    "command_sha256_prefix": match.group("sha"),
-                    "reason": match.group("reason")},
-    )]
+    return [
+        notable_event(
+            entry,
+            ctx,
+            subsystem="extorq-collect-dispatch",
+            action="dispatch.denied",
+            trust=trust,
+            outcome=Outcome.DENIED,
+            attributes={
+                "boundary_violation": True,
+                "first_token": match.group("token"),
+                "command_length": int(match.group("length")),
+                "command_sha256_prefix": match.group("sha"),
+                "reason": match.group("reason"),
+            },
+        )
+    ]
 
 
 # ── routing ───────────────────────────────────────────────────────────────────

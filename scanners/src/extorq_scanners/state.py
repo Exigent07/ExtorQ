@@ -103,7 +103,8 @@ class StateStore:
 
     def record(self, target: str, run: ScanRun) -> None:
         data = self.results()
-        entry = data.get(target) if isinstance(data.get(target), dict) else {}
+        previous = data.get(target)
+        entry: dict[str, Any] = dict(previous) if isinstance(previous, dict) else {}
         finished = iso_utc(run.finished_at) if run.finished_at else None
         entry.update(
             {"scan_run_id": run.scan_run_id, "status": run.status.value, "finished_at": finished}

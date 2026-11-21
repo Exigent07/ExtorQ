@@ -25,10 +25,12 @@ app = typer.Typer(
 )
 rules_app = typer.Typer(help="Detection rules (owner: C2).", no_args_is_help=True)
 context_app = typer.Typer(help="Investigation contexts (owner: C2).", no_args_is_help=True)
-ai_app = typer.Typer(help="AI enrichment (owner: E). Uses budgeted providers.",
-                     no_args_is_help=True)
-healthcheck_app = typer.Typer(help="Container healthchecks (used by compose).", hidden=True,
-                              no_args_is_help=True)
+ai_app = typer.Typer(
+    help="AI enrichment (owner: E). Uses budgeted providers.", no_args_is_help=True
+)
+healthcheck_app = typer.Typer(
+    help="Container healthchecks (used by compose).", hidden=True, no_args_is_help=True
+)
 app.add_typer(rules_app, name="rules")
 app.add_typer(context_app, name="context")
 app.add_typer(ai_app, name="ai")
@@ -44,8 +46,11 @@ def load(module: str, attribute: str) -> Any:
     except ModuleNotFoundError as exc:
         missing = exc.name or ""
         if missing and (module == missing or module.startswith(missing + ".")):
-            typer.echo(f"error: {module} is not available yet (see docs/team/PLAN.md for its "
-                       f"owner); this command cannot run in this build.", err=True)
+            typer.echo(
+                f"error: {module} is not available yet (see docs/team/PLAN.md for its "
+                f"owner); this command cannot run in this build.",
+                err=True,
+            )
             raise typer.Exit(EXIT_MODULE_MISSING) from None
         raise
     try:
@@ -164,8 +169,9 @@ def rules_validate(root: str = "rules") -> None:
     typer.echo(f"{len(rules)} rules valid")
 
 
-@rules_app.command("test", context_settings={"allow_extra_args": True,
-                                              "ignore_unknown_options": True})
+@rules_app.command(
+    "test", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
 def rules_test(ctx: typer.Context) -> None:
     """Run the rule test harness (arguments are passed through)."""
     main: Callable[[list[str]], int] = load("extorq.detection.harness", "main")
@@ -208,8 +214,7 @@ def ai_summary(alert_id: str, requested_by: str = "analyst:cli") -> None:
     _print_model(service_cls().request_summary(alert_id, requested_by))
 
 
-@ai_app.command("eval", context_settings={"allow_extra_args": True,
-                                           "ignore_unknown_options": True})
+@ai_app.command("eval", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def ai_eval(ctx: typer.Context) -> None:
     """Run the AI evaluation harness (arguments are passed through)."""
     main = first_available([("extorq.ai.evaluation", "main"), ("extorq.ai.eval", "main")])
@@ -228,11 +233,20 @@ def api(
     create_app = load("extorq.api.app", "create_app")
     import uvicorn
 
-    configure = first_available([("extorq.api.logs", "configure"),
-                                 ("extorq.common.logging", "configure_logging")])
+    configure = first_available(
+        [("extorq.api.logs", "configure"), ("extorq.common.logging", "configure_logging")]
+    )
     configure("api")
-    uvicorn.run(create_app, factory=True, host=host, port=port, proxy_headers=False,
-                server_header=False, log_config=None, access_log=False)
+    uvicorn.run(
+        create_app,
+        factory=True,
+        host=host,
+        port=port,
+        proxy_headers=False,
+        server_header=False,
+        log_config=None,
+        access_log=False,
+    )
 
 
 def main() -> None:  # pragma: no cover - console script shim

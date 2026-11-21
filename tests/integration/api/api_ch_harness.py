@@ -3,11 +3,13 @@
 * Starts ``clickhouse/clickhouse-server:26.8.42.13`` as ``extorq-d1-apisql-<random>``,
   publishing 8123 on a random **loopback** port only, and removes it afterwards
   (``docker rm -f``). Never touches the shared compose stack.
-* Applies the real migrations 0001 (core) and 0003 (findings lifecycle views).
-* Creates two users that mirror PLAN 4.4 / 0002 for the API:
-  ``d1_api_ro`` (SELECT on extorq.*, readonly=2, max_result_rows=100000,
-  result_overflow_mode='throw') and ``d1_api_writer`` (INSERT only on the tables the
-  API identity may write). The repository runs with exactly these identities.
+* Applies the real migrations 0001 (core), the settings profiles, roles and grants of
+  0002 (RBAC; user/password/quota statements skipped), 0003 (findings lifecycle views)
+  and 0004 (service model, schema 1.1).
+* Creates users bound to the REAL roles and settings profiles of 0002:
+  ``d1_api_ro`` (extorq_role_api_ro + extorq_api_readonly), ``d1_api_writer``
+  (extorq_role_api_writer) and ``d1_grafana`` (extorq_role_grafana with its column-level
+  grant on events + extorq_grafana_readonly). Tests query with exactly these identities.
 * Seeds a SMALL SYNTHETIC dataset. Every row is synthetic (names/messages carry the
   word ``synthetic``), lives only in this container and is destroyed with it. Rows are
   built from contract models and mapped with the platform's own ``extorq.storage.rows``
@@ -36,9 +38,20 @@ from extorq.contracts import (
     PostureFinding,
     ScanRun,
     SecurityEvent,
+    Service,
+    ServiceInstance,
 )
-from extorq.contracts.identity import canonical_json, event_id, finding_id, scope_hash, stable_id
+from extorq.contracts.identity import (
+    canonical_json,
+    event_id,
+    finding_id,
+    instance_id,
+    scope_hash,
+    service_id,
+    stable_id,
+)
 from extorq.storage import rows
+from extorq.storage.migrate import split_statements
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS = REPO_ROOT / "infra" / "clickhouse" / "migrations"
@@ -110,20 +123,31 @@ class EphemeralClickHouse:
         )
 
     def migrate(self) -> None:
-        for name in ("0001_core_tables.sql", "0003_findings_views.sql"):
+        self.sql((MIGRATIONS / "0001_core_tables.sql").read_text(encoding="utf-8"))
+        rbac = [
+            statement
+            for statement in split_statements(
+                (MIGRATIONS / "0002_rbac.sql").read_text(encoding="utf-8")
+            )
+            # Users need rendered password hashes and quotas target those users: the
+            # harness creates its own passwordless users bound to the same roles below.
+            if "{{" not in statement
+            and not statement.lstrip().upper().startswith(("CREATE QUOTA", "GRANT EXTORQ_ROLE_"))
+        ]
+        self.sql(";\n".join(rbac) + ";")
+        for name in ("0003_findings_views.sql", "0004_services.sql"):
             self.sql((MIGRATIONS / name).read_text(encoding="utf-8"))
         self.sql(
             """
             CREATE USER IF NOT EXISTS d1_api_ro IDENTIFIED WITH no_password
-                SETTINGS readonly = 2, max_result_rows = 100000,
-                         result_overflow_mode = 'throw', max_execution_time = 30;
-            GRANT SELECT ON extorq.* TO d1_api_ro;
-            CREATE USER IF NOT EXISTS d1_api_writer IDENTIFIED WITH no_password;
-            GRANT INSERT ON extorq.analyst_state TO d1_api_writer;
-            GRANT INSERT ON extorq.analyst_actions TO d1_api_writer;
-            GRANT INSERT ON extorq.ai_assessments TO d1_api_writer;
-            GRANT INSERT ON extorq.investigation_contexts TO d1_api_writer;
-            GRANT INSERT ON extorq.context_relationships TO d1_api_writer;
+                SETTINGS PROFILE 'extorq_api_readonly';
+            GRANT extorq_role_api_ro TO d1_api_ro;
+            CREATE USER IF NOT EXISTS d1_api_writer IDENTIFIED WITH no_password
+                SETTINGS PROFILE 'extorq_service';
+            GRANT extorq_role_api_writer TO d1_api_writer;
+            CREATE USER IF NOT EXISTS d1_grafana IDENTIFIED WITH no_password
+                SETTINGS PROFILE 'extorq_grafana_readonly';
+            GRANT extorq_role_grafana TO d1_grafana;
             """
         )
 
@@ -158,7 +182,9 @@ class Dataset:
     linux: str = "linux:lab-vm-01"
     github: str = "github:synthetic/extorq-lab"
     k8s: str = "k8s:extorq-lab"
+    k8s_node: str = "k8s:extorq-lab/node/extorq-lab-control-plane"
     event_ids: dict[str, str] = field(default_factory=dict)
+    service_ids: dict[str, str] = field(default_factory=dict)
     alert_ids: dict[str, str] = field(default_factory=dict)
     finding_ids: dict[str, str] = field(default_factory=dict)
 
@@ -229,16 +255,44 @@ def seed(admin: Any, now: datetime) -> Dataset:
             ingested_at=n,
         )
     )
+    for asset_id, asset_type, parent in (
+        (ds.k8s, "kubernetes_cluster", None),
+        (ds.k8s_node, "kubernetes_node", ds.k8s),
+    ):
+        assets.append(
+            rows.asset_to_row(
+                Asset(
+                    asset_id=asset_id,
+                    asset_type=asset_type,
+                    name=f"synthetic-{asset_type}",
+                    parent_asset_id=parent,
+                    first_seen=n - timedelta(days=1),
+                    last_seen=n,
+                    observed_by="synthetic-k8s",
+                ),
+                producer_id=PRODUCER,
+                ingested_at=n,
+            )
+        )
     _insert(admin, "assets", assets)
+    ds.service_ids = {
+        "ssh": service_id(ds.linux, "host_service", "ssh.service"),
+        "ftp": service_id(ds.linux, "host_service", "vsftpd.service"),
+        "gone": service_id(ds.linux, "host_service", "gone.service"),
+        "workload": service_id(ds.k8s, "k8s_workload", "extorq-apps/Deployment/lab-portal"),
+        "k8s_service": service_id(ds.k8s, "k8s_service", "extorq-apps/lab-portal"),
+    }
+    ssh_ref = {"service_id": ds.service_ids["ssh"], "name": "ssh", "adapter_id": "ssh"}
 
     # Events (e1 inserted twice: duplicate delivery must not double-count).
-    e1 = _event(ds, "e1")
+    e1 = _event(ds, "e1", service=ssh_ref)
     e2 = _event(
         ds,
         "e2",
         event_type="auth.ssh.invalid_user",
         event_time=n - timedelta(minutes=29),
         actor={"type": "user", "name": "synthetic-admin"},
+        service=ssh_ref,
     )
     e3 = _event(
         ds,
@@ -294,7 +348,9 @@ def seed(admin: Any, now: datetime) -> Dataset:
     ds.event_ids = {"e1": e1.event_id, "e2": e2.event_id, "e3": e3.event_id, "e4": e4.event_id}
 
     # Alerts: a1 has two versions (late evidence bumped updated_at); a2 is closed later.
-    def alert(label: str, *, severity: str, updated: datetime, count: int) -> dict[str, Any]:
+    def alert(
+        label: str, *, severity: str, updated: datetime, count: int, services: list[str]
+    ) -> dict[str, Any]:
         alert_id = stable_id("alert.v1", "VM-001", label, "synthetic")
         payload = {"synthetic": True}
         return {
@@ -309,6 +365,7 @@ def seed(admin: Any, now: datetime) -> Dataset:
             "asset_type": "linux_host",
             "group_key": f"synthetic|{label}",
             "entities": {"src_ip": "10.0.2.2"},
+            "service_ids": services,
             "summary": f"synthetic alert {label}",
             "first_seen": n - timedelta(minutes=31),
             "last_seen": n - timedelta(minutes=29),
@@ -326,9 +383,12 @@ def seed(admin: Any, now: datetime) -> Dataset:
             "payload": canonical_json(payload),
         }
 
-    a1_v1 = alert("a1", severity="high", updated=n - timedelta(minutes=28), count=5)
-    a1_v2 = alert("a1", severity="high", updated=n - timedelta(minutes=20), count=7)
-    a2 = alert("a2", severity="critical", updated=n - timedelta(minutes=27), count=6)
+    ssh_only = [ds.service_ids["ssh"]]
+    a1_v1 = alert("a1", severity="high", updated=n - timedelta(minutes=28), count=5, services=[])
+    a1_v2 = alert(
+        "a1", severity="high", updated=n - timedelta(minutes=20), count=7, services=ssh_only
+    )
+    a2 = alert("a2", severity="critical", updated=n - timedelta(minutes=27), count=6, services=[])
     _insert(admin, "alerts", [a1_v1, a1_v2, a2])
     ds.alert_ids = {"a1": a1_v1["alert_id"], "a2": a2["alert_id"]}
 
@@ -493,7 +553,9 @@ def seed(admin: Any, now: datetime) -> Dataset:
         [rows.scan_run_to_row(s, producer_id=PRODUCER, ingested_at=n) for s in scans],
     )
 
-    def finding(check: str, scan: ScanRun, severity: str) -> PostureFinding:
+    def finding(
+        check: str, scan: ScanRun, severity: str, service: str | None = None
+    ) -> PostureFinding:
         return PostureFinding(
             finding_id=finding_id(ds.linux, "trivy", check, "openssh-server"),
             scan_run_id=scan.scan_run_id,
@@ -505,10 +567,12 @@ def seed(admin: Any, now: datetime) -> Dataset:
             title=f"synthetic {check}",
             observed_at=scan.started_at + timedelta(seconds=30),
             cve_ids=[check],
+            service_id=service,
         )
 
     f_old = finding("CVE-0000-0001", scans[0], "medium")
-    f_open_1 = finding("CVE-0000-0002", scans[0], "critical")
+    # The first observation is attributed, the latest is not: attribution must survive.
+    f_open_1 = finding("CVE-0000-0002", scans[0], "critical", ds.service_ids["ssh"])
     f_open_2 = finding("CVE-0000-0002", scans[1], "critical")
     _insert(
         admin,
@@ -558,4 +622,95 @@ def seed(admin: Any, now: datetime) -> Dataset:
             )
         ],
     )  # fmt: skip
+    _seed_services(admin, ds)
     return ds
+
+
+def _service(ds: Dataset, key: str, **kw: Any) -> Service:
+    n = ds.now
+    base: dict[str, Any] = {
+        "asset_id": ds.linux,
+        "service_kind": "host_service",
+        "service_key": key,
+        "name": key.removesuffix(".service"),
+        "category": "unknown",
+        "discovered_via": ["systemd_unit"],
+        "adapter_support": "none",
+        "monitoring_status": "unmonitored",
+        "first_seen": n - timedelta(days=1),
+        "last_seen": n,
+        "observed_by": "synthetic-linux",
+    }
+    base.update(kw)
+    base["service_id"] = service_id(base["asset_id"], base["service_kind"], key)
+    return Service(**base)
+
+
+def _seed_services(admin: Any, ds: Dataset) -> None:
+    n = ds.now
+    ssh_endpoint = {
+        "protocol": "tcp", "address": "0.0.0.0", "port": 22, "exposure": "any",  # noqa: S104
+        "attribution": "confirmed", "attribution_basis": "synthetic socket owner",
+    }  # fmt: skip
+    ssh = {
+        "category": "ssh", "product": "openssh", "adapter_id": "ssh",
+        "adapter_support": "implemented", "telemetry_sources": ["linux.journald"],
+        "discovered_via": ["listening_socket", "systemd_unit"], "endpoints": [ssh_endpoint],
+        "config_refs": ["/etc/ssh/sshd_config"], "instance_count": 1,
+        "attributes": {"origin": "synthetic"},
+    }  # fmt: skip
+    services = [
+        # Older version (degraded) and newer version (monitored): FINAL keeps the newest.
+        _service(ds, "ssh.service", monitoring_status="degraded",
+                 last_seen=n - timedelta(hours=1), **ssh),
+        _service(ds, "ssh.service", monitoring_status="monitored", **ssh),
+        _service(ds, "vsftpd.service", category="ftp", adapter_id="ftp",
+                 adapter_support="planned",
+                 coverage_note="planned adapter 'ftp': discovered only, no telemetry collected"),
+        _service(ds, "gone.service", present=False),
+        _service(ds, "extorq-apps/Deployment/lab-portal", asset_id=ds.k8s,
+                 service_kind="k8s_workload", name="lab-portal", category="web_application",
+                 discovered_via=["k8s_api"], adapter_id="webapp-json",
+                 adapter_support="implemented", monitoring_status="monitored",
+                 telemetry_sources=["k8s.container_log"]),
+        _service(ds, "extorq-apps/lab-portal", asset_id=ds.k8s, service_kind="k8s_service",
+                 name="lab-portal", category="web_application", discovered_via=["k8s_api"],
+                 endpoints=[{"protocol": "tcp", "address": "10.96.0.20", "port": 80,
+                             "exposure": "private", "attribution": "confirmed"}]),
+    ]  # fmt: skip
+    _insert(
+        admin,
+        "services",
+        [rows.service_to_row(s, producer_id=PRODUCER, ingested_at=n) for s in services],
+    )
+    ssh_id, workload_id = ds.service_ids["ssh"], ds.service_ids["workload"]
+
+    def instance(service: str, kind: str, key: str, **kw: Any) -> ServiceInstance:
+        base: dict[str, Any] = {
+            "instance_id": instance_id(service, kind, key),
+            "service_id": service,
+            "instance_kind": kind,
+            "instance_key": key,
+            "observed_at": n,
+            "observed_by": "synthetic-collector",
+            "state": "running",
+        }
+        base.update(kw)
+        return ServiceInstance(**base)
+
+    instances = [
+        instance(ssh_id, "process", "pid:100", asset_id=ds.linux, pid=100, process_name="sshd",
+                 user="root", observed_at=n - timedelta(minutes=10)),
+        instance(ssh_id, "process", "pid:100", asset_id=ds.linux, pid=100, process_name="sshd",
+                 user="root"),
+        instance(ssh_id, "process", "pid:7", asset_id=ds.linux, pid=7, present=False),
+        instance(workload_id, "pod", "synthetic-pod-uid", asset_id=ds.k8s_node,
+                 namespace="extorq-apps", pod_name="lab-portal-0", pod_uid="synthetic-pod-uid",
+                 node_name="extorq-lab-control-plane", workload_kind="Deployment",
+                 workload_name="lab-portal"),
+    ]  # fmt: skip
+    _insert(
+        admin,
+        "service_instances",
+        [rows.service_instance_to_row(i, producer_id=PRODUCER, ingested_at=n) for i in instances],
+    )

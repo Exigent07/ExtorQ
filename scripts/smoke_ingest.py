@@ -65,8 +65,12 @@ def main() -> int:
     token = (REPO / "var/secrets/tokens" / f"{PRODUCER}.token").read_text().strip()
     marker = uuid.uuid4().hex
     event = synthetic_event(marker)
-    batch = IngestBatch(batch_id=uuid.uuid4().hex, producer_id=PRODUCER, sent_at=utc_now(),
-                        records=[{"kind": "event", "data": event}])
+    batch = IngestBatch(
+        batch_id=uuid.uuid4().hex,
+        producer_id=PRODUCER,
+        sent_at=utc_now(),
+        records=[{"kind": "event", "data": event}],
+    )
     started = time.monotonic()
     with httpx.Client(verify=str(REPO / "var/tls/ca.crt"), timeout=15.0) as client:
         response = client.post(
@@ -89,8 +93,10 @@ def main() -> int:
         ).result_rows
         if rows:
             row = rows[0]
-            print(f"clickhouse (extorq_api_ro): event_id={row[0]} producer={row[1]} "
-                  f"batch={row[2]} synthetic={row[3]} ingested_time={row[4].isoformat()}")
+            print(
+                f"clickhouse (extorq_api_ro): event_id={row[0]} producer={row[1]} "
+                f"batch={row[2]} synthetic={row[3]} ingested_time={row[4].isoformat()}"
+            )
             print(f"round trip: {time.monotonic() - started:.2f}s")
             return 0
         time.sleep(0.5)

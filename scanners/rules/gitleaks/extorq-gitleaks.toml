@@ -1,0 +1,28 @@
+# Gitleaks configuration used by extorq-scan (owner: C3).
+#
+# Upstream default rules plus ExtorQ's custom rule for the lab repository's
+# synthetic test secret. The runner mounts ONLY this directory into the gitleaks
+# container (read-only) and refuses to run if a .gitleaksignore exists here, so
+# a scanned repository can neither disable rules (.gitleaks.toml) nor allowlist
+# findings (.gitleaksignore, inline gitleaks:allow is ignored via
+# --ignore-gitleaks-allow).
+#
+# Custom rule "extorq-test-secret": the lab repository (lab/github-repo, owner C1)
+# deliberately contains one FAKE, secret-shaped string documented in its README
+# and in deploy/legacy-staging.conf: "EXTORQ_TEST_SECRET_" followed by exactly 24
+# upper-case alphanumerics. It is not a credential for any system. Matching it
+# demonstrates the custom-rule path end to end; gitleaks runs with --redact so
+# the value never leaves the container.
+
+title = "ExtorQ gitleaks rules (upstream defaults + extorq-test-secret)"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "extorq-test-secret"
+description = "ExtorQ lab synthetic test secret (EXTORQ_TEST_SECRET_ + 24 upper-case alphanumerics)"
+regex = '''\bEXTORQ_TEST_SECRET_[A-Z0-9]{24}\b'''
+# Gitleaks matches keywords case-insensitively against the content.
+keywords = ["extorq_test_secret_"]
+tags = ["extorq", "lab", "synthetic"]

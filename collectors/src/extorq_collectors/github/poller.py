@@ -27,13 +27,15 @@ from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
-from extorq.contracts import GitHubInfo, Outcome, Resource, SecurityEvent
+from extorq.contracts import GitHubInfo, Outcome, Resource, SecurityEvent, SourceType
+from extorq.contracts.asset import InventoryItem, InventoryItemType
 from extorq.contracts.identity import canonical_json, sha256_hex
 from extorq.contracts.ingest import (
     AssetRecord,
     EventRecord,
     FindingRecord,
     IngestRecord,
+    InventoryItemRecord,
     ScanRunRecord,
 )
 from extorq_collectors.github import alerts as alerts_mod
@@ -77,6 +79,7 @@ from extorq_collectors.github.workflow import (
     analyse_workflow,
     compare_workflows,
     is_workflow_path,
+    workflow_inventory_attributes,
 )
 
 EmitFn = Callable[[list[IngestRecord], RepoState], None]
@@ -96,6 +99,11 @@ ACTIONS_PERMISSION_KEYS = (
     "actions.sha_pinning_required",
 )
 _RUN_FAILURE = {"failure", "timed_out", "startup_failure"}
+#: Re-run attempts keep the run's original created_at; runs created this recently are
+#: re-listed every poll so new attempts are observed (older re-runs are a documented gap).
+RUNS_RERUN_WINDOW = timedelta(hours=6)
+#: Allowance for clock skew / API eventual consistency when advancing the runs window.
+RUNS_SKEW_MARGIN = timedelta(minutes=10)
 
 
 @dataclass
@@ -168,6 +176,10 @@ class RepoPoller:
         self.settings: dict[str, Any] = {}
         self.protection: dict[str, dict[str, Any]] = {}
         self.heads: dict[str, str] = {}
+        #: branch -> "ok" | "missing" (404) | "error" (other failure) for this poll.
+        self.branch_status: dict[str, str] = {}
+        #: workflow path -> blob sha at the default-branch head (posture inspection).
+        self.workflow_blobs: dict[str, str] = {}
         self.changed = False
         self.now = clock()
 
@@ -394,7 +406,11 @@ class RepoPoller:
                 "disabled or not authorised)",
             )
             return None
-        self._gap("vulnerability_alerts", fetched.error)
+        gap = self._gap("vulnerability_alerts", fetched.error)
+        if gap.transient:
+            # Keep the last known value: a transient failure is not a settings change.
+            previous = (self.state.settings or {}).get("vulnerability_alerts")
+            return previous if isinstance(previous, bool) else None
         return None
 
     def _asset_records(self) -> list[IngestRecord]:
@@ -457,7 +473,7 @@ class RepoPoller:
     def _phase_branches(self) -> None:
         st = self.state
         records: list[IngestRecord] = []
-        rulesets = self._rulesets()
+        rulesets, rulesets_transient = self._rulesets()
         default = self.settings.get("default_branch")
         for branch in self._monitored_branches():
             quoted = quote(branch, safe="/")
@@ -467,18 +483,17 @@ class RepoPoller:
                 st.forget_etag(key)
                 fetched = self._fetch(key, f"{self.api}/branches/{quoted}")
             if fetched.error is not None:
+                missing = isinstance(fetched.error, GitHubNotFound)
+                self.branch_status[branch] = "missing" if missing else "error"
                 if branch == default:
-                    reason = (
-                        "default branch not found (empty repository?)"
-                        if isinstance(fetched.error, GitHubNotFound)
-                        else None
-                    )
+                    reason = "default branch not found (empty repository?)" if missing else None
                     self._gap("protection", fetched.error, reason=reason)
                 else:
                     self.report.errors.append(
                         clean_text(f"branch {branch}: {fetched.error.gap_reason}", 300)
                     )
                 continue
+            self.branch_status[branch] = "ok"
             if fetched.not_modified:
                 info = st.branch_info[branch]
             else:
@@ -493,20 +508,35 @@ class RepoPoller:
                 st.branch_info[branch] = info
             if info.get("sha"):
                 self.heads[branch] = info["sha"]
-            snapshot = self._protection_snapshot(branch, quoted, info.get("protected"), rulesets)
-            self.protection[branch] = snapshot
-            changes = diff_snapshots(
-                st.protection.get(branch), snapshot, ignore=frozenset({"protection_gap"})
+            previous = st.protection.get(branch)
+            snapshot = self._protection_snapshot(
+                branch,
+                quoted,
+                info.get("protected"),
+                rulesets,
+                previous=previous,
+                rulesets_transient=rulesets_transient,
             )
+            self.protection[branch] = snapshot
+            ignore = {"protection_gap"}
+            if "unknown" in (
+                snapshot.get("protection_status"),
+                (previous or {}).get("protection_status"),
+            ):
+                # Losing or gaining visibility is a coverage change (health), not a
+                # protection change: never report it as github.branch_protection.changed.
+                ignore.add("protection_status")
+            changes = diff_snapshots(previous, snapshot, ignore=frozenset(ignore))
             if changes:
                 self.changed = True
                 st.change_seq += 1
                 fields = ", ".join(k for k, _, _ in changes)
+                digest = sha256_hex(canonical_json(snapshot))[:16]
                 records.append(
                     EventRecord(
                         data=self.builder.build(
                             event_type="github.branch_protection.changed",
-                            native_key=f"protection:{branch}:{st.change_seq}:{sha256_hex(canonical_json(snapshot))[:16]}",
+                            native_key=f"protection:{branch}:{st.change_seq}:{digest}",
                             event_time=self.now,
                             observed_time=self.now,
                             action="branch_protection_changed",
@@ -524,9 +554,7 @@ class RepoPoller:
                                 "change_seq": st.change_seq,
                                 "protection_status": snapshot.get("protection_status"),
                             },
-                            raw_source=canonical_json(
-                                {"before": st.protection.get(branch), "after": snapshot}
-                            ),
+                            raw_source=canonical_json({"before": previous, "after": snapshot}),
                             sim_run_id=simulation_run_id(branch),
                         )
                     )
@@ -534,11 +562,15 @@ class RepoPoller:
             st.protection[branch] = snapshot
         self.emit(records)
 
-    def _rulesets(self) -> list[str] | None:
+    def _rulesets(self) -> tuple[list[str] | None, bool]:
+        """Repository rulesets rendered as ``name|target|enforcement|source_type``.
+
+        Returns ``(rulesets, transient)``; ``rulesets`` is None when unavailable.
+        """
         fetched = self._fetch(None, f"{self.api}/rulesets", {"per_page": 100})
         if fetched.error is not None:
-            self._gap("rulesets", fetched.error)
-            return None
+            gap = self._gap("rulesets", fetched.error)
+            return None, gap.transient
         items = fetched.data if isinstance(fetched.data, list) else []
         rendered: list[str] = []
         for item in items[:64]:
@@ -552,14 +584,27 @@ class RepoPoller:
                         300,
                     )
                 )
-        return rendered
+        return rendered, False
 
     def _protection_snapshot(
-        self, branch: str, quoted: str, protected: bool | None, rulesets: list[str] | None
+        self,
+        branch: str,
+        quoted: str,
+        protected: bool | None,
+        rulesets: list[str] | None,
+        *,
+        previous: Mapping[str, Any] | None = None,
+        rulesets_transient: bool = False,
     ) -> dict[str, Any]:
+        """Normalised protection state of ``branch``.
+
+        Transient failures (network, 5xx) carry the previous known values forward, so
+        an outage never looks like a protection change on the next successful poll.
+        """
         fetched = self._fetch(None, f"{self.api}/branches/{quoted}/protection")
         protection: dict[str, Any] | None = None
         gap: str | None = None
+        protection_transient = False
         if fetched.error is None:
             status = "present"
             protection = as_dict(fetched.data)
@@ -574,15 +619,18 @@ class RepoPoller:
             self.report.gaps[f"branch_protection:{branch}"] = gap
         else:
             status = "unknown"
-            gap = clean_text(
-                f"feature unavailable or not authorised ({fetched.error.gap_reason})", 300
-            )
             if fetched.permanent:
+                gap = clean_text(
+                    f"feature unavailable or not authorised ({fetched.error.gap_reason})", 300
+                )
                 self.report.gaps[f"branch_protection:{branch}"] = gap
             else:
+                protection_transient = True
+                gap = clean_text(fetched.error.gap_reason, 300)
                 self.report.errors.append(clean_text(f"branch protection {branch}: {gap}", 300))
         rules = self._fetch(None, f"{self.api}/rules/branches/{quoted}", {"per_page": 100})
         rule_types: list[str] | None = None
+        rules_transient = False
         if rules.error is None:
             items = rules.data if isinstance(rules.data, list) else []
             rule_types = [
@@ -591,8 +639,8 @@ class RepoPoller:
                 if isinstance(i, dict) and i.get("type")
             ]
         else:
-            self._gap(f"rules:{branch}", rules.error)
-        return normalize_protection(
+            rules_transient = self._gap(f"rules:{branch}", rules.error).transient
+        snapshot = normalize_protection(
             protected=protected,
             protection=protection,
             protection_status=status,
@@ -600,6 +648,16 @@ class RepoPoller:
             rule_types=rule_types,
             rulesets=rulesets,
         )
+        if previous:
+            if protection_transient:
+                for key, value in previous.items():
+                    if key not in ("protected", "rule_types", "rulesets"):
+                        snapshot[key] = value
+            if rules_transient:
+                snapshot["rule_types"] = previous.get("rule_types")
+            if rulesets_transient:
+                snapshot["rulesets"] = previous.get("rulesets")
+        return snapshot
 
     # ── phase 3: commits and workflow changes ──────────────────────────────
 
@@ -612,9 +670,10 @@ class RepoPoller:
             commits, flags = self._new_commits(branch, head, last)
         except GitHubConflict:  # "Git Repository is empty."
             return
+        gap_records = self._history_gap_records(branch, last, head, flags)
         if not commits:
             st.branch_heads[branch] = head
-            self.emit([])
+            self.emit(gap_records)
             return
         to_process = commits[: self.cfg.max_commits_per_poll]
         # More commits exist than were listed (compare pagination truncated) or processed:
@@ -626,17 +685,18 @@ class RepoPoller:
             )
         pushes = self._push_activity(branch) if self.cfg.collect_push_activity else {}
         push_for = self._assign_pushes(to_process, pushes)
+        backfill = bool(flags.get("initial_backfill"))
         for start in range(0, len(to_process), COMMIT_CHUNK):
             chunk = to_process[start : start + COMMIT_CHUNK]
-            records: list[IngestRecord] = []
+            records: list[IngestRecord] = list(gap_records) if start == 0 else []
             for index, summary in enumerate(chunk):
                 sha = summary["sha"]
-                chunk_flags = (
-                    {k: v for k, v in flags.items() if k != "more_available"}
-                    if (start == 0 and index == 0)
-                    else {}
-                )
-                records.extend(self._commit_records(branch, sha, push_for.get(sha), chunk_flags))
+                commit_flags: dict[str, Any] = {"initial_backfill": backfill}
+                if start == 0 and index == 0:
+                    # The history flags describe what happened *before* this commit.
+                    commit_flags["history_gap"] = bool(flags.get("history_gap"))
+                    commit_flags["history_rewritten"] = bool(flags.get("history_rewritten"))
+                records.extend(self._commit_records(branch, sha, push_for.get(sha), commit_flags))
             last_sha = chunk[-1]["sha"]
             final = start + COMMIT_CHUNK >= len(to_process)
             st.branch_heads[branch] = head if (final and not remaining) else last_sha
@@ -686,12 +746,83 @@ class RepoPoller:
         meta = as_dict(page.first)
         flags: dict[str, Any] = {"more_available": page.truncated}
         if meta.get("status") in ("diverged", "behind"):
+            behind = meta.get("behind_by")
             flags["history_rewritten"] = True
+            flags["behind_by"] = behind if isinstance(behind, int) else None
             self.report.warnings.append(
-                f"{branch}: history rewritten (force push); {meta.get('behind_by')} commit(s) "
+                f"{branch}: history rewritten (force push); {flags['behind_by']} commit(s) "
                 "no longer on the branch"
             )
         return commits, flags
+
+    def _history_gap_records(
+        self, branch: str, last: str | None, head: str, flags: Mapping[str, Any]
+    ) -> list[IngestRecord]:
+        """``extorq.collector.gap_detected`` for rewritten or unreachable branch history."""
+        if last is None or not (flags.get("history_gap") or flags.get("history_rewritten")):
+            return []
+        if flags.get("history_gap"):
+            reason = "checkpoint_commit_not_found"
+            detail = (
+                f"branch {branch}: last processed commit {last[:12]} no longer exists "
+                "(force push); commits pushed and rewritten between polls may be missing"
+            )
+        else:
+            reason = "history_rewritten"
+            detail = (
+                f"branch {branch} was rewritten (force push): {flags.get('behind_by')} "
+                f"commit(s) after {last[:12]} are no longer on the branch; intermediate "
+                "history between polls may be missing"
+            )
+        return [
+            self._gap_event(
+                reason,
+                detail,
+                key=f"{branch}:{last}:{head}",
+                ref=f"refs/heads/{branch}",
+                attributes={
+                    "branch": clean_text(branch, 255),
+                    "checkpoint_sha": last,
+                    "head_sha": head,
+                    "behind_by": flags.get("behind_by"),
+                },
+            )
+        ]
+
+    def _gap_event(
+        self,
+        reason: str,
+        detail: str,
+        *,
+        key: str,
+        ref: str | None = None,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> EventRecord:
+        """A genuine telemetry gap observed by this collector (deterministic identity)."""
+        self.report.warnings.append(clean_text(f"telemetry gap ({reason}): {detail}", 400))
+        attrs: dict[str, Any] = {
+            "collector_id": self.collector_id,
+            "source_type": SourceType.GITHUB_API.value,
+            "gap_reason": reason,
+            "gap_detail": clean_text(detail, 1000),
+        }
+        attrs.update(attributes or {})
+        return EventRecord(
+            data=self.builder.build(
+                event_type="extorq.collector.gap_detected",
+                native_key=clean_text(f"gap:{reason}:{key}", 256),
+                event_time=self.now,
+                observed_time=self.now,
+                action="gap_detected",
+                outcome=Outcome.UNKNOWN,
+                github=GitHubInfo(
+                    repository=self.meta.get("full_name") or self.repo.full_name,
+                    ref=clean_text(ref, 256) if ref else None,
+                ),
+                message=f"Telemetry gap ({reason}): {detail}",
+                attributes=attrs,
+            )
+        )
 
     def _push_activity(self, branch: str) -> dict[str, _Push]:
         fetched = self._fetch(
@@ -837,32 +968,81 @@ class RepoPoller:
             "history_gap": bool(flags.get("history_gap")),
             "initial_backfill": bool(flags.get("initial_backfill")),
         }
-        commit_event = self.builder.build(
-            event_type="github.commit.observed",
-            native_key=sha,
-            event_time=event_time,
-            observed_time=self.now,
-            action="commit",
-            actor=actor,
-            resource=Resource(type="github_commit", id=sha),
-            github=info,
-            message=f"Commit {sha[:12]} on {clean_text(branch, 100)}: {summary}",
-            attributes=attributes,
-            raw=full_message or None,
-            raw_source=message_raw,
-            truncated=truncated,
-            redactions=red1 + red2,
-            sim_run_id=sim,
-        )
+        try:
+            commit_event = self.builder.build(
+                event_type="github.commit.observed",
+                native_key=sha,
+                event_time=event_time,
+                observed_time=self.now,
+                action="commit",
+                actor=actor,
+                resource=Resource(type="github_commit", id=sha),
+                github=info,
+                message=f"Commit {sha[:12]} on {clean_text(branch, 100)}: {summary}",
+                attributes=attributes,
+                raw=full_message or None,
+                raw_source=message_raw,
+                truncated=truncated,
+                redactions=red1 + red2,
+                sim_run_id=sim,
+            )
+        except ValueError as exc:
+            return [self._record_failure("commit", sha, exc, ref=f"refs/heads/{branch}")]
         records: list[IngestRecord] = [EventRecord(data=commit_event)]
+        if detail.get("_files_truncated"):
+            records.append(
+                self._gap_event(
+                    "commit_files_truncated",
+                    f"commit {sha[:12]} on {branch} lists more files than the API returns "
+                    f"({len(files)} read); workflow changes beyond them are not analysed",
+                    key=sha,
+                    ref=f"refs/heads/{branch}",
+                    attributes={"commit_sha": sha, "files_read": len(files)},
+                )
+            )
         parent = parents[0] if parents else None
         for change in files:
-            event = self._workflow_event(
-                change, sha, parent, branch, info, actor, event_time, time_basis, sim
-            )
+            try:
+                event = self._workflow_event(
+                    change,
+                    sha,
+                    parent,
+                    branch,
+                    info,
+                    actor,
+                    event_time,
+                    time_basis,
+                    sim,
+                    initial_backfill=bool(flags.get("initial_backfill")),
+                )
+            except ValueError as exc:
+                path = clean_text(change.get("filename"), 300)
+                records.append(self._record_failure("workflow_change", f"{sha}:{path}", exc))
+                continue
             if event is not None:
                 records.append(EventRecord(data=event))
         return records
+
+    def _record_failure(
+        self, kind: str, key: str, exc: Exception, *, ref: str | None = None
+    ) -> EventRecord:
+        """Gap event for source data that cannot become a valid record.
+
+        Without it one malformed upstream item would fail every cycle at the same
+        checkpoint (a poison pill blinding the collector). Only the exception type is
+        kept: validation messages can echo attacker-controlled input.
+        """
+        self.report.errors.append(
+            clean_text(f"{kind} {key}: not convertible ({type(exc).__name__})", 400)
+        )
+        return self._gap_event(
+            "record_build_failed",
+            f"{kind} {key} could not be converted to a valid record ({type(exc).__name__}); "
+            "it was skipped",
+            key=f"{kind}:{key}",
+            ref=ref,
+            attributes={"record_kind": kind, "record_key": clean_text(key, 300)},
+        )
 
     def _workflow_content(self, path: str, ref: str) -> str | WorkflowAnalysis | None:
         """Raw workflow text at ``ref``; None when absent; an error analysis when too large."""
@@ -892,6 +1072,8 @@ class RepoPoller:
         event_time: datetime,
         time_basis: str,
         sim: str | None,
+        *,
+        initial_backfill: bool = False,
     ) -> SecurityEvent | None:
         path = str(change.get("filename") or "")
         previous = change.get("previous_filename")
@@ -956,6 +1138,7 @@ class RepoPoller:
         raw = clean_text(redacted_diff, MAX_RAW_DIFF_CHARS, single_line=False)
         attributes = delta.to_attributes() | {
             "time_basis": time_basis,
+            "initial_backfill": initial_backfill,
             "parent_sha": parent,
             "workflow_sha256_after": sha256_hex(after_text) if after_text is not None else None,
             "workflow_sha256_before": sha256_hex(before_text) if before_text is not None else None,
@@ -963,8 +1146,9 @@ class RepoPoller:
         name = (after.name if after and after.name else None) or (
             before.name if before and before.name else None
         )
-        if delta.escalation:
-            self.changed = True
+        # Any workflow change refreshes posture and inventory in this poll, so findings
+        # about workflows open (escalation) and resolve (revert) promptly.
+        self.changed = True
         return self.builder.build(
             event_type="github.workflow.modified",
             native_key=f"{sha}:{delta.path}",
@@ -992,11 +1176,29 @@ class RepoPoller:
     # ── phase 4: workflow runs ──────────────────────────────────────────────
 
     def _phase_runs(self) -> None:
+        """List workflow runs created inside a bounded window and emit state changes.
+
+        Window start = the earliest of: last listing time minus a skew margin (new runs),
+        the oldest run still open at the last listing (status transitions) and
+        ``now - RUNS_RERUN_WINDOW`` (re-run attempts keep their original ``created_at``),
+        never earlier than ``now - runs_lookback_hours``. The start is hour-aligned when
+        possible so the conditional request (ETag) can be reused between polls.
+        """
         st = self.state
-        floor = self.now - timedelta(hours=self.cfg.runs_lookback_hours)
-        cursor_time = parse_time(st.runs_cursor) or floor
-        cursor_time = max(cursor_time, floor).replace(second=0, microsecond=0)
-        cursor = iso(cursor_time).replace(".000Z", "Z")
+        lookback = timedelta(hours=self.cfg.runs_lookback_hours)
+        floor = self.now - lookback
+        listed_at = parse_time(st.runs_listed_at)
+        open_since = parse_time(st.runs_cursor)
+        candidates = [self.now - min(RUNS_RERUN_WINDOW, lookback)]
+        candidates.append(listed_at - RUNS_SKEW_MARGIN if listed_at is not None else floor)
+        if open_since is not None:
+            candidates.append(open_since)
+        window_start = max(floor, min(candidates))
+        aligned = window_start.replace(minute=0, second=0, microsecond=0)
+        window_start = (
+            aligned if aligned >= floor else window_start.replace(second=0, microsecond=0)
+        )
+        cursor = iso(window_start).replace(".000Z", "Z")
         key = f"runs:{cursor}"
         etag = st.etags.get(key)
         try:
@@ -1018,17 +1220,25 @@ class RepoPoller:
             self._gap("workflow_runs", exc)
             return
         if page.not_modified:
+            st.runs_listed_at = iso(self.now)  # unchanged listing: open runs unchanged too
             return
         for old in [k for k in st.etags if k.startswith("runs:") and k != key]:
             st.forget_etag(old)
         st.remember_etag(key, page.etag)
-        if page.truncated:
-            self.report.warnings.append(
-                "workflow runs listing truncated by max_pages; older runs in window skipped"
-            )
         records: list[IngestRecord] = []
+        if listed_at is not None and listed_at - RUNS_SKEW_MARGIN < floor:
+            gap_start = iso(listed_at - RUNS_SKEW_MARGIN)
+            records.append(
+                self._gap_event(
+                    "workflow_runs_outside_lookback",
+                    f"workflow runs created between {gap_start} and {iso(floor)} were not "
+                    f"listed (no successful listing for longer than runs_lookback_hours="
+                    f"{self.cfg.runs_lookback_hours})",
+                    key=f"{gap_start}:{iso(floor)}",
+                    attributes={"gap_start": gap_start, "gap_end": iso(floor)},
+                )
+            )
         open_created: list[str] = []
-        newest_created: str | None = None
         for run in page.items:
             if not isinstance(run, dict) or not isinstance(run.get("id"), int):
                 continue
@@ -1039,20 +1249,32 @@ class RepoPoller:
             attempt = raw_attempt if isinstance(raw_attempt, int) else 1
             if status != "completed" and created:
                 open_created.append(created)
-            if created and (newest_created is None or created > newest_created):
-                newest_created = created
             seen_value = f"{attempt}:{status}:{conclusion}|{created}"
             if st.runs_seen.get(str(run["id"])) == seen_value:
                 continue
-            records.append(EventRecord(data=self._run_event(run, status, conclusion, attempt)))
+            try:
+                records.append(EventRecord(data=self._run_event(run, status, conclusion, attempt)))
+            except ValueError as exc:
+                records.append(self._record_failure("workflow_run", f"{run['id']}:{attempt}", exc))
             st.runs_seen[str(run["id"])] = seen_value
-        if open_created:
-            new_cursor = min(open_created)
-        elif newest_created:
-            new_cursor = newest_created
-        else:
-            new_cursor = iso(cursor_time)
-        st.runs_cursor = new_cursor
+        if page.truncated:
+            created_values: list[str] = [
+                str(r["created_at"])
+                for r in page.items
+                if isinstance(r, dict) and isinstance(r.get("created_at"), str)
+            ]
+            oldest = min(created_values, default=None)
+            records.append(
+                self._gap_event(
+                    "workflow_runs_truncated",
+                    f"workflow runs listing exceeded max_pages={self.cfg.max_pages}: runs "
+                    f"created between {cursor} and {oldest} were not read",
+                    key=f"{cursor}:{oldest}",
+                    attributes={"gap_start": cursor, "gap_end": oldest},
+                )
+            )
+        st.runs_cursor = min(open_created) if open_created else None
+        st.runs_listed_at = iso(self.now)
         st.prune_runs(iso(floor))
         self.emit(records)
 
@@ -1219,10 +1441,96 @@ class RepoPoller:
                 "trigger": "change" if self.changed else "interval",
             },
         )
+        inventory = self._inventory_records(snapshot, scan.scan_run.scan_run_id, finished)
         st.last_posture_at = iso(self.now)
         self.emit(
-            [ScanRunRecord(data=scan.scan_run), *(FindingRecord(data=f) for f in scan.findings)]
+            [
+                ScanRunRecord(data=scan.scan_run),
+                *(FindingRecord(data=f) for f in scan.findings),
+                *inventory,
+            ]
         )
+
+    # ── inventory (workflows and monitored branches) ───────────────────────
+
+    def _inventory_records(
+        self, snapshot: RepoSnapshot, snapshot_id: str, observed: datetime
+    ) -> list[IngestRecord]:
+        """Full inventory snapshot plus tombstones for items that disappeared.
+
+        Unknown is not absent: workflows are only snapshotted when the tree was read, and a
+        branch is only tombstoned when it is no longer monitored or answered 404.
+        """
+        st = self.state
+        records: list[IngestRecord] = []
+
+        def item(item_type: InventoryItemType, key: str, attrs: dict[str, Any] | None) -> None:
+            records.append(
+                InventoryItemRecord(
+                    data=InventoryItem(
+                        asset_id=self.repo.asset_id,
+                        item_type=item_type,
+                        item_key=clean_text(key, 2048),
+                        attributes=attrs or {},
+                        snapshot_id=snapshot_id,
+                        observed_at=observed,
+                        present=attrs is not None,
+                        collector_id=self.collector_id,
+                    )
+                )
+            )
+
+        default_perm = self.settings.get("actions.default_workflow_permissions")
+        repo_default = default_perm if default_perm in ("read", "write") else None
+        if snapshot.workflows is not None:
+            current: list[str] = []
+            for analysis in snapshot.workflows[:MAX_WORKFLOW_FILES]:
+                current.append(analysis.path)
+                item(
+                    InventoryItemType.GITHUB_WORKFLOW,
+                    analysis.path,
+                    workflow_inventory_attributes(
+                        analysis,
+                        repo_default,
+                        blob_sha=self.workflow_blobs.get(analysis.path),
+                        head_sha=snapshot.head_sha,
+                    ),
+                )
+            for path in st.inventory_workflows:
+                if path not in current:
+                    item(InventoryItemType.GITHUB_WORKFLOW, path, None)
+            st.inventory_workflows = sorted(current)
+
+        branches: list[str] = []
+        for branch in self._monitored_branches():
+            if self.branch_status.get(branch) != "ok":
+                continue
+            branches.append(branch)
+            info = st.branch_info.get(branch) or {}
+            protection = self.protection.get(branch) or {}
+            item(
+                InventoryItemType.GITHUB_BRANCH,
+                branch,
+                {
+                    "default_branch": branch == snapshot.default_branch,
+                    "head_sha": info.get("sha"),
+                    "protected": info.get("protected"),
+                    "protection_status": protection.get("protection_status"),
+                    "required_reviews": protection.get("required_reviews"),
+                    "allow_force_pushes": protection.get("allow_force_pushes"),
+                    "rule_types": list(protection.get("rule_types") or [])[:32],
+                },
+            )
+        kept: list[str] = []
+        for branch in st.inventory_branches:
+            if branch in branches:
+                continue
+            if self.branch_status.get(branch) in (None, "missing"):
+                item(InventoryItemType.GITHUB_BRANCH, branch, None)  # deleted or unmonitored
+            else:
+                kept.append(branch)  # transient error: unknown is not absent
+        st.inventory_branches = sorted(set(branches) | set(kept))
+        return records
 
     def _inspect_tree(self, snapshot: RepoSnapshot, head: str) -> None:
         fetched = self._fetch(None, f"{self.api}/git/trees/{head}", {"recursive": 1})
@@ -1257,6 +1565,7 @@ class RepoPoller:
             size = entry.get("size")
             if not isinstance(blob, str) or not _SHA_RE.match(blob):
                 continue
+            self.workflow_blobs[path] = blob
             cached = self.cache.get(blob)
             if cached is not None and cached.path == path:
                 workflows.append(cached)

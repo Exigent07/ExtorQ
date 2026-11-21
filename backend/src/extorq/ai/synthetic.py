@@ -12,6 +12,13 @@ context built here is synthetic by construction and says so:
 Event shapes follow the event catalog (``extorq.contracts.catalog``) key fields
 so the provider sees the same structure real contexts will have. Nothing here
 is collected telemetry, and it must never be written to ClickHouse.
+
+Service model (contract 1.1): for Linux-host cases the involved services are
+derived deterministically from the events (sshd for ``auth.ssh.*``, nginx for
+``linux.nginx``, the lab web app for ``app.auth*``, systemd for
+``persistence.systemd.*``), with ``monitoring_status`` derived from the case's
+source coverage (failed/stale/gap -> degraded). Cases can also list services
+and related assets explicitly.
 """
 
 from __future__ import annotations
@@ -47,6 +54,7 @@ from extorq.contracts.context import (
     Relationship,
     RelationshipBasis,
     RelationshipType,
+    ServiceSummary,
     SourceCoverage,
     TimelineEntry,
 )
@@ -54,6 +62,8 @@ from extorq.contracts.identity import alert_id as make_alert_id
 from extorq.contracts.identity import context_id as make_context_id
 from extorq.contracts.identity import event_id as make_event_id
 from extorq.contracts.identity import input_hash, sha256_hex
+from extorq.contracts.identity import service_id as make_service_id
+from extorq.contracts.service import AdapterSupport, MonitoringStatus, ServiceCategory, ServiceKind
 
 SYNTHETIC_BUILDER_VERSION = "synthetic-eval-v1"
 SYNTHETIC_NOTICE = (
@@ -257,6 +267,104 @@ class CaseSpec:
     findings: list[FindingSummary] = field(default_factory=list)
     event_count: int | None = None
     evidence_truncated: bool = False
+    #: Explicit services; None derives them from the events (Linux hosts only).
+    services: list[ServiceSummary] | None = None
+    related_assets: list[AssetSummary] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SvcDef:
+    """A synthetic service definition (natural key + classification)."""
+
+    key: str
+    name: str
+    kind: ServiceKind
+    category: ServiceCategory
+    adapter_support: AdapterSupport = AdapterSupport.IMPLEMENTED
+
+
+#: Synthetic model of the lab VM's discovered services (B1 discovery shapes).
+LINUX_SERVICES: dict[str, SvcDef] = {
+    "ssh": SvcDef("ssh.service", "sshd", ServiceKind.HOST_SERVICE, ServiceCategory.SSH),
+    "nginx": SvcDef(
+        "nginx.service", "nginx", ServiceKind.HOST_SERVICE, ServiceCategory.HTTP_SERVER
+    ),
+    "lab-portal": SvcDef(
+        "lab-portal.service",
+        "lab-portal",
+        ServiceKind.APPLICATION,
+        ServiceCategory.WEB_APPLICATION,
+    ),
+    "systemd": SvcDef(
+        "systemd", "systemd", ServiceKind.HOST_SERVICE, ServiceCategory.SERVICE_MANAGER
+    ),
+}
+
+
+def _linux_service_key(ev: Ev) -> str | None:
+    if ev.event_type.startswith("auth.ssh."):
+        return "ssh"
+    if ev.source_type is SourceType.LINUX_NGINX:
+        return "nginx"
+    if ev.event_type.startswith(("app.auth.", "app.authz.")):
+        return "lab-portal"
+    if ev.event_type.startswith("persistence.systemd."):
+        return "systemd"
+    return None
+
+
+def _monitoring_status(source: SourceType, coverage: list[SourceCoverage]) -> MonitoringStatus:
+    for c in coverage:
+        if c.source_type == source.value:
+            problem = c.stale or c.gap_during_window or c.status is not HealthStatus.OK
+            return MonitoringStatus.DEGRADED if problem else MonitoringStatus.MONITORED
+    return MonitoringStatus.MONITORED
+
+
+def service_summary(
+    asset_id: str,
+    definition: SvcDef,
+    *,
+    role: Literal["evidence", "related"],
+    monitoring_status: MonitoringStatus = MonitoringStatus.MONITORED,
+) -> ServiceSummary:
+    return ServiceSummary(
+        service_id=make_service_id(asset_id, definition.kind.value, definition.key),
+        asset_id=asset_id,
+        name=definition.name,
+        service_kind=definition.kind.value,
+        category=definition.category.value,
+        adapter_support=definition.adapter_support.value,
+        monitoring_status=monitoring_status.value,
+        role=role,
+    )
+
+
+def _derive_services(spec: CaseSpec) -> tuple[list[ServiceSummary], dict[str, ServiceSummary]]:
+    """Services for the case and the event-key -> service mapping."""
+    if spec.services is not None:
+        return list(spec.services), {}
+    if spec.asset.asset_type is not AssetType.LINUX_HOST:
+        return [], {}
+    by_service: dict[str, list[Ev]] = {}
+    for ev in spec.events:
+        key = _linux_service_key(ev)
+        if key is not None:
+            by_service.setdefault(key, []).append(ev)
+    services: list[ServiceSummary] = []
+    by_event: dict[str, ServiceSummary] = {}
+    for key, events in sorted(by_service.items()):
+        status = _monitoring_status(events[0].source_type, spec.coverage)
+        role: Literal["evidence", "related"] = (
+            "evidence" if any(ev.evidence for ev in events) else "related"
+        )
+        summary = service_summary(
+            spec.asset.asset_id, LINUX_SERVICES[key], role=role, monitoring_status=status
+        )
+        services.append(summary)
+        for ev in events:
+            by_event[ev.key] = summary
+    return services, by_event
 
 
 def cov(
@@ -302,6 +410,7 @@ def make_context(spec: CaseSpec) -> InvestigationContext:
     last_seen = max(times[ev.key] for ev in evidence)
     bucket = first_seen.replace(second=0, microsecond=0)
     alert_id = make_alert_id(spec.rule_id, spec.group_key, bucket)
+    services, service_of = _derive_services(spec)
     alert = DetectionAlert(
         alert_id=alert_id,
         rule_id=spec.rule_id,
@@ -313,6 +422,7 @@ def make_context(spec: CaseSpec) -> InvestigationContext:
         asset_type=spec.asset.asset_type,
         group_key=spec.group_key,
         entities=spec.entities,
+        service_ids=[s.service_id for s in services if s.role == "evidence"],
         summary=spec.alert_summary,
         first_seen=first_seen,
         last_seen=last_seen,
@@ -337,6 +447,8 @@ def make_context(spec: CaseSpec) -> InvestigationContext:
             outcome=ev.outcome,
             actor_name=ev.actor,
             src_ip=ev.src_ip,
+            service_id=service_of[ev.key].service_id if ev.key in service_of else None,
+            service_name=service_of[ev.key].name if ev.key in service_of else None,
             summary=ev.summary,
             key_fields=ev.fields,
         )
@@ -375,6 +487,8 @@ def make_context(spec: CaseSpec) -> InvestigationContext:
         "alert": alert,
         "rule": rule,
         "asset": spec.asset,
+        "services": services,
+        "related_assets": spec.related_assets,
         "evidence": evidence_summaries,
         "timeline": timeline,
         "relationships": relationships,

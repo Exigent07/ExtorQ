@@ -1,0 +1,2749 @@
+{
+ "ArtifactName": "/src",
+ "ArtifactType": "filesystem",
+ "CreatedAt": "2026-11-21T14:44:59.650011929Z",
+ "ReportID": "01a1fe91-5482-7025-9723-9694330b2921",
+ "Results": [
+  {
+   "Class": "config",
+   "MisconfSummary": {
+    "Failures": 1,
+    "Successes": 26
+   },
+   "Misconfigurations": [
+    {
+     "CauseMetadata": {
+      "Provider": "Dockerfile",
+      "Service": "general"
+     },
+     "Description": "You should add HEALTHCHECK instruction in your docker container images to perform the health check on running containers.",
+     "ID": "DS-0026",
+     "Message": "Add HEALTHCHECK instruction in your Dockerfile",
+     "Namespace": "builtin.dockerfile.DS026",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ds-0026",
+     "Query": "data.builtin.dockerfile.DS026.deny",
+     "References": [
+      "https://blog.aquasec.com/docker-security-best-practices",
+      "https://avd.aquasec.com/misconfig/ds-0026"
+     ],
+     "Resolution": "Add HEALTHCHECK instruction in Dockerfile",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "No HEALTHCHECK defined",
+     "Type": "Dockerfile Security Check"
+    }
+   ],
+   "Target": "infra/kind/apps/lab-portal/Dockerfile",
+   "Type": "dockerfile"
+  },
+  {
+   "Class": "config",
+   "MisconfSummary": {
+    "Failures": 0,
+    "Successes": 113
+   },
+   "Target": "infra/kind/manifests/00-namespaces.yaml",
+   "Type": "kubernetes"
+  },
+  {
+   "Class": "config",
+   "MisconfSummary": {
+    "Failures": 0,
+    "Successes": 113
+   },
+   "Target": "infra/kind/manifests/10-inventory-rbac.yaml",
+   "Type": "kubernetes"
+  },
+  {
+   "Class": "config",
+   "MisconfSummary": {
+    "Failures": 0,
+    "Successes": 113
+   },
+   "Target": "infra/kind/manifests/20-otel-rbac.yaml",
+   "Type": "kubernetes"
+  },
+  {
+   "Class": "config",
+   "MisconfSummary": {
+    "Failures": 8,
+    "Successes": 106
+   },
+   "Misconfigurations": [
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: otel-collector",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: otel-collector",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 60,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 61,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 62,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          args: [\"--config=/conf/collector.yaml\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33margs\u001b[0m: [\u001b[38;5;37m\"--config=/conf/collector.yaml\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 63,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          env:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33menv\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 64,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: POD_IP",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: POD_IP",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 65,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              valueFrom:",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mvalueFrom\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 66,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "                fieldRef:",
+         "FirstCause": false,
+         "Highlighted": "                \u001b[38;5;33mfieldRef\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 67,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "                  fieldPath: status.podIP",
+         "FirstCause": false,
+         "Highlighted": "                  \u001b[38;5;33mfieldPath\u001b[0m: status.podIP",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 68,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "",
+         "FirstCause": false,
+         "IsCause": false,
+         "LastCause": false,
+         "Number": 69,
+         "Truncated": true
+        }
+       ]
+      },
+      "EndLine": 120,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 60
+     },
+     "Description": "Force the running image to run as a non-root user to ensure least privileges.",
+     "ID": "KSV-0012",
+     "Message": "Container 'otel-collector' of DaemonSet 'extorq-otel-collector' should set 'securityContext.runAsNonRoot' to true",
+     "Namespace": "builtin.kubernetes.KSV012",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0012",
+     "Query": "data.builtin.kubernetes.KSV012.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0012"
+     ],
+     "Resolution": "Set 'containers[].securityContext.runAsNonRoot' to true.",
+     "Severity": "MEDIUM",
+     "Status": "FAIL",
+     "Title": "Runs as root user",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: otel-collector",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: otel-collector",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 60,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 61,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 62,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          args: [\"--config=/conf/collector.yaml\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33margs\u001b[0m: [\u001b[38;5;37m\"--config=/conf/collector.yaml\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 63,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          env:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33menv\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 64,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: POD_IP",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: POD_IP",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 65,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              valueFrom:",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mvalueFrom\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 66,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "                fieldRef:",
+         "FirstCause": false,
+         "Highlighted": "                \u001b[38;5;33mfieldRef\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 67,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "                  fieldPath: status.podIP",
+         "FirstCause": false,
+         "Highlighted": "                  \u001b[38;5;33mfieldPath\u001b[0m: status.podIP",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 68,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "",
+         "FirstCause": false,
+         "IsCause": false,
+         "LastCause": false,
+         "Number": 69,
+         "Truncated": true
+        }
+       ]
+      },
+      "EndLine": 120,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 60
+     },
+     "Description": "Force the container to run with user ID > 10000 to avoid conflicts with the host\u2019s user table.",
+     "ID": "KSV-0020",
+     "Message": "Container 'otel-collector' of DaemonSet 'extorq-otel-collector' should set 'securityContext.runAsUser' > 10000",
+     "Namespace": "builtin.kubernetes.KSV020",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0020",
+     "Query": "data.builtin.kubernetes.KSV020.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-securitycontext-runasuser/",
+      "https://avd.aquasec.com/misconfig/ksv-0020"
+     ],
+     "Resolution": "Set 'containers[].securityContext.runAsUser' to an integer > 10000.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Runs with UID <= 10000",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: otel-collector",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: otel-collector",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 60,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 61,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 62,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          args: [\"--config=/conf/collector.yaml\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33margs\u001b[0m: [\u001b[38;5;37m\"--config=/conf/collector.yaml\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 63,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          env:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33menv\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 64,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: POD_IP",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: POD_IP",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 65,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              valueFrom:",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mvalueFrom\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 66,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "                fieldRef:",
+         "FirstCause": false,
+         "Highlighted": "                \u001b[38;5;33mfieldRef\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 67,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "                  fieldPath: status.podIP",
+         "FirstCause": false,
+         "Highlighted": "                  \u001b[38;5;33mfieldPath\u001b[0m: status.podIP",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 68,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "",
+         "FirstCause": false,
+         "IsCause": false,
+         "LastCause": false,
+         "Number": 69,
+         "Truncated": true
+        }
+       ]
+      },
+      "EndLine": 120,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 60
+     },
+     "Description": "Force the container to run with group ID > 10000 to avoid conflicts with the host\u2019s user table.",
+     "ID": "KSV-0021",
+     "Message": "Container 'otel-collector' of DaemonSet 'extorq-otel-collector' should set 'securityContext.runAsGroup' > 10000",
+     "Namespace": "builtin.kubernetes.KSV021",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0021",
+     "Query": "data.builtin.kubernetes.KSV021.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-securitycontext-runasuser/",
+      "https://avd.aquasec.com/misconfig/ksv-0021"
+     ],
+     "Resolution": "Set 'containers[].securityContext.runAsGroup' to an integer > 10000.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Runs with GID <= 10000",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "spec:",
+         "FirstCause": true,
+         "Highlighted": "\u001b[38;5;33mspec\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 27,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "  selector:",
+         "FirstCause": false,
+         "Highlighted": "  \u001b[38;5;33mselector\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 28,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "    matchLabels:",
+         "FirstCause": false,
+         "Highlighted": "    \u001b[38;5;33mmatchLabels\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 29,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "      app.kubernetes.io/name: extorq-otel-collector",
+         "FirstCause": false,
+         "Highlighted": "      \u001b[38;5;33mapp.kubernetes.io/name\u001b[0m: extorq-otel-collector",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 30,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "  updateStrategy:",
+         "FirstCause": false,
+         "Highlighted": "  \u001b[38;5;33mupdateStrategy\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 31,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "    type: RollingUpdate",
+         "FirstCause": false,
+         "Highlighted": "    \u001b[38;5;33mtype\u001b[0m: RollingUpdate",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 32,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "    rollingUpdate:",
+         "FirstCause": false,
+         "Highlighted": "    \u001b[38;5;33mrollingUpdate\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 33,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "      maxUnavailable: 1",
+         "FirstCause": false,
+         "Highlighted": "      \u001b[38;5;33mmaxUnavailable\u001b[0m: \u001b[38;5;37m1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 34,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "  template:",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m  \u001b[38;5;33mtemplate\u001b[0m:",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 35,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "",
+         "FirstCause": false,
+         "IsCause": false,
+         "LastCause": false,
+         "Number": 36,
+         "Truncated": true
+        }
+       ]
+      },
+      "EndLine": 143,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 27
+     },
+     "Description": "According to pod security standard 'HostPath Volumes', HostPath volumes must be forbidden.",
+     "ID": "KSV-0023",
+     "Message": "DaemonSet 'extorq-otel-collector' should not set 'spec.template.volumes.hostPath'",
+     "Namespace": "builtin.kubernetes.KSV023",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0023",
+     "Query": "data.builtin.kubernetes.KSV023.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline",
+      "https://avd.aquasec.com/misconfig/ksv-0023"
+     ],
+     "Resolution": "Do not set 'spec.volumes[*].hostPath'.",
+     "Severity": "MEDIUM",
+     "Status": "FAIL",
+     "Title": "hostPath volumes mounted",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "      securityContext:",
+         "FirstCause": true,
+         "Highlighted": "      \u001b[38;5;33msecurityContext\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 53,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "        runAsUser: 0",
+         "FirstCause": false,
+         "Highlighted": "        \u001b[38;5;33mrunAsUser\u001b[0m: \u001b[38;5;37m0",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 54,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "        runAsGroup: 0",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m        \u001b[38;5;33mrunAsGroup\u001b[0m: \u001b[38;5;37m0",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 55,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "        runAsNonRoot: false",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m        \u001b[38;5;33mrunAsNonRoot\u001b[0m: \u001b[38;5;166mfalse",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 56,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "        seccompProfile:",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m        \u001b[38;5;33mseccompProfile\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 57,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          type: RuntimeDefault",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mtype\u001b[0m: RuntimeDefault",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 58,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 58,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 53
+     },
+     "Description": "Containers should be forbidden from running with a root UID.",
+     "ID": "KSV-0105",
+     "Message": "securityContext.runAsUser should be set to a value greater than 0",
+     "Namespace": "builtin.kubernetes.KSV105",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0105",
+     "Query": "data.builtin.kubernetes.KSV105.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0105"
+     ],
+     "Resolution": "Set 'securityContext.runAsUser' to a non-zero integer or leave undefined.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Containers must not set runAsUser to 0",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "          securityContext:",
+         "FirstCause": true,
+         "Highlighted": "          \u001b[38;5;33msecurityContext\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 97,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            privileged: false",
+         "FirstCause": false,
+         "Highlighted": "            \u001b[38;5;33mprivileged\u001b[0m: \u001b[38;5;166mfalse",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 98,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            allowPrivilegeEscalation: false",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m            \u001b[38;5;33mallowPrivilegeEscalation\u001b[0m: \u001b[38;5;166mfalse",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 99,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            readOnlyRootFilesystem: true",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m            \u001b[38;5;33mreadOnlyRootFilesystem\u001b[0m: \u001b[38;5;166mtrue",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 100,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            capabilities:",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m            \u001b[38;5;33mcapabilities\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 101,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              drop: [\"ALL\"]",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mdrop\u001b[0m: [\u001b[38;5;37m\"ALL\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 102,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 102,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 97
+     },
+     "Description": "Containers should be forbidden from running with a root UID.",
+     "ID": "KSV-0105",
+     "Message": "securityContext.runAsUser should be set to a value greater than 0",
+     "Namespace": "builtin.kubernetes.KSV105",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0105",
+     "Query": "data.builtin.kubernetes.KSV105.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0105"
+     ],
+     "Resolution": "Set 'securityContext.runAsUser' to a non-zero integer or leave undefined.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Containers must not set runAsUser to 0",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Provider": "Kubernetes",
+      "Service": "general"
+     },
+     "Description": "According to pod security standard 'Non-root groups', containers should be forbidden from running with a root primary or supplementary GID.",
+     "ID": "KSV-0116",
+     "Message": "daemonset extorq-otel-collector in extorq-system namespace should set spec.securityContext.runAsGroup, spec.securityContext.supplementalGroups[*] and spec.securityContext.fsGroup to integer greater than 0",
+     "Namespace": "builtin.kubernetes.KSV116",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0116",
+     "Query": "data.builtin.kubernetes.KSV116.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-securitycontext-runasuser/",
+      "https://avd.aquasec.com/misconfig/ksv-0116"
+     ],
+     "Resolution": "Set 'containers[].securityContext.runAsGroup' to a non-zero integer or leave undefined.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Runs with a root primary or supplementary GID",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: otel-collector",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: otel-collector",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 60,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 61,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 62,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          args: [\"--config=/conf/collector.yaml\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33margs\u001b[0m: [\u001b[38;5;37m\"--config=/conf/collector.yaml\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 63,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          env:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33menv\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 64,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: POD_IP",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: POD_IP",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 65,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              valueFrom:",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mvalueFrom\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 66,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "                fieldRef:",
+         "FirstCause": false,
+         "Highlighted": "                \u001b[38;5;33mfieldRef\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 67,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "                  fieldPath: status.podIP",
+         "FirstCause": false,
+         "Highlighted": "                  \u001b[38;5;33mfieldPath\u001b[0m: status.podIP",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 68,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "",
+         "FirstCause": false,
+         "IsCause": false,
+         "LastCause": false,
+         "Number": 69,
+         "Truncated": true
+        }
+       ]
+      },
+      "EndLine": 120,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 60
+     },
+     "Description": "Ensure that all containers use images only from trusted registry domains.",
+     "ID": "KSV-0125",
+     "Message": "Container otel-collector in daemonset extorq-otel-collector (namespace: extorq-system) uses an image from an untrusted registry.",
+     "Namespace": "builtin.kubernetes.KSV0125",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0125",
+     "Query": "data.builtin.kubernetes.KSV0125.deny",
+     "References": [
+      "https://cloud.google.com/container-registry/docs/overview#registries",
+      "https://docs.aws.amazon.com/general/latest/gr/ecr.html",
+      "https://avd.aquasec.com/misconfig/ksv-0125"
+     ],
+     "Resolution": "Use images from trusted registries.",
+     "Severity": "MEDIUM",
+     "Status": "FAIL",
+     "Title": "Restrict container images to trusted registries",
+     "Type": "Kubernetes Security Check"
+    }
+   ],
+   "Target": "var/kind/21-otel-daemonset.yaml",
+   "Type": "kubernetes"
+  },
+  {
+   "Class": "config",
+   "MisconfSummary": {
+    "Failures": 1,
+    "Successes": 113
+   },
+   "Misconfigurations": [
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: lab-portal",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: lab-portal",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 56,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: extorq/lab-portal:2aa9e4797693",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: extorq/lab-portal:2aa9e4797693",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 57,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: Never",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: Never",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 58,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          env:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33menv\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 59,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: LAB_PORTAL_HOST",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: LAB_PORTAL_HOST",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 60,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              value: \"0.0.0.0\"",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mvalue\u001b[0m: \u001b[38;5;37m\"0.0.0.0\"",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 61,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: LAB_PORTAL_PORT",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m            - \u001b[38;5;33mname\u001b[0m: LAB_PORTAL_PORT",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 62,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              value: \"8080\"",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mvalue\u001b[0m: \u001b[38;5;37m\"8080\"",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 63,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: LOG_ACCESS",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m            - \u001b[38;5;33mname\u001b[0m: LOG_ACCESS",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 64,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "",
+         "FirstCause": false,
+         "IsCause": false,
+         "LastCause": false,
+         "Number": 65,
+         "Truncated": true
+        }
+       ]
+      },
+      "EndLine": 105,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 56
+     },
+     "Description": "Ensure that all containers use images only from trusted registry domains.",
+     "ID": "KSV-0125",
+     "Message": "Container lab-portal in deployment lab-portal (namespace: extorq-apps) uses an image from an untrusted registry.",
+     "Namespace": "builtin.kubernetes.KSV0125",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0125",
+     "Query": "data.builtin.kubernetes.KSV0125.deny",
+     "References": [
+      "https://cloud.google.com/container-registry/docs/overview#registries",
+      "https://docs.aws.amazon.com/general/latest/gr/ecr.html",
+      "https://avd.aquasec.com/misconfig/ksv-0125"
+     ],
+     "Resolution": "Use images from trusted registries.",
+     "Severity": "MEDIUM",
+     "Status": "FAIL",
+     "Title": "Restrict container images to trusted registries",
+     "Type": "Kubernetes Security Check"
+    }
+   ],
+   "Target": "var/kind/30-lab-portal.yaml",
+   "Type": "kubernetes"
+  },
+  {
+   "Class": "config",
+   "MisconfSummary": {
+    "Failures": 17,
+    "Successes": 97
+   },
+   "Misconfigurations": [
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "A program inside the container can elevate its own privileges and run as root, which might give the program control over the container and node.",
+     "ID": "KSV-0001",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'securityContext.allowPrivilegeEscalation' to false",
+     "Namespace": "builtin.kubernetes.KSV001",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0001",
+     "Query": "data.builtin.kubernetes.KSV001.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0001"
+     ],
+     "Resolution": "Set 'set containers[].securityContext.allowPrivilegeEscalation' to 'false'.",
+     "Severity": "MEDIUM",
+     "Status": "FAIL",
+     "Title": "Can elevate its own privileges",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "The container should drop all default capabilities and add only those that are needed for its execution.",
+     "ID": "KSV-0003",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should add 'ALL' to 'securityContext.capabilities.drop'",
+     "Namespace": "builtin.kubernetes.KSV003",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0003",
+     "Query": "data.builtin.kubernetes.KSV003.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-securitycontext-capabilities-drop-index-all/",
+      "https://avd.aquasec.com/misconfig/ksv-0003"
+     ],
+     "Resolution": "Add 'ALL' to containers[].securityContext.capabilities.drop.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Default capabilities: some containers do not drop all",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "Security best practices require containers to run with minimal required capabilities.",
+     "ID": "KSV-0004",
+     "Message": "Container 'reader' of 'deployment' 'weak-log-reader' in 'extorq-posture-lab' namespace should set securityContext.capabilities.drop",
+     "Namespace": "builtin.kubernetes.KSV004",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0004",
+     "Query": "data.builtin.kubernetes.KSV004.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-securitycontext-capabilities-drop-index-all/",
+      "https://avd.aquasec.com/misconfig/ksv-0004"
+     ],
+     "Resolution": "Specify at least one unneeded capability in 'containers[].securityContext.capabilities.drop'",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Default capabilities: some containers do not drop any",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "Enforcing CPU limits prevents DoS via resource exhaustion.",
+     "ID": "KSV-0011",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'resources.limits.cpu'",
+     "Namespace": "builtin.kubernetes.KSV011",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0011",
+     "Query": "data.builtin.kubernetes.KSV011.deny",
+     "References": [
+      "https://cloud.google.com/blog/products/containers-kubernetes/kubernetes-best-practices-resource-requests-and-limits",
+      "https://avd.aquasec.com/misconfig/ksv-0011"
+     ],
+     "Resolution": "Set a limit value under 'containers[].resources.limits.cpu'.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "CPU not limited",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "Force the running image to run as a non-root user to ensure least privileges.",
+     "ID": "KSV-0012",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'securityContext.runAsNonRoot' to true",
+     "Namespace": "builtin.kubernetes.KSV012",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0012",
+     "Query": "data.builtin.kubernetes.KSV012.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0012"
+     ],
+     "Resolution": "Set 'containers[].securityContext.runAsNonRoot' to true.",
+     "Severity": "MEDIUM",
+     "Status": "FAIL",
+     "Title": "Runs as root user",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "An immutable root file system prevents applications from writing to their local disk. This can limit intrusions, as attackers will not be able to tamper with the file system or write foreign executables to disk.",
+     "ID": "KSV-0014",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'securityContext.readOnlyRootFilesystem' to true",
+     "Namespace": "builtin.kubernetes.KSV014",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0014",
+     "Query": "data.builtin.kubernetes.KSV014.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-securitycontext-readonlyrootfilesystem-true/",
+      "https://avd.aquasec.com/misconfig/ksv-0014"
+     ],
+     "Resolution": "Change 'containers[].securityContext.readOnlyRootFilesystem' to 'true'.",
+     "Severity": "HIGH",
+     "Status": "FAIL",
+     "Title": "Root file system is not read-only",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "When containers have resource requests specified, the scheduler can make better decisions about which nodes to place pods on, and how to deal with resource contention.",
+     "ID": "KSV-0015",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'resources.requests.cpu'",
+     "Namespace": "builtin.kubernetes.KSV015",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0015",
+     "Query": "data.builtin.kubernetes.KSV015.deny",
+     "References": [
+      "https://cloud.google.com/blog/products/containers-kubernetes/kubernetes-best-practices-resource-requests-and-limits",
+      "https://avd.aquasec.com/misconfig/ksv-0015"
+     ],
+     "Resolution": "Set 'containers[].resources.requests.cpu'.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "CPU requests not specified",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "When containers have memory requests specified, the scheduler can make better decisions about which nodes to place pods on, and how to deal with resource contention.",
+     "ID": "KSV-0016",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'resources.requests.memory'",
+     "Namespace": "builtin.kubernetes.KSV016",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0016",
+     "Query": "data.builtin.kubernetes.KSV016.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-resources-limits-memory/",
+      "https://avd.aquasec.com/misconfig/ksv-0016"
+     ],
+     "Resolution": "Set 'containers[].resources.requests.memory'.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Memory requests not specified",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "Enforcing memory limits prevents DoS via resource exhaustion.",
+     "ID": "KSV-0018",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'resources.limits.memory'",
+     "Namespace": "builtin.kubernetes.KSV018",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0018",
+     "Query": "data.builtin.kubernetes.KSV018.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-resources-limits-memory/",
+      "https://avd.aquasec.com/misconfig/ksv-0018"
+     ],
+     "Resolution": "Set a limit value under 'containers[].resources.limits.memory'.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Memory not limited",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "Force the container to run with user ID > 10000 to avoid conflicts with the host\u2019s user table.",
+     "ID": "KSV-0020",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'securityContext.runAsUser' > 10000",
+     "Namespace": "builtin.kubernetes.KSV020",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0020",
+     "Query": "data.builtin.kubernetes.KSV020.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-securitycontext-runasuser/",
+      "https://avd.aquasec.com/misconfig/ksv-0020"
+     ],
+     "Resolution": "Set 'containers[].securityContext.runAsUser' to an integer > 10000.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Runs with UID <= 10000",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "Force the container to run with group ID > 10000 to avoid conflicts with the host\u2019s user table.",
+     "ID": "KSV-0021",
+     "Message": "Container 'reader' of Deployment 'weak-log-reader' should set 'securityContext.runAsGroup' > 10000",
+     "Namespace": "builtin.kubernetes.KSV021",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0021",
+     "Query": "data.builtin.kubernetes.KSV021.deny",
+     "References": [
+      "https://kubesec.io/basics/containers-securitycontext-runasuser/",
+      "https://avd.aquasec.com/misconfig/ksv-0021"
+     ],
+     "Resolution": "Set 'containers[].securityContext.runAsGroup' to an integer > 10000.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Runs with GID <= 10000",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "spec:",
+         "FirstCause": true,
+         "Highlighted": "\u001b[38;5;33mspec\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 25,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "  replicas: 1",
+         "FirstCause": false,
+         "Highlighted": "  \u001b[38;5;33mreplicas\u001b[0m: \u001b[38;5;37m1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 26,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "  selector:",
+         "FirstCause": false,
+         "Highlighted": "\u001b[0m  \u001b[38;5;33mselector\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 27,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "    matchLabels:",
+         "FirstCause": false,
+         "Highlighted": "    \u001b[38;5;33mmatchLabels\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 28,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "      app.kubernetes.io/name: weak-log-reader",
+         "FirstCause": false,
+         "Highlighted": "      \u001b[38;5;33mapp.kubernetes.io/name\u001b[0m: weak-log-reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 29,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "  template:",
+         "FirstCause": false,
+         "Highlighted": "  \u001b[38;5;33mtemplate\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 30,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "    metadata:",
+         "FirstCause": false,
+         "Highlighted": "    \u001b[38;5;33mmetadata\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 31,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "      labels:",
+         "FirstCause": false,
+         "Highlighted": "      \u001b[38;5;33mlabels\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 32,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "        app.kubernetes.io/name: weak-log-reader",
+         "FirstCause": false,
+         "Highlighted": "        \u001b[38;5;33mapp.kubernetes.io/name\u001b[0m: weak-log-reader",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 33,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "",
+         "FirstCause": false,
+         "IsCause": false,
+         "LastCause": false,
+         "Number": 34,
+         "Truncated": true
+        }
+       ]
+      },
+      "EndLine": 52,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 25
+     },
+     "Description": "According to pod security standard 'HostPath Volumes', HostPath volumes must be forbidden.",
+     "ID": "KSV-0023",
+     "Message": "Deployment 'weak-log-reader' should not set 'spec.template.volumes.hostPath'",
+     "Namespace": "builtin.kubernetes.KSV023",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0023",
+     "Query": "data.builtin.kubernetes.KSV023.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline",
+      "https://avd.aquasec.com/misconfig/ksv-0023"
+     ],
+     "Resolution": "Do not set 'spec.volumes[*].hostPath'.",
+     "Severity": "MEDIUM",
+     "Status": "FAIL",
+     "Title": "hostPath volumes mounted",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "According to pod security standard 'Seccomp', the RuntimeDefault seccomp profile must be required, or allow specific additional profiles.",
+     "ID": "KSV-0030",
+     "Message": "Either Pod or Container should set 'securityContext.seccompProfile.type' to 'RuntimeDefault'",
+     "Namespace": "builtin.kubernetes.KSV030",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0030",
+     "Query": "data.builtin.kubernetes.KSV030.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0030"
+     ],
+     "Resolution": "Set 'spec.securityContext.seccompProfile.type', 'spec.containers[*].securityContext.seccompProfile' and 'spec.initContainers[*].securityContext.seccompProfile' to 'RuntimeDefault' or undefined.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Runtime/Default Seccomp profile not set",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "A program inside the container can bypass Seccomp protection policies.",
+     "ID": "KSV-0104",
+     "Message": "container \"reader\" of deployment \"weak-log-reader\" in \"extorq-posture-lab\" namespace should specify a seccomp profile",
+     "Namespace": "builtin.kubernetes.KSV104",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0104",
+     "Query": "data.builtin.kubernetes.KSV104.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#baseline",
+      "https://avd.aquasec.com/misconfig/ksv-0104"
+     ],
+     "Resolution": "Specify seccomp either by annotation or by seccomp profile type having allowed values as per pod security standards",
+     "Severity": "MEDIUM",
+     "Status": "FAIL",
+     "Title": "Seccomp policies disabled",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Provider": "Kubernetes",
+      "Service": "general"
+     },
+     "Description": "Containers should be forbidden from running with a root UID.",
+     "ID": "KSV-0105",
+     "Message": "securityContext.runAsUser should be set to a value greater than 0",
+     "Namespace": "builtin.kubernetes.KSV105",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0105",
+     "Query": "data.builtin.kubernetes.KSV105.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0105"
+     ],
+     "Resolution": "Set 'securityContext.runAsUser' to a non-zero integer or leave undefined.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Containers must not set runAsUser to 0",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "      securityContext:",
+         "FirstCause": true,
+         "Highlighted": "      \u001b[38;5;33msecurityContext\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 37,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "        runAsUser: 0",
+         "FirstCause": false,
+         "Highlighted": "        \u001b[38;5;33mrunAsUser\u001b[0m: \u001b[38;5;37m0\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 38,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 38,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 37
+     },
+     "Description": "Containers should be forbidden from running with a root UID.",
+     "ID": "KSV-0105",
+     "Message": "securityContext.runAsUser should be set to a value greater than 0",
+     "Namespace": "builtin.kubernetes.KSV105",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0105",
+     "Query": "data.builtin.kubernetes.KSV105.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0105"
+     ],
+     "Resolution": "Set 'securityContext.runAsUser' to a non-zero integer or leave undefined.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Containers must not set runAsUser to 0",
+     "Type": "Kubernetes Security Check"
+    },
+    {
+     "CauseMetadata": {
+      "Code": {
+       "Lines": [
+        {
+         "Annotation": "",
+         "Content": "        - name: reader",
+         "FirstCause": true,
+         "Highlighted": "        - \u001b[38;5;33mname\u001b[0m: reader",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 40,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimage\u001b[0m: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 41,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          imagePullPolicy: IfNotPresent",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mimagePullPolicy\u001b[0m: IfNotPresent",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 42,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          command: [\"/bin/sh\", \"-c\", \"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"]",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mcommand\u001b[0m: [\u001b[38;5;37m\"/bin/sh\"\u001b[0m, \u001b[38;5;37m\"-c\"\u001b[0m, \u001b[38;5;37m\"trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done\"\u001b[0m]",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 43,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "          volumeMounts:",
+         "FirstCause": false,
+         "Highlighted": "          \u001b[38;5;33mvolumeMounts\u001b[0m:",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 44,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "            - name: node-logs",
+         "FirstCause": false,
+         "Highlighted": "            - \u001b[38;5;33mname\u001b[0m: node-logs",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 45,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              mountPath: /host/var/log/extorq-posture-lab",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mmountPath\u001b[0m: /host/var/log/extorq-posture-lab",
+         "IsCause": true,
+         "LastCause": false,
+         "Number": 46,
+         "Truncated": false
+        },
+        {
+         "Annotation": "",
+         "Content": "              readOnly: true",
+         "FirstCause": false,
+         "Highlighted": "              \u001b[38;5;33mreadOnly\u001b[0m: \u001b[38;5;166mtrue\u001b[0m",
+         "IsCause": true,
+         "LastCause": true,
+         "Number": 47,
+         "Truncated": false
+        }
+       ]
+      },
+      "EndLine": 47,
+      "Provider": "Kubernetes",
+      "Service": "general",
+      "StartLine": 40
+     },
+     "Description": "Containers must drop ALL capabilities, and are only permitted to add back the NET_BIND_SERVICE capability.",
+     "ID": "KSV-0106",
+     "Message": "container should drop all",
+     "Namespace": "builtin.kubernetes.KSV106",
+     "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv-0106",
+     "Query": "data.builtin.kubernetes.KSV106.deny",
+     "References": [
+      "https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted",
+      "https://avd.aquasec.com/misconfig/ksv-0106"
+     ],
+     "Resolution": "Set 'spec.containers[*].securityContext.capabilities.drop' to 'ALL' and only add 'NET_BIND_SERVICE' to 'spec.containers[*].securityContext.capabilities.add'.",
+     "Severity": "LOW",
+     "Status": "FAIL",
+     "Title": "Container capabilities must only include NET_BIND_SERVICE",
+     "Type": "Kubernetes Security Check"
+    }
+   ],
+   "Target": "var/kind/40-posture-lab.yaml",
+   "Type": "kubernetes"
+  }
+ ],
+ "SchemaVersion": 2,
+ "Trivy": {
+  "Version": "0.76.2"
+ }
+}

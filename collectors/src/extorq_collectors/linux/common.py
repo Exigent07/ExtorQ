@@ -39,13 +39,13 @@ from extorq.contracts import (
     Provenance,
     Resource,
     SecurityEvent,
+    ServiceRef,
     Severity,
     SimulationTag,
     SourceInfo,
     SourceType,
 )
 from extorq.contracts.identity import event_id, sha256_hex
-
 from extorq_collectors import __version__ as _package_version
 
 COLLECTOR_TYPE = "linux_ssh"
@@ -72,8 +72,14 @@ _ATTR_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 
 #: syslog PRIORITY -> severity hint (source-reported severity, not a verdict).
 _PRIORITY_SEVERITY = {
-    0: Severity.CRITICAL, 1: Severity.CRITICAL, 2: Severity.CRITICAL, 3: Severity.HIGH,
-    4: Severity.MEDIUM, 5: Severity.LOW, 6: Severity.INFO, 7: Severity.INFO,
+    0: Severity.CRITICAL,
+    1: Severity.CRITICAL,
+    2: Severity.CRITICAL,
+    3: Severity.HIGH,
+    4: Severity.MEDIUM,
+    5: Severity.LOW,
+    6: Severity.INFO,
+    7: Severity.INFO,
 }
 
 
@@ -89,6 +95,8 @@ class ParseContext:
     self_uid: int | None = None
     #: Time the collector read the records (UTC).
     observed_time: datetime | None = None
+    #: Service the parsed records belong to (set by the owning service adapter only).
+    service: ServiceRef | None = None
 
 
 def utc_now_ms() -> datetime:
@@ -209,8 +217,13 @@ def build_event(
     sim_texts: Iterable[str | None] = (),
     is_self: bool = False,
     extra_redactions: int = 0,
+    attach_service: bool = True,
 ) -> SecurityEvent:
-    """Build a validated :class:`SecurityEvent` (raises ValueError on contract violations)."""
+    """Build a validated :class:`SecurityEvent` (raises ValueError on contract violations).
+
+    ``ctx.service`` is attached unless ``attach_service`` is False (records whose claimed
+    origin is contradicted by trusted fields never belong to the claimed service).
+    """
     spec = EVENT_CATALOG.get(event_type)
     if spec is None:
         raise ValueError(f"event type {event_type!r} is not in the catalog")
@@ -245,6 +258,7 @@ def build_event(
         network=network,
         process=process,
         http=http,
+        service=ctx.service if attach_service else None,
         message=safe_message,
         attributes=bound_attributes(attributes or {}),
         labels=event_labels,
@@ -256,5 +270,5 @@ def build_event(
             truncated=truncated,
             redaction_count=msg_redactions + raw_redactions + extra_redactions,
         ),
-        simulation=find_simulation(list(sim_texts) + [message, raw]),
+        simulation=find_simulation([*sim_texts, message, raw]),
     )

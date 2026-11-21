@@ -16,6 +16,7 @@ derived with ``identity.event_id`` from a deterministic synthetic native key.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -167,6 +168,70 @@ def ssh_failed_connection(
     )
 
 
+PROBE_ROUTES = (
+    "/.env",
+    "/.git/config",
+    "/wp-login.php",
+    "/phpmyadmin/index.php",
+    "/server-status",
+    "/actuator/health",
+    "/cgi-bin/test.cgi",
+    "/backup.zip",
+    "/.aws/credentials",
+    "/admin.php",
+    "/xmlrpc.php",
+    "/config.json",
+)
+
+
+def nginx_request(
+    fx: FixtureWriter,
+    t: datetime,
+    ip: str,
+    route: str,
+    status: int,
+    *,
+    method: str = "GET",
+    simulation: dict[str, str] | None = None,
+) -> None:
+    """One nginx JSON access line as B1's linux-nginx-json parser maps it (http.request)."""
+    fields: dict[str, Any] = {"simulation": simulation} if simulation else {}
+    fx.add(
+        "http.request",
+        t,
+        source_type="linux.nginx",
+        action="http.request",
+        outcome="failure" if status >= 400 else "success",
+        network={"src_ip": ip, "protocol": "tcp", "direction": "inbound"},
+        http={
+            "method": method,
+            "route": route,
+            "status_code": status,
+            "request_id": hashlib.sha256(f"{fx.name}:{len(fx.events)}".encode()).hexdigest()[:32],
+            "user_agent": "fixture-synthetic-scanner/1.0",
+        },
+        message=f"{method} {route} -> {status}",
+        **fields,
+    )
+
+
+def http_probe(
+    fx: FixtureWriter,
+    t: datetime,
+    ip: str,
+    *,
+    routes: tuple[str, ...] = PROBE_ROUTES,
+    spacing_s: float = 4.0,
+    status: int = 404,
+    simulation: dict[str, str] | None = None,
+) -> None:
+    """A scanner requesting probe-like paths, each answered with a client error."""
+    for i, route in enumerate(routes):
+        nginx_request(
+            fx, t + timedelta(seconds=i * spacing_s), ip, route, status, simulation=simulation
+        )
+
+
 def ssh_success(
     fx: FixtureWriter, t: datetime, ip: str, port: int, user: str, *, pid: int = 4100
 ) -> None:
@@ -200,7 +265,7 @@ def k8s_audit_events(
     Unmodified records are labelled ``derived-captured``; records edited here (e.g. the
     object renamed to carry a simulation marker) are labelled ``synthetic``.
     """
-    from extorq.ingest.otlp_k8s import normalize_otlp_logs  # noqa: PLC0415 - B2-owned
+    from extorq.ingest.otlp_k8s import normalize_otlp_logs
 
     record = json.loads((AUDIT_FIXTURES / filename).read_text(encoding="utf-8"))
     labels = DERIVED_LABELS
@@ -212,22 +277,45 @@ def k8s_audit_events(
         labels = SYNTHETIC_LABELS
     when = received_at or datetime.fromisoformat(record["stageTimestamp"].replace("Z", "+00:00"))
     payload = {
-        "resourceLogs": [{
-            "resource": {"attributes": [
-                {"key": "extorq.source", "value": {"stringValue": "audit"}},
-                {"key": "k8s.cluster.name", "value": {"stringValue": "extorq-lab"}},
-                {"key": "k8s.node.name", "value": {"stringValue": "extorq-lab-control-plane"}},
-                {"key": "extorq.collector.version", "value": {"stringValue": "otelcol-contrib/0.165.0"}},
-            ]},
-            "scopeLogs": [{"scope": {}, "logRecords": [{
-                "observedTimeUnixNano": str(int(when.timestamp() * 1e9)),
-                "body": {"stringValue": json.dumps(record)},
-                "attributes": [{"key": "log.file.name",
-                                "value": {"stringValue": "kube-apiserver-audit.log"}}],
-            }]}],
-        }]
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "extorq.source", "value": {"stringValue": "audit"}},
+                        {"key": "k8s.cluster.name", "value": {"stringValue": "extorq-lab"}},
+                        {
+                            "key": "k8s.node.name",
+                            "value": {"stringValue": "extorq-lab-control-plane"},
+                        },
+                        {
+                            "key": "extorq.collector.version",
+                            "value": {"stringValue": "otelcol-contrib/0.165.0"},
+                        },
+                    ]
+                },
+                "scopeLogs": [
+                    {
+                        "scope": {},
+                        "logRecords": [
+                            {
+                                "observedTimeUnixNano": str(int(when.timestamp() * 1e9)),
+                                "body": {"stringValue": json.dumps(record)},
+                                "attributes": [
+                                    {
+                                        "key": "log.file.name",
+                                        "value": {"stringValue": "kube-apiserver-audit.log"},
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
     }
-    events, failures = normalize_otlp_logs(payload, producer_id="k8s-otel-extorq-lab", received_at=when)
+    events, failures = normalize_otlp_logs(
+        payload, producer_id="k8s-otel-extorq-lab", received_at=when
+    )
     if failures:
         raise ValueError(f"{filename}: normaliser rejected the record: {failures}")
     return [e.model_copy(update={"labels": dict(labels)}) for e in events]
@@ -235,11 +323,13 @@ def k8s_audit_events(
 
 def k8s_risk_flags(filename: str) -> list[str]:
     """Risk flags B2's shared vocabulary assigns to the captured request object."""
-    from extorq.ingest.otlp_k8s import risk_flags_for_summary, summarize_k8s_object  # noqa: PLC0415
+    from extorq.ingest.otlp_k8s import risk_flags_for_summary, summarize_k8s_object
 
     record = json.loads((AUDIT_FIXTURES / filename).read_text(encoding="utf-8"))
     resource = record.get("objectRef", {}).get("resource")
-    return risk_flags_for_summary(summarize_k8s_object(record.get("requestObject"), resource=resource))
+    return risk_flags_for_summary(
+        summarize_k8s_object(record.get("requestObject"), resource=resource)
+    )
 
 
 # ── GitHub: attributes computed by C1's workflow analyser ────────────
@@ -249,11 +339,16 @@ def workflow_delta_attributes(
     path: str, before: str | None, after: str | None, *, repo_default: str | None
 ) -> dict[str, Any]:
     """Attributes exactly as the GitHub collector computes them for github.workflow.modified."""
-    from extorq_collectors.github.workflow import analyse_workflow, compare_workflows  # noqa: PLC0415
+    from extorq_collectors.github.workflow import analyse_workflow, compare_workflows
 
     before_a = analyse_workflow(path, before) if before is not None else None
     after_a = analyse_workflow(path, after) if after is not None else None
     change = "added" if before is None else ("removed" if after is None else "modified")
-    delta = compare_workflows(path, before_a, after_a, repo_default=repo_default,  # type: ignore[arg-type]
-                              change_type=change)  # type: ignore[arg-type]
+    delta = compare_workflows(
+        path,
+        before_a,
+        after_a,
+        repo_default=repo_default,  # type: ignore[arg-type]
+        change_type=change,
+    )  # type: ignore[arg-type]
     return {k: v for k, v in delta.to_attributes().items() if v is not None}

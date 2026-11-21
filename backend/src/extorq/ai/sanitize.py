@@ -154,7 +154,7 @@ def _strip_controls(text: str) -> str:
 #: Inputs are normalised first (format characters removed), so the guard character
 #: can never originate from telemetry.
 _PERMISSION_LEVEL = re.compile(r"(?i)(toke)(n\s*[:=]\s*(?:read|write|none)\b)")
-_GUARD = "⁣"
+_GUARD = "\u2063"  # INVISIBLE SEPARATOR (escaped: no literal format chars in source)
 
 
 def _external_redact(text: str) -> tuple[str, int]:

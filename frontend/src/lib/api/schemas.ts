@@ -2,7 +2,7 @@
  * Runtime validation for every analyst-API response the console renders.
  *
  * Source of truth: D1's response models (backend/src/extorq/api/schemas.py, exported to
- * docs/api/openapi.json) and the lead's contracts (backend/src/extorq/contracts, schema 1.0).
+ * docs/api/openapi.json) and the lead's contracts (backend/src/extorq/contracts, schema 1.1).
  * `src/lib/api/contract-check.ts` asserts at compile time that these schemas stay
  * assignable to the types generated from the OpenAPI document (`pnpm gen:api`).
  *
@@ -47,13 +47,18 @@ export const ASSET_TYPES = [
   "macos_host",
   "linux_host",
   "kubernetes_cluster",
+  "kubernetes_node",
   "kubernetes_namespace",
   "kubernetes_workload",
   "github_account",
   "github_repository",
 ] as const;
-export const zAssetType = z.enum(ASSET_TYPES);
-export type AssetType = z.infer<typeof zAssetType>;
+export type AssetType = (typeof ASSET_TYPES)[number];
+/**
+ * Asset types are validated as strings: a type added by a later contract version (1.1 added
+ * `kubernetes_node`) must not make a whole page fail. Unknown types render as their raw token.
+ */
+export const zAssetType = z.string().min(1).max(64);
 
 export const FINDING_STATES = ["open", "unverified", "resolved"] as const;
 export const zFindingState = z.enum(FINDING_STATES);
@@ -99,6 +104,31 @@ export const zSeverityCounts = z.object({
   total: z.number().int().default(0),
 });
 export type SeverityCounts = z.infer<typeof zSeverityCounts>;
+
+/** Enum-like token validated as a bounded string (new values must not fail a page). */
+const zToken = z.string().min(1).max(128);
+
+// Service coverage summary (D1 ServicesSummary, contracts 1.1): used by overview, asset and service views.
+const zServiceCoverageCounts = z.object({
+  monitored: z.number().int().default(0),
+  degraded: z.number().int().default(0),
+  unmonitored: z.number().int().default(0),
+  planned: z.number().int().default(0),
+  unsupported: z.number().int().default(0),
+  total: z.number().int().default(0),
+});
+export type ServiceCoverageCounts = z.infer<typeof zServiceCoverageCounts>;
+
+export const zServicesSummary = z.object({
+  /** False when no service record exists in scope (discovery has not reported). */
+  reported: z.boolean(),
+  coverage: zServiceCoverageCounts,
+  by_kind: z.array(z.object({ service_kind: zToken, coverage: zServiceCoverageCounts })),
+  removed: z.number().int(),
+  truncated: z.boolean(),
+  note: z.string().nullish(),
+});
+export type ServicesSummary = z.infer<typeof zServicesSummary>;
 
 // ── Collectors / coverage ────────────────────────────────────────────────────────
 
@@ -154,6 +184,8 @@ export const zAlertListItem = z.object({
   last_seen: zTime,
   event_count: z.number().int(),
   entities: zStringMap,
+  /** Services whose telemetry is evidence for the alert (contracts 1.1; [] before 1.1). */
+  service_ids: z.array(z.string()).default([]),
   mitre_techniques: z.array(z.string()),
   simulation_run_ids: z.array(z.string()),
   created_at: zTime,
@@ -193,6 +225,7 @@ export const zAlertRecord = z.object({
   asset_type: z.string(),
   group_key: z.string(),
   entities: zStringMap,
+  service_ids: z.array(z.string()).default([]),
   summary: z.string(),
   first_seen: zTime,
   last_seen: zTime,
@@ -256,6 +289,17 @@ export const zEventListItem = z.object({
   gh_actor_login: z.string().nullish(),
   simulation_run_id: z.string().nullish(),
   scenario_id: z.string().nullish(),
+  /** Kubernetes enrichment of container logs / audit events (1.1). */
+  k8s_cluster: z.string().nullish(),
+  k8s_node: z.string().nullish(),
+  k8s_pod_uid: z.string().nullish(),
+  k8s_container: z.string().nullish(),
+  /** Service attribution (contracts 1.1): set only when the adapter could attribute it. */
+  service_id: z.string().nullish(),
+  service_name: z.string().nullish(),
+  service_instance_id: z.string().nullish(),
+  adapter_id: z.string().nullish(),
+  k8s_container_id: z.string().nullish(),
   message: z.string().nullish(),
 });
 export type EventListItem = z.infer<typeof zEventListItem>;
@@ -335,6 +379,7 @@ const zDetectionAlert = z.object({
   asset_type: z.string(),
   group_key: z.string(),
   entities: zStringMap.default({}),
+  service_ids: z.array(z.string()).default([]),
   summary: z.string(),
   first_seen: zTime,
   last_seen: zTime,
@@ -390,6 +435,8 @@ export const zEventSummary = z.object({
   outcome: z.string(),
   actor_name: z.string().nullish(),
   src_ip: z.string().nullish(),
+  service_id: z.string().nullish(),
+  service_name: z.string().nullish(),
   summary: z.string(),
   key_fields: zAttributes.default({}),
 });
@@ -439,6 +486,27 @@ export const zSourceCoverage = z.object({
 });
 export type SourceCoverage = z.infer<typeof zSourceCoverage>;
 
+/** Service involved in an investigation (contracts/context.py ServiceSummary, 1.1). */
+export const zServiceSummary = z.object({
+  service_id: z.string(),
+  asset_id: z.string(),
+  name: z.string(),
+  service_kind: z.string(),
+  category: z.string(),
+  adapter_support: z.string(),
+  monitoring_status: z.string(),
+  role: z.string(),
+});
+export type ServiceSummary = z.infer<typeof zServiceSummary>;
+
+const zContextAsset = z.object({
+  asset_id: z.string(),
+  asset_type: z.string(),
+  name: z.string(),
+  criticality: z.string(),
+  environment: z.string(),
+});
+
 export const zInvestigationContext = z.object({
   schema_version: z.string().default("1.0"),
   context_id: z.string(),
@@ -450,13 +518,9 @@ export const zInvestigationContext = z.object({
   window_end: zTime,
   alert: zDetectionAlert,
   rule: zRuleMetadata,
-  asset: z.object({
-    asset_id: z.string(),
-    asset_type: z.string(),
-    name: z.string(),
-    criticality: z.string(),
-    environment: z.string(),
-  }),
+  asset: zContextAsset,
+  services: z.array(zServiceSummary).default([]),
+  related_assets: z.array(zContextAsset).default([]),
   evidence: z.array(zEventSummary),
   timeline: z.array(zTimelineEntry),
   relationships: z.array(zRelationship),
@@ -632,6 +696,14 @@ export const zSecurityEvent = z.object({
       authenticated: z.boolean().nullish(),
     })
     .nullish(),
+  service: z
+    .object({
+      service_id: z.string(),
+      name: z.string(),
+      instance_id: z.string().nullish(),
+      adapter_id: z.string().nullish(),
+    })
+    .nullish(),
   message: z.string().nullish(),
   attributes: zAttributes.default({}),
   labels: zStringMap.default({}),
@@ -706,6 +778,8 @@ export const zFindingItem = z.object({
   cvss_score: z.number().nullish(),
   remediation: z.string().nullish(),
   accepted_risk_reason: z.string().nullish(),
+  /** Service the finding applies to, when attributable (contracts 1.1). */
+  service_id: z.string().nullish(),
 });
 export type FindingItem = z.infer<typeof zFindingItem>;
 
@@ -713,6 +787,8 @@ export const zFindingsSummary = z.object({
   lifecycle_available: z.boolean(),
   source: z.enum(["v_findings_current", "finding_observations"]),
   counts: zSeverityCounts,
+  /** Findings whose current state cannot be confirmed (partial/failed latest scan). */
+  unverified: zSeverityCounts.nullish(),
   note: z.string().nullish(),
 });
 export type FindingsSummary = z.infer<typeof zFindingsSummary>;
@@ -739,6 +815,10 @@ export const zAssetDetailResponse = z.object({
   findings_summary: zFindingsSummary,
   findings: z.array(zFindingItem),
   recent_alerts: z.array(zAlertListItem),
+  /** Service coverage on this asset (1.1); absent from pre-1.1 APIs. */
+  services_summary: zServicesSummary.nullish(),
+  /** Kubernetes nodes of a cluster (1.1). */
+  child_assets: z.array(zAssetBrief).default([]),
 });
 export type AssetDetailResponse = z.infer<typeof zAssetDetailResponse>;
 
@@ -899,5 +979,164 @@ export const zOverviewResponse = z.object({
   alerts_over_time: zTimeSeriesResponse,
   collection_health: zCollectionHealthSummary,
   recent_important_alerts: z.array(zAlertListItem),
+  /** Service coverage across all assets (1.1); absent from pre-1.1 APIs. */
+  service_coverage: zServicesSummary.nullish(),
 });
 export type OverviewResponse = z.infer<typeof zOverviewResponse>;
+
+// ── Services (contracts/service.py 1.1; D1 ServiceListItem / ServiceDetailResponse) ─────
+//
+// Field names follow D1's published models (docs/api/openapi.json). Enum-like values are
+// validated as strings so a new kind, category or state never fails a page; the console
+// renders unknown tokens as themselves.
+
+export const SERVICE_KINDS = ["host_service", "application", "k8s_workload", "k8s_service"] as const;
+export type ServiceKind = (typeof SERVICE_KINDS)[number];
+export const COVERAGE_STATES = ["monitored", "degraded", "unmonitored", "planned", "unsupported"] as const;
+export type CoverageState = (typeof COVERAGE_STATES)[number];
+
+export const zServiceEndpoint = z.object({
+  protocol: zToken,
+  address: z.string().nullish(),
+  port: z.number().int(),
+  exposure: zToken,
+  attribution: zToken,
+  attribution_basis: z.string().nullish(),
+});
+export type ServiceEndpoint = z.infer<typeof zServiceEndpoint>;
+
+export const zServiceItem = z.object({
+  service_id: z.string(),
+  asset_id: z.string(),
+  service_kind: zToken,
+  service_key: z.string(),
+  name: z.string(),
+  category: zToken,
+  product: z.string().nullish(),
+  version: z.string().nullish(),
+  discovered_via: z.array(z.string()),
+  adapter_id: z.string().nullish(),
+  adapter_support: zToken,
+  /** As the collector last reported it. */
+  monitoring_status: zToken,
+  /** Effective coverage derived by the API at request time (staleness can downgrade it). */
+  coverage_state: zToken,
+  coverage_note: z.string().nullish(),
+  /** API-derived qualifications, e.g. a stale discovery report or stale source collectors. */
+  coverage_reasons: z.array(z.string()).default([]),
+  telemetry_sources: z.array(z.string()),
+  endpoints: z.array(zServiceEndpoint),
+  exposures: z.array(z.string()).default([]),
+  config_refs: z.array(z.string()),
+  instance_count: z.number().int().nullish(),
+  last_telemetry_at: zTime.nullish(),
+  first_seen: zTime,
+  last_seen: zTime,
+  report_age_seconds: z.number(),
+  report_stale: z.boolean(),
+  present: z.boolean(),
+  observed_by: z.string(),
+});
+export type ServiceItem = z.infer<typeof zServiceItem>;
+
+export const zServiceRecord = zServiceItem.extend({
+  attributes: zJsonObject.nullish(),
+  invalid_endpoints: z.number().int().default(0),
+});
+export type ServiceRecord = z.infer<typeof zServiceRecord>;
+
+export const zAssetServicesResponse = z.object({
+  asset_id: z.string(),
+  asset: zAssetBrief.nullish(),
+  items: z.array(zServiceItem),
+  page: zPageInfo,
+  summary: zServicesSummary,
+  invalid_records: z.number().int().default(0),
+});
+export type AssetServicesResponse = z.infer<typeof zAssetServicesResponse>;
+
+export const zServiceInstance = z.object({
+  instance_id: z.string(),
+  service_id: z.string(),
+  asset_id: z.string().nullish(),
+  instance_kind: zToken,
+  instance_key: z.string(),
+  parent_instance_id: z.string().nullish(),
+  state: zToken,
+  pid: z.number().int().nullish(),
+  process_name: z.string().nullish(),
+  user: z.string().nullish(),
+  namespace: z.string().nullish(),
+  pod_name: z.string().nullish(),
+  pod_uid: z.string().nullish(),
+  container_name: z.string().nullish(),
+  container_id: z.string().nullish(),
+  image: z.string().nullish(),
+  node_name: z.string().nullish(),
+  workload_kind: z.string().nullish(),
+  workload_name: z.string().nullish(),
+  started_at: zTime.nullish(),
+  observed_at: zTime,
+  observed_by: z.string(),
+  /** observed_at is older than the service staleness threshold. */
+  stale: z.boolean(),
+});
+export type ServiceInstance = z.infer<typeof zServiceInstance>;
+
+export const zServiceTelemetrySource = z.object({
+  source_type: z.string(),
+  /** Declared by the service's adapter (false: only seen in attributed events). */
+  declared: z.boolean(),
+  collectors: z.array(
+    z.object({
+      collector_id: z.string(),
+      asset_id: z.string(),
+      status: zHealthStatus,
+      last_success_at: zTime.nullish(),
+      interval_seconds: z.number().int(),
+      stale: z.boolean(),
+      stale_reason: z.string().nullish(),
+    }),
+  ),
+  collection: zToken,
+  events: z.number().int(),
+  last_event_at: zTime.nullish(),
+  last_ingested_at: zTime.nullish(),
+});
+export type ServiceTelemetrySource = z.infer<typeof zServiceTelemetrySource>;
+
+export const zServiceAuthActivity = z.object({
+  range: zTimeRange,
+  total: z.number().int(),
+  by_outcome: z.record(z.string(), z.number().int()),
+  distinct_actors: z.number().int(),
+  distinct_sources: z.number().int(),
+  top_sources: z.array(
+    z.object({
+      src_ip: z.string(),
+      events: z.number().int(),
+      failures: z.number().int(),
+      last_seen: zTime,
+    }),
+  ),
+});
+export type ServiceAuthActivity = z.infer<typeof zServiceAuthActivity>;
+
+export const zServiceDetailResponse = z.object({
+  service: zServiceRecord,
+  asset: zAssetBrief.nullish(),
+  instances: z.array(zServiceInstance),
+  instances_total: z.number().int(),
+  telemetry_range: zTimeRange,
+  telemetry: z.array(zServiceTelemetrySource),
+  auth_activity: zServiceAuthActivity,
+  recent_events: z.array(zEventListItem),
+  findings_lifecycle_available: z.boolean(),
+  findings: z.array(zFindingItem),
+  findings_total: z.number().int(),
+  alerts: z.array(zAlertListItem),
+  alerts_total: z.number().int(),
+  alerts_range: zTimeRange,
+  notes: z.array(z.string()),
+});
+export type ServiceDetailResponse = z.infer<typeof zServiceDetailResponse>;

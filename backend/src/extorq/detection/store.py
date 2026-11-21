@@ -20,42 +20,20 @@ from extorq.contracts.alert import AlertEvidence, DetectionAlert, RuleRun
 from extorq.contracts.health import PipelineHealth
 from extorq.contracts.identity import canonical_json
 from extorq.detection.clients import DbClient, chunked
+from extorq.detection.service_identity import (
+    SERVICE_ROWS_SQL,
+    reference_allowed,
+    valid_service_assets,
+)
+
+# Shared, DDL-tested row mappers (owner A): alerts incl. 0004 service_ids, pipeline_health.
+from extorq.storage.rows import alert_to_row
+from extorq.storage.rows import pipeline_health_to_row as health_to_row
 
 if TYPE_CHECKING:
     from extorq.detection.registry import LoadedRule
 
 _ID_CHUNK = 500
-
-
-def alert_to_row(alert: DetectionAlert) -> dict[str, Any]:
-    return {
-        "alert_id": alert.alert_id,
-        "schema_version": alert.schema_version,
-        "rule_id": alert.rule_id,
-        "rule_version": alert.rule_version,
-        "rule_title": alert.rule_title,
-        "severity": alert.severity.value,
-        "confidence": alert.confidence.value,
-        "asset_id": alert.asset_id,
-        "asset_type": alert.asset_type.value,
-        "group_key": alert.group_key,
-        "entities": dict(alert.entities),
-        "summary": alert.summary,
-        "first_seen": alert.first_seen,
-        "last_seen": alert.last_seen,
-        "window_start": alert.window_start,
-        "window_end": alert.window_end,
-        "event_count": alert.event_count,
-        "evidence_event_ids": list(alert.evidence_event_ids),
-        "evidence_truncated": 1 if alert.evidence_truncated else 0,
-        "features": canonical_json(alert.features),
-        "mitre_techniques": list(alert.mitre_techniques),
-        "simulation_run_ids": list(alert.simulation_run_ids),
-        "created_at": alert.created_at,
-        "updated_at": alert.updated_at,
-        "detector_version": alert.detector_version,
-        "payload": canonical_json(alert.model_dump(mode="json")),
-    }
 
 
 def evidence_to_row(evidence: AlertEvidence) -> dict[str, Any]:
@@ -110,26 +88,6 @@ def rule_to_row(rule: LoadedRule, loaded_at: datetime, *, enabled: bool) -> dict
         "query_text": rule.query_text,
         "enabled": 1 if enabled else 0,
         "loaded_at": loaded_at,
-    }
-
-
-def health_to_row(health: PipelineHealth) -> dict[str, Any]:
-    return {
-        "component": health.component,
-        "instance": health.instance,
-        "reported_at": health.reported_at,
-        "status": health.status.value,
-        "queue_depth": health.queue_depth,
-        "oldest_queued_age_seconds": health.oldest_queued_age_seconds,
-        "accepted_total": health.accepted_total,
-        "duplicate_total": health.duplicate_total,
-        "rejected_total": health.rejected_total,
-        "quarantined_total": health.quarantined_total,
-        "written_total": health.written_total,
-        "write_errors_total": health.write_errors_total,
-        "dead_letter_total": health.dead_letter_total,
-        "last_write_at": health.last_write_at,
-        "details": canonical_json(health.details),
     }
 
 
@@ -210,6 +168,73 @@ class DetectionStore:
             {"start": start, "end": end, "sources": list(source_types)},
         )
         return {str(row[0]) for row in result.rows}
+
+    def earliest_late_event(
+        self,
+        source_types: Sequence[str],
+        *,
+        ingested_since: datetime,
+        floor: datetime,
+        before: datetime,
+    ) -> datetime | None:
+        """Earliest ``event_time`` in ``[floor, before)`` of events of ``source_types``
+        ingested at or after ``ingested_since`` (late-arriving telemetry), or ``None``."""
+        if not source_types:
+            return None
+        result = self.read.select(
+            "SELECT count() AS n, min(event_time) AS t FROM events "
+            "WHERE source_type IN {sources:Array(String)} "
+            "AND ingested_time >= {since:DateTime64(3, 'UTC')} "
+            "AND event_time >= {floor:DateTime64(3, 'UTC')} "
+            "AND event_time < {before:DateTime64(3, 'UTC')}",
+            {
+                "sources": list(source_types),
+                "since": ingested_since,
+                "floor": floor,
+                "before": before,
+            },
+        )
+        count, earliest = result.rows[0] if result.rows else (0, None)
+        return earliest if count and isinstance(earliest, datetime) else None
+
+    def evidence_service_ids(self, event_ids: Iterable[str]) -> dict[str, list[str]]:
+        """``{event_id: [service ids]}`` for evidence events attributed to services.
+
+        Two attributions per event (B1 interface note 5): the producing service
+        (``events.service_id``, falling back to the validated ``payload`` JSON for rows
+        written before the writer filled the 1.1 columns) and the subject service the
+        record is about (``attributes.subject_service_id``, e.g. a unit-file change about
+        the unit's own service). A reference whose only valid ``services`` records belong
+        to an unrelated asset is dropped (service-id shadowing, F-IC-6; see
+        :mod:`extorq.detection.service_identity`).
+        """
+        refs: dict[str, tuple[str, list[str]]] = {}
+        for batch in chunked(sorted(set(event_ids)), 1000):
+            result = self.read.select(
+                "SELECT event_id, asset_id, svc, subj FROM ("
+                "SELECT event_id, asset_id, if(service_id IS NULL, "
+                "nullIf(JSONExtractString(payload, 'service', 'service_id'), ''), service_id) "
+                "AS svc, nullIf(JSONExtractString(attributes, 'subject_service_id'), '') AS subj "
+                "FROM events WHERE event_id IN {ids:Array(String)} LIMIT 1 BY event_id) "
+                "WHERE svc IS NOT NULL OR subj IS NOT NULL",
+                {"ids": batch},
+            )
+            for event_id, asset_id, service_id, subject_id in result.rows:
+                ids = [str(x) for x in (service_id, subject_id) if x]
+                refs[str(event_id)] = (str(asset_id), ids)
+        if not refs:
+            return {}
+        wanted = sorted({sid for _, ids in refs.values() for sid in ids})
+        rows: list[dict[str, Any]] = []
+        for batch in chunked(wanted, 1000):
+            rows.extend(self.read.select(SERVICE_ROWS_SQL, {"ids": batch}).dicts())
+        valid = valid_service_assets(rows)
+        found: dict[str, list[str]] = {}
+        for eid, (asset, ids) in refs.items():
+            kept = [sid for sid in ids if reference_allowed(sid, asset, valid)]
+            if kept:
+                found[eid] = kept
+        return found
 
     def registered_rule_ids(self) -> set[str]:
         result = self.read.select(

@@ -49,8 +49,25 @@ CLIENT_SECRET_ENV = re.compile(r"process\.env\.[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|
 USE_CLIENT = re.compile(r"""^\s*["']use client["']""", re.MULTILINE)
 
 
+#: ESLint configuration names the sinks in order to ban them; it never ships to the
+#: browser, so it is excluded from the sink scan and checked positively instead.
+LINT_CONFIG = re.compile(r"(^|/)(eslint\.config\.[cm]?[jt]s|\.eslintrc(\.[a-z]+)?)$")
+
+
 def _frontend_sources() -> list[Path]:
-    return sorted(iter_files(suffixes=SOURCE_SUFFIXES, roots=("frontend",)))
+    return sorted(
+        p
+        for p in iter_files(suffixes=SOURCE_SUFFIXES, roots=("frontend",))
+        if not LINT_CONFIG.search(rel(p))
+    )
+
+
+def _lint_configs() -> list[Path]:
+    return sorted(
+        p
+        for p in iter_files(roots=("frontend",))
+        if LINT_CONFIG.search(rel(p)) and "/node_modules/" not in rel(p)
+    )
 
 
 SOURCES = _frontend_sources()
@@ -118,6 +135,32 @@ def test_frontend_has_no_xss_sinks_or_browser_credentials() -> None:
     for path in SOURCES:
         findings.extend(scan_frontend_text(read_text(path), relative=rel(path)))
     assert not findings, format_findings(findings)
+
+
+def test_frontend_lint_bans_raw_html() -> None:
+    """Positive control: D2's ESLint config keeps the raw-HTML escape hatch banned."""
+    configs = _lint_configs()
+    if not configs:
+        pytest.skip("frontend has no ESLint configuration yet (owner: D2)")
+    text = "\n".join(read_text(p) for p in configs)
+    bans_no_danger = re.search(r"""["']react/no-danger["']\s*:\s*["'](error|2)["']""", text)
+    bans_by_selector = "JSXAttribute[name.name='dangerouslySetInnerHTML']" in text
+    assert bans_no_danger or bans_by_selector, (
+        "ESLint config no longer bans dangerouslySetInnerHTML (react/no-danger)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "is_lint_config"),
+    [
+        ("frontend/eslint.config.mjs", True),
+        ("frontend/.eslintrc.json", True),
+        ("frontend/src/app/page.tsx", False),
+        ("frontend/src/eslint-helpers.ts", False),
+    ],
+)
+def test_lint_config_pattern(path: str, is_lint_config: bool) -> None:
+    assert bool(LINT_CONFIG.search(path)) is is_lint_config
 
 
 @requires_frontend

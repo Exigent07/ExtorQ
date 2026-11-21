@@ -1,0 +1,426 @@
+{
+ "apiVersion": "v1",
+ "items": [
+  {
+   "metadata": {
+    "creationTimestamp": "2026-11-21T10:16:01Z",
+    "labels": {
+     "kubernetes.io/metadata.name": "default"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:labels": {
+         ".": {},
+         "f:kubernetes.io/metadata.name": {}
+        }
+       }
+      },
+      "manager": "kube-apiserver",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:01Z"
+     }
+    ],
+    "name": "default",
+    "resourceVersion": "26",
+    "uid": "6e3507d2-90d6-4c13-ad7d-f99221c9e1c1"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"annotations\":{},\"labels\":{\"app.kubernetes.io/part-of\":\"extorq\",\"pod-security.kubernetes.io/audit\":\"restricted\",\"pod-security.kubernetes.io/audit-version\":\"latest\",\"pod-security.kubernetes.io/enforce\":\"baseline\",\"pod-security.kubernetes.io/enforce-version\":\"latest\",\"pod-security.kubernetes.io/warn\":\"restricted\",\"pod-security.kubernetes.io/warn-version\":\"latest\"},\"name\":\"extorq-apps\"}}\n"
+    },
+    "creationTimestamp": "2026-11-21T10:16:24Z",
+    "labels": {
+     "app.kubernetes.io/part-of": "extorq",
+     "kubernetes.io/metadata.name": "extorq-apps",
+     "pod-security.kubernetes.io/audit": "restricted",
+     "pod-security.kubernetes.io/audit-version": "latest",
+     "pod-security.kubernetes.io/enforce": "baseline",
+     "pod-security.kubernetes.io/enforce-version": "latest",
+     "pod-security.kubernetes.io/warn": "restricted",
+     "pod-security.kubernetes.io/warn-version": "latest"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:kubectl.kubernetes.io/last-applied-configuration": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/part-of": {},
+         "f:kubernetes.io/metadata.name": {},
+         "f:pod-security.kubernetes.io/audit": {},
+         "f:pod-security.kubernetes.io/audit-version": {},
+         "f:pod-security.kubernetes.io/enforce": {},
+         "f:pod-security.kubernetes.io/enforce-version": {},
+         "f:pod-security.kubernetes.io/warn": {},
+         "f:pod-security.kubernetes.io/warn-version": {}
+        }
+       }
+      },
+      "manager": "kubectl-client-side-apply",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:24Z"
+     }
+    ],
+    "name": "extorq-apps",
+    "resourceVersion": "518",
+    "uid": "490d2c24-ce11-4fb7-bde0-1b1c617db3c2"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"annotations\":{},\"labels\":{\"app.kubernetes.io/part-of\":\"extorq\",\"pod-security.kubernetes.io/audit\":\"baseline\",\"pod-security.kubernetes.io/audit-version\":\"latest\",\"pod-security.kubernetes.io/enforce\":\"privileged\",\"pod-security.kubernetes.io/enforce-version\":\"latest\",\"pod-security.kubernetes.io/warn\":\"baseline\",\"pod-security.kubernetes.io/warn-version\":\"latest\"},\"name\":\"extorq-posture-lab\"}}\n"
+    },
+    "creationTimestamp": "2026-11-21T10:16:24Z",
+    "labels": {
+     "app.kubernetes.io/part-of": "extorq",
+     "kubernetes.io/metadata.name": "extorq-posture-lab",
+     "pod-security.kubernetes.io/audit": "baseline",
+     "pod-security.kubernetes.io/audit-version": "latest",
+     "pod-security.kubernetes.io/enforce": "privileged",
+     "pod-security.kubernetes.io/enforce-version": "latest",
+     "pod-security.kubernetes.io/warn": "baseline",
+     "pod-security.kubernetes.io/warn-version": "latest"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:kubectl.kubernetes.io/last-applied-configuration": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/part-of": {},
+         "f:kubernetes.io/metadata.name": {},
+         "f:pod-security.kubernetes.io/audit": {},
+         "f:pod-security.kubernetes.io/audit-version": {},
+         "f:pod-security.kubernetes.io/enforce": {},
+         "f:pod-security.kubernetes.io/enforce-version": {},
+         "f:pod-security.kubernetes.io/warn": {},
+         "f:pod-security.kubernetes.io/warn-version": {}
+        }
+       }
+      },
+      "manager": "kubectl-client-side-apply",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:24Z"
+     }
+    ],
+    "name": "extorq-posture-lab",
+    "resourceVersion": "524",
+    "uid": "efc0d72a-e0e8-4967-a2c4-82003b34753a"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"annotations\":{},\"labels\":{\"app.kubernetes.io/part-of\":\"extorq\",\"pod-security.kubernetes.io/audit\":\"restricted\",\"pod-security.kubernetes.io/audit-version\":\"latest\",\"pod-security.kubernetes.io/enforce\":\"baseline\",\"pod-security.kubernetes.io/enforce-version\":\"latest\",\"pod-security.kubernetes.io/warn\":\"restricted\",\"pod-security.kubernetes.io/warn-version\":\"latest\"},\"name\":\"extorq-restricted\"}}\n"
+    },
+    "creationTimestamp": "2026-11-21T10:16:24Z",
+    "labels": {
+     "app.kubernetes.io/part-of": "extorq",
+     "kubernetes.io/metadata.name": "extorq-restricted",
+     "pod-security.kubernetes.io/audit": "restricted",
+     "pod-security.kubernetes.io/audit-version": "latest",
+     "pod-security.kubernetes.io/enforce": "baseline",
+     "pod-security.kubernetes.io/enforce-version": "latest",
+     "pod-security.kubernetes.io/warn": "restricted",
+     "pod-security.kubernetes.io/warn-version": "latest"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:kubectl.kubernetes.io/last-applied-configuration": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/part-of": {},
+         "f:kubernetes.io/metadata.name": {},
+         "f:pod-security.kubernetes.io/audit": {},
+         "f:pod-security.kubernetes.io/audit-version": {},
+         "f:pod-security.kubernetes.io/enforce": {},
+         "f:pod-security.kubernetes.io/enforce-version": {},
+         "f:pod-security.kubernetes.io/warn": {},
+         "f:pod-security.kubernetes.io/warn-version": {}
+        }
+       }
+      },
+      "manager": "kubectl-client-side-apply",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:24Z"
+     }
+    ],
+    "name": "extorq-restricted",
+    "resourceVersion": "521",
+    "uid": "9ecdf517-4726-4d8a-843c-d782d91821c1"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "extorq.io/accepted-risk": "PSA privileged: the node log collector needs read-only hostPath mounts of /var/log/pods and /var/log/kubernetes/audit plus a writable hostPath for its checkpoints (/var/lib/extorq-otel). See docs/telemetry/kubernetes.md.",
+     "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"annotations\":{\"extorq.io/accepted-risk\":\"PSA privileged: the node log collector needs read-only hostPath mounts of /var/log/pods and /var/log/kubernetes/audit plus a writable hostPath for its checkpoints (/var/lib/extorq-otel). See docs/telemetry/kubernetes.md.\"},\"labels\":{\"app.kubernetes.io/part-of\":\"extorq\",\"pod-security.kubernetes.io/audit\":\"baseline\",\"pod-security.kubernetes.io/audit-version\":\"latest\",\"pod-security.kubernetes.io/enforce\":\"privileged\",\"pod-security.kubernetes.io/enforce-version\":\"latest\",\"pod-security.kubernetes.io/warn\":\"baseline\",\"pod-security.kubernetes.io/warn-version\":\"latest\"},\"name\":\"extorq-system\"}}\n"
+    },
+    "creationTimestamp": "2026-11-21T10:16:24Z",
+    "labels": {
+     "app.kubernetes.io/part-of": "extorq",
+     "kubernetes.io/metadata.name": "extorq-system",
+     "pod-security.kubernetes.io/audit": "baseline",
+     "pod-security.kubernetes.io/audit-version": "latest",
+     "pod-security.kubernetes.io/enforce": "privileged",
+     "pod-security.kubernetes.io/enforce-version": "latest",
+     "pod-security.kubernetes.io/warn": "baseline",
+     "pod-security.kubernetes.io/warn-version": "latest"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:extorq.io/accepted-risk": {},
+         "f:kubectl.kubernetes.io/last-applied-configuration": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:app.kubernetes.io/part-of": {},
+         "f:kubernetes.io/metadata.name": {},
+         "f:pod-security.kubernetes.io/audit": {},
+         "f:pod-security.kubernetes.io/audit-version": {},
+         "f:pod-security.kubernetes.io/enforce": {},
+         "f:pod-security.kubernetes.io/enforce-version": {},
+         "f:pod-security.kubernetes.io/warn": {},
+         "f:pod-security.kubernetes.io/warn-version": {}
+        }
+       }
+      },
+      "manager": "kubectl-client-side-apply",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:24Z"
+     }
+    ],
+    "name": "extorq-system",
+    "resourceVersion": "515",
+    "uid": "70dab4c2-1fb9-407e-9c85-294f0be58286"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  },
+  {
+   "metadata": {
+    "creationTimestamp": "2026-11-21T10:16:01Z",
+    "labels": {
+     "kubernetes.io/metadata.name": "kube-node-lease"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:labels": {
+         ".": {},
+         "f:kubernetes.io/metadata.name": {}
+        }
+       }
+      },
+      "manager": "kube-apiserver",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:01Z"
+     }
+    ],
+    "name": "kube-node-lease",
+    "resourceVersion": "33",
+    "uid": "12f8d9f7-5b24-4938-a6be-094c83a36249"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  },
+  {
+   "metadata": {
+    "creationTimestamp": "2026-11-21T10:16:01Z",
+    "labels": {
+     "kubernetes.io/metadata.name": "kube-public"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:labels": {
+         ".": {},
+         "f:kubernetes.io/metadata.name": {}
+        }
+       }
+      },
+      "manager": "kube-apiserver",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:01Z"
+     }
+    ],
+    "name": "kube-public",
+    "resourceVersion": "16",
+    "uid": "23edb446-7248-412c-84f0-f778c6eaf797"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  },
+  {
+   "metadata": {
+    "creationTimestamp": "2026-11-21T10:16:01Z",
+    "labels": {
+     "kubernetes.io/metadata.name": "kube-system"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:labels": {
+         ".": {},
+         "f:kubernetes.io/metadata.name": {}
+        }
+       }
+      },
+      "manager": "kube-apiserver",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:01Z"
+     }
+    ],
+    "name": "kube-system",
+    "resourceVersion": "4",
+    "uid": "5edda18a-23a1-4e10-92d2-fbbcd142511e"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  },
+  {
+   "metadata": {
+    "annotations": {
+     "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"annotations\":{},\"name\":\"local-path-storage\"}}\n"
+    },
+    "creationTimestamp": "2026-11-21T10:16:04Z",
+    "labels": {
+     "kubernetes.io/metadata.name": "local-path-storage"
+    },
+    "managedFields": [
+     {
+      "apiVersion": "v1",
+      "fieldsType": "FieldsV1",
+      "fieldsV1": {
+       "f:metadata": {
+        "f:annotations": {
+         ".": {},
+         "f:kubectl.kubernetes.io/last-applied-configuration": {}
+        },
+        "f:labels": {
+         ".": {},
+         "f:kubernetes.io/metadata.name": {}
+        }
+       }
+      },
+      "manager": "kubectl-client-side-apply",
+      "operation": "Update",
+      "time": "2026-11-21T10:16:04Z"
+     }
+    ],
+    "name": "local-path-storage",
+    "resourceVersion": "305",
+    "uid": "af0a11a5-d968-4be9-a92c-48e55601bcd7"
+   },
+   "spec": {
+    "finalizers": [
+     "kubernetes"
+    ]
+   },
+   "status": {
+    "phase": "Active"
+   }
+  }
+ ],
+ "kind": "NamespaceList",
+ "metadata": {
+  "resourceVersion": "23216"
+ }
+}

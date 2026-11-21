@@ -14,6 +14,7 @@ export const metadata: Metadata = {
   title: { default: "ExtorQ", template: "%s · ExtorQ" },
   description: "ExtorQ security console: telemetry coverage, detections and investigations.",
   robots: { index: false, follow: false },
+  icons: { icon: [{ url: "/icon.svg", type: "image/svg+xml" }] },
   referrer: "no-referrer",
   formatDetection: { telephone: false, email: false, address: false },
 };

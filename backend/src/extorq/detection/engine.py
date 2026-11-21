@@ -53,6 +53,7 @@ from extorq.detection.alerts import (
     decide,
     find_continuation,
     parse_rows,
+    with_service_ids,
 )
 from extorq.detection.clients import DbClient
 from extorq.detection.registry import LoadedRule
@@ -71,6 +72,11 @@ class EngineConfig:
     max_rows_per_rule: int = 1000
     max_episode_seconds: int = 3600
     rule_run_backlog: int = 1000
+    #: Late-data catch-up: evaluate events ingested since the rule's last successful run
+    #: even if their event_time is older than the normal window (bounded; 0 disables).
+    catchup_max_seconds: int = 6 * 3600
+    #: Overlap with the previous run's start (covers writer batching and clock skew).
+    catchup_margin_seconds: int = 300
     instance: str = field(default_factory=lambda: socket.gethostname()[:128] or "detector")
     detector_version: str = DETECTOR_VERSION
 
@@ -115,6 +121,7 @@ class DetectionEngine:
         self.invalid_rules = invalid_rules
         self.stats = EngineStats()
         self._next_due: dict[str, datetime] = {}
+        self._last_success: dict[str, datetime] = {}
         self._backlog: deque[RuleRun] = deque()
 
     # ── registration ─────────────────────────────────────────────────
@@ -224,6 +231,15 @@ class DetectionEngine:
         missing: list[str] = []
         try:
             required = rule.required_source_types
+            caught_up = self._catchup_start(rule, required, window_start, now)
+            if caught_up is not None:
+                log.info(
+                    "late_data_catchup",
+                    rule_id=rule.rule_id,
+                    window_start=caught_up.isoformat(),
+                    normal_window_start=window_start.isoformat(),
+                )
+                window_start = caught_up
             present = self.store.present_source_types(required, window_start, window_end)
             missing = [s for s in required if s not in present]
             result = self.rules_client.select(
@@ -254,6 +270,8 @@ class DetectionEngine:
         except Exception as exc:  # noqa: BLE001 - one failing rule must never stop the others
             status, error = RuleRunStatus.FAILED, sanitize_error(exc)
         duration_ms = int((time.monotonic() - t0) * 1000)
+        if status is RuleRunStatus.SUCCEEDED:
+            self._last_success[rule.rule_id] = now
         self.stats.rule_runs_total += 1
         if status is RuleRunStatus.FAILED:
             self.stats.rule_failures_total += 1
@@ -287,6 +305,36 @@ class DetectionEngine:
             error=error,
             missing_sources=missing[:16],
         )
+
+    def _catchup_start(
+        self, rule: LoadedRule, sources: list[str], window_start: datetime, now: datetime
+    ) -> datetime | None:
+        """Earlier window start when late telemetry arrived since the last successful run.
+
+        Telemetry can arrive long after it happened (a collector backfilling after an
+        outage or its first start). Events of the rule's source types ingested since the
+        previous successful run (minus a margin; on the first run: the catch-up horizon)
+        whose event_time precedes the normal window pull the window start back to
+        ``earliest - lookback`` (bounded by ``catchup_max_seconds``). Alert identities do
+        not depend on the window, so a longer window never duplicates alerts.
+        """
+        horizon = self.config.catchup_max_seconds
+        if horizon <= 0 or not sources:
+            return None
+        floor = window_start - timedelta(seconds=horizon)
+        last = self._last_success.get(rule.rule_id)
+        since = (
+            last - timedelta(seconds=self.config.catchup_margin_seconds)
+            if last is not None
+            else now - timedelta(seconds=horizon)
+        )
+        earliest = self.store.earliest_late_event(
+            sources, ingested_since=since, floor=floor, before=window_start
+        )
+        if earliest is None:
+            return None
+        lookback = timedelta(seconds=rule.metadata.schedule.lookback_seconds)
+        return max(floor, earliest - lookback)
 
     def _apply(
         self,
@@ -361,6 +409,7 @@ class DetectionEngine:
                 updated_ids.add(aid)
 
         if pending_alerts:
+            pending_alerts = self._attach_services(rule, pending_alerts)
             try:
                 self.store.write_evidence(pending_evidence)
                 self.store.write_alerts(list(pending_alerts.values()))
@@ -371,6 +420,30 @@ class DetectionEngine:
             self.stats.alerts_created_total += len(created_ids)
             self.stats.alerts_updated_total += len(updated_ids - created_ids)
         return len(created_ids), len(updated_ids - created_ids), sorted(pending_alerts)
+
+    def _attach_services(
+        self, rule: LoadedRule, alerts: dict[str, DetectionAlert]
+    ) -> dict[str, DetectionAlert]:
+        """Set ``service_ids`` from the evidence events' service attribution (contract 1.1).
+
+        Enrichment only: if the lookup fails the alerts are written with the service ids
+        they already had, and the failure is logged (detection is never blocked by it).
+        """
+        wanted = {eid for alert in alerts.values() for eid in alert.evidence_event_ids}
+        try:
+            by_event = self.store.evidence_service_ids(wanted)
+        except Exception as exc:  # noqa: BLE001 - enrichment must not block alert writes
+            log.warning(
+                "alert_service_lookup_failed", rule_id=rule.rule_id, error=sanitize_error(exc)
+            )
+            return alerts
+        return {
+            aid: with_service_ids(
+                alert,
+                (sid for e in alert.evidence_event_ids for sid in by_event.get(e, ())),
+            )
+            for aid, alert in alerts.items()
+        }
 
     def _run_context_hook(self, rule: LoadedRule, alert_ids: list[str]) -> None:
         if self.context_hook is None:

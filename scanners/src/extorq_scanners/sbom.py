@@ -19,8 +19,8 @@ from typing import Any
 from urllib.parse import quote
 
 from extorq.contracts.identity import iso_utc
-
 from extorq_scanners import __version__
+from extorq_scanners.sanitize import obj
 
 SCHEMA = "extorq.linux.packages.v1"
 MAX_PACKAGES = 20_000
@@ -89,7 +89,7 @@ def parse_inventory(doc: object) -> Inventory:
         raise InventoryError("packages document is not a JSON object")
     if doc.get("schema") != SCHEMA or doc.get("type") != "packages":
         raise InventoryError(f"unexpected packages schema {doc.get('schema')!r}")
-    os_release = doc.get("os_release") if isinstance(doc.get("os_release"), dict) else {}
+    os_release = obj(doc, "os_release")
     os_id = os_release.get("ID")
     os_version = os_release.get("VERSION_ID")
     if os_id != "ubuntu" or not isinstance(os_version, str) or not _OS_VERSION.match(os_version):
@@ -119,11 +119,15 @@ def parse_inventory(doc: object) -> Inventory:
             inv.skipped.append("non-object package entry")
             continue
         name, version, arch = item.get("name"), item.get("version"), item.get("architecture")
-        status = item.get("status") if isinstance(item.get("status"), str) else ""
+        raw_status = item.get("status")
+        status = raw_status if isinstance(raw_status, str) else ""
         if not (
-            isinstance(name, str) and _NAME.match(name)
-            and isinstance(version, str) and _VERSION.match(version)
-            and isinstance(arch, str) and _ARCH.match(arch)
+            isinstance(name, str)
+            and _NAME.match(name)
+            and isinstance(version, str)
+            and _VERSION.match(version)
+            and isinstance(arch, str)
+            and _ARCH.match(arch)
         ):
             inv.skipped.append(f"invalid package entry {str(name)[:64]!r}")
             continue

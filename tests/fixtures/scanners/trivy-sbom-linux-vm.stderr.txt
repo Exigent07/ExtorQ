@@ -1,0 +1,8 @@
+2026-11-21T14:45:04Z	INFO	[vex] Skipping VEX repository update
+2026-11-21T14:45:04Z	INFO	[vuln] Vulnerability scanning is enabled
+2026-11-21T14:45:04Z	INFO	Detected SBOM format	format="cyclonedx-json"
+2026-11-21T14:45:04Z	WARN	Third-party SBOM may lead to inaccurate vulnerability detection
+2026-11-21T14:45:04Z	WARN	Recommend using Trivy to generate SBOMs
+2026-11-21T14:45:04Z	INFO	Detected OS	family="ubuntu" version="24.04"
+2026-11-21T14:45:04Z	INFO	[ubuntu] Detecting vulnerabilities...	os_version="24.04" pkg_num=667
+2026-11-21T14:45:04Z	INFO	Number of language-specific files	num=0
