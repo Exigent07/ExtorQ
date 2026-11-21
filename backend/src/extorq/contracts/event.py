@@ -125,7 +125,8 @@ class KubernetesInfo(ContractModel):
     pod_name: ShortStr | None = None
     pod_uid: ShortStr | None = None
     container_name: ShortStr | None = None
-    #: Runtime container id (e.g. 'containerd://<64 hex>') when the source reports it.
+    #: Runtime container id as bare 64-hex (the runtime name lives in
+    #: ServiceInstance.attributes.runtime), only when the source reports it.
     container_id: ShortStr | None = None
     node_name: ShortStr | None = None
     workload_kind: ShortStr | None = None

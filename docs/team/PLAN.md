@@ -318,3 +318,24 @@ records stay valid). Lead-owned artefacts (already merged and applied):
 | D2 | drill-down Asset → Services/Workloads → Telemetry → Findings → Alerts → Investigation; unsupported/unmonitored services shown transparently |
 | E | include service summaries in the AI allow-list projection (names, kinds, coverage only) |
 | F | architecture/data-model/threat-model/AGENTS.md updates for the service model and adapter data minimisation |
+
+## 11. Lead decisions (2026-11-22, after build session 2)
+
+* **Event age vs retention:** events older than the `events` TTL (90 days) are quarantined
+  at the gateway with reason `older_than_retention` (previously accepted up to 400 days and
+  then silently expired). Owner: A.
+* **Producers:** `extorq-selftest` (collector_health only, source `extorq.pipeline`, asset
+  `macos:workstation-01`) is part of the registry for the SDK heartbeat self-test (A-IC-1).
+* **Analyst API (§5.2 additions):** `GET /api/v1/assets/{asset_id}/services`,
+  `GET /api/v1/services`, `GET /api/v1/services/{service_id}`; `service_id` filters on
+  events/findings/alerts (D1-IC-2).
+* **Catalog:** `macos.unified_log` may emit `auth.ssh.{login_failed, invalid_user,
+  preauth_closed, max_auth_exceeded, login_succeeded}` (B3-IC-1). `container_id` canonical
+  form is the bare 64-hex id (B2-IC-3).
+* **Migration 0006** refreshes `v_alerts` (views freeze `SELECT *` column lists at CREATE).
+* **GitHub lab:** `Exigent07/extorq-lab` created PRIVATE by the lead with the user's explicit
+  approval; the collector uses the gh CLI token fallback (approved; broader than read-only,
+  flagged in health/docs). No other GitHub writes are authorised.
+* **Data minimisation:** raw captures from the user's personal Mac (launchd/process/app
+  inventories) are not committed; macOS fixtures are reduced to minimal representative
+  samples before entering git history (owner B3).

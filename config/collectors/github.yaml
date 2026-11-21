@@ -38,7 +38,11 @@ collectors:
       # configured"), which is accurate.
       repos:
         - Exigent07/extorq-lab
-      gh_cli_token_fallback: false
+      # Enabled 2026-11-22 with the user's explicit approval for the lab demo. The gh CLI
+      # OAuth token is broader than read-only (repo, workflow, read:org, gist); the collector
+      # reports token_source=gh_cli and a warning in its health. Replace with a fine-grained
+      # read-only PAT via token_file / EXTORQ_GITHUB_TOKEN_FILE when available.
+      gh_cli_token_fallback: true
       # token_file: var/secrets/github/readonly-pat   # path only, never a token value
       api_base_url: https://api.github.com
       page_size: 50                    # per_page for listings (1-100)

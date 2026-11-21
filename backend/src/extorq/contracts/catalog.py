@@ -82,7 +82,7 @@ _SPECS: list[EventTypeSpec] = [
     _spec(
         "auth.ssh.login_failed",
         C.AUTHENTICATION,
-        {S.LINUX_JOURNALD},
+        {S.LINUX_JOURNALD, S.MACOS_UNIFIED_LOG},
         "sshd 'Failed <method> for [invalid user] X from IP port P' line.",
         (
             "actor.name",
@@ -96,28 +96,28 @@ _SPECS: list[EventTypeSpec] = [
     _spec(
         "auth.ssh.invalid_user",
         C.AUTHENTICATION,
-        {S.LINUX_JOURNALD},
+        {S.LINUX_JOURNALD, S.MACOS_UNIFIED_LOG},
         "sshd 'Invalid user X from IP port P' line.",
         ("actor.name", "network.src_ip", "network.src_port", "process.pid"),
     ),
     _spec(
         "auth.ssh.preauth_closed",
         C.AUTHENTICATION,
-        {S.LINUX_JOURNALD},
+        {S.LINUX_JOURNALD, S.MACOS_UNIFIED_LOG},
         "sshd 'Connection closed/reset by (authenticating|invalid) user X IP port P [preauth]'.",
         ("actor.name", "network.src_ip", "network.src_port", "attributes.invalid_user"),
     ),
     _spec(
         "auth.ssh.max_auth_exceeded",
         C.AUTHENTICATION,
-        {S.LINUX_JOURNALD},
+        {S.LINUX_JOURNALD, S.MACOS_UNIFIED_LOG},
         "sshd 'maximum authentication attempts exceeded' / 'Too many authentication failures'.",
         ("actor.name", "network.src_ip", "network.src_port"),
     ),
     _spec(
         "auth.ssh.login_succeeded",
         C.AUTHENTICATION,
-        {S.LINUX_JOURNALD},
+        {S.LINUX_JOURNALD, S.MACOS_UNIFIED_LOG},
         "sshd 'Accepted <method> for X from IP port P'.",
         (
             "actor.name",
