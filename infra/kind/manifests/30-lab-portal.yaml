@@ -1,0 +1,153 @@
+# lab-portal (B1's stdlib web app) in extorq-apps, exposed via NodePort 30080 ->
+# 127.0.0.1:8089 on the Mac (kind extraPortMappings). Rendered by kind.sh
+# (placeholder __LAB_PORTAL_IMAGE__ = extorq/lab-portal:<content hash>).
+#
+# Hardening: restricted-compliant pod (non-root UID 10001, read-only root FS,
+# all capabilities dropped, no privilege escalation, seccomp RuntimeDefault),
+# no service-account token, image only from the local node (imagePullPolicy
+# Never: a registry can never substitute "extorq/lab-portal").
+# Credential: only a PBKDF2 hash of the random demo password is stored in the
+# cluster (Secret lab-portal-demo-credentials, generated at deploy time).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lab-portal
+  namespace: extorq-apps
+  labels:
+    app.kubernetes.io/name: lab-portal
+    app.kubernetes.io/part-of: extorq
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lab-portal
+  namespace: extorq-apps
+  labels:
+    app.kubernetes.io/name: lab-portal
+    app.kubernetes.io/part-of: extorq
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lab-portal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lab-portal
+        app.kubernetes.io/part-of: extorq
+      annotations:
+        # Rolls the pod when the demo credential changes (hash of the PBKDF2 file).
+        extorq.io/credential-sha256: "__LAB_PORTAL_CRED_SHA__"
+    spec:
+      serviceAccountName: lab-portal
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lab-portal
+          image: __LAB_PORTAL_IMAGE__
+          imagePullPolicy: Never
+          env:
+            - name: LAB_PORTAL_HOST
+              value: "0.0.0.0"
+            - name: LAB_PORTAL_PORT
+              value: "8080"
+            - name: LOG_ACCESS
+              value: "1"
+            - name: LAB_PORTAL_DEMO_USER
+              value: lab-admin
+            - name: LAB_PORTAL_PASSWORD_HASH_FILE
+              value: /var/run/secrets/lab-portal/password_hash
+            # No trusted proxies: X-Real-IP from clients is never believed. NodePort
+            # traffic is SNATed by kube-proxy, so src_ip is the node-side address.
+            - name: LAB_PORTAL_TRUSTED_PROXIES
+              value: "127.0.0.1"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: demo-credentials
+              mountPath: /var/run/secrets/lab-portal
+              readOnly: true
+      volumes:
+        - name: demo-credentials
+          secret:
+            secretName: lab-portal-demo-credentials
+            defaultMode: 0440
+            items:
+              - key: password_hash
+                path: password_hash
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lab-portal
+  namespace: extorq-apps
+  labels:
+    app.kubernetes.io/name: lab-portal
+    app.kubernetes.io/part-of: extorq
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: lab-portal
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30080
+      protocol: TCP
+---
+# Least privilege on the network: only inbound HTTP to lab-portal; no egress at all
+# (the app needs neither DNS nor outbound connections).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lab-portal
+  namespace: extorq-apps
+  labels:
+    app.kubernetes.io/name: lab-portal
+    app.kubernetes.io/part-of: extorq
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lab-portal
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+  # Egress listed in policyTypes with no egress rules = all egress denied.

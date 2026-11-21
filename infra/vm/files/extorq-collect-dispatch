@@ -1,0 +1,1162 @@
+#!/usr/bin/python3 -I
+"""extorq-collect-dispatch: the only program the extorq-collector SSH key can run.
+
+Installed root:root 0755 as /usr/local/sbin/extorq-collect-dispatch. sshd forces
+it for the collector account twice: ``Match User extorq-collector`` ->
+``ForceCommand`` and the key's ``restrict,command=`` options. It parses
+``$SSH_ORIGINAL_COMMAND`` strictly and runs a fixed allow-list of read-only
+collection commands as the unprivileged collector user (groups adm and
+systemd-journal; no sudo). No shell is ever invoked, no caller-supplied path is
+ever opened, every subprocess has a fixed argument vector, a timeout and a
+bounded output, and every response is size-limited.
+
+Grammar (tokens separated by exactly one space, printable ASCII only):
+    version
+    journal <cursor|-> <max_entries 1..5000>
+    audit <inode|-> <offset> <max_bytes 4096..1048576>
+    inventory
+    packages
+    posture
+Anything else: "denied" on stderr, exit status 77. Protocol version 1; output
+formats are documented in docs/telemetry/linux.md.
+
+Python 3 standard library only (Ubuntu 24.04 ships Python 3.12).
+"""
+
+from __future__ import annotations
+
+import glob
+import grp
+import hashlib
+import json
+import os
+import pwd
+import re
+import selectors
+import signal
+import stat
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+DISPATCHER_VERSION = "1.0.0"
+PROTOCOL = 1
+
+EXIT_OK = 0
+EXIT_SOFTWARE = 70
+EXIT_TEMPFAIL = 75
+EXIT_DENIED = 77
+
+MAX_COMMAND_CHARS = 512
+MAX_JOURNAL_ENTRIES = 5000
+MAX_JOURNAL_OUTPUT_BYTES = 8 * 1024 * 1024
+MAX_JOURNAL_LINE_BYTES = 256 * 1024
+MAX_MESSAGE_CHARS = 8192
+MIN_AUDIT_BYTES = 4096
+MAX_AUDIT_BYTES = 1024 * 1024
+MAX_FILE_HASH_BYTES = 4 * 1024 * 1024
+MAX_SUBPROCESS_OUTPUT = 16 * 1024 * 1024
+SUBPROCESS_TIMEOUT = 60.0
+JOURNAL_TIMEOUT = 90.0
+#: Hard wall-clock limit for one invocation (SIGALRM terminates the process).
+WATCHDOG_SECONDS = 180
+
+JOURNAL_FIELDS = (
+    "__CURSOR", "__REALTIME_TIMESTAMP", "_BOOT_ID", "_HOSTNAME", "SYSLOG_IDENTIFIER",
+    "_SYSTEMD_UNIT", "_PID", "_UID", "_COMM", "_EXE", "_TRANSPORT", "PRIORITY", "MESSAGE",
+)
+JOURNAL_INITIAL_SINCE = "-2h"
+
+AUDIT_DIR = "/var/log/audit"
+AUDIT_LOG = AUDIT_DIR + "/audit.log"
+AUDIT_MAX_ROTATED = 20
+
+UNIT_DIRS = (
+    "/etc/systemd/system",
+    "/run/systemd/system",
+    "/usr/local/lib/systemd/system",
+    "/usr/lib/systemd/system",
+    "/lib/systemd/system",
+)
+UNIT_SUFFIXES = (
+    ".service", ".socket", ".timer", ".path", ".target", ".mount", ".automount",
+    ".swap", ".slice", ".scope", ".device",
+)
+MAX_UNITS = 3000
+MAX_EXEC_CHARS = 512
+MAX_PROCESSES = 2000
+MAX_ARGS_CHARS = 256
+MAX_USERS = 2000
+MAX_LISTENERS = 1000
+MAX_CRON = 500
+MAX_PACKAGES = 20000
+
+PRIVILEGED_GROUPS = ("root", "sudo", "adm", "wheel", "admin", "docker", "lxd", "disk",
+                     "shadow", "systemd-journal")
+CRON_PATHS = ("/etc/crontab", "/etc/anacrontab")
+CRON_DIRS = ("/etc/cron.d", "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly",
+             "/etc/cron.monthly", "/var/spool/cron/crontabs")
+# Sensitive files: hashed when readable, otherwise reported with readable=false.
+# Private keys are deliberately NOT listed and never opened.
+SENSITIVE_FILES = (
+    "/etc/passwd", "/etc/group", "/etc/shadow", "/etc/gshadow", "/etc/sudoers",
+    "/etc/ssh/sshd_config", "/etc/crontab", "/etc/hosts", "/etc/ld.so.preload",
+    "/etc/environment", "/etc/pam.d/sshd", "/etc/pam.d/sudo", "/etc/pam.d/common-auth",
+    "/etc/audit/auditd.conf", "/etc/nginx/nginx.conf",
+)
+SENSITIVE_GLOBS = (
+    "/etc/ssh/sshd_config.d/*", "/etc/sudoers.d/*", "/etc/ssh/authorized_keys/*",
+    "/etc/audit/rules.d/*", "/etc/nginx/conf.d/*", "/etc/nginx/sites-enabled/*",
+)
+SENSITIVE_DIRS_LISTING = ("/etc/sudoers.d",)
+
+SYSCTLS = (
+    "kernel.randomize_va_space", "kernel.kptr_restrict", "kernel.dmesg_restrict",
+    "kernel.yama.ptrace_scope", "kernel.unprivileged_bpf_disabled", "fs.suid_dumpable",
+    "fs.protected_symlinks", "fs.protected_hardlinks", "net.ipv4.ip_forward",
+    "net.ipv4.conf.all.accept_redirects", "net.ipv4.conf.all.send_redirects",
+    "net.ipv4.conf.all.accept_source_route", "net.ipv4.conf.all.rp_filter",
+    "net.ipv4.tcp_syncookies", "net.ipv6.conf.all.accept_redirects",
+)
+OS_RELEASE_KEYS = ("ID", "ID_LIKE", "NAME", "PRETTY_NAME", "VERSION", "VERSION_ID",
+                   "VERSION_CODENAME", "UBUNTU_CODENAME")
+
+SAFE_ENV = {
+    "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "SYSTEMD_COLORS": "0",
+    "SYSTEMD_PAGER": "",
+    "SYSTEMD_LESS": "",
+    "PAGER": "cat",
+    "TERM": "dumb",
+}
+
+_TOKEN_CHARS = re.compile(r"^[\x21-\x7e]+(?: [\x21-\x7e]+)*$")
+CURSOR_RE = re.compile(
+    r"^s=[0-9a-f]{32};i=[0-9a-f]{1,16};b=[0-9a-f]{32};m=[0-9a-f]{1,16};"
+    r"t=[0-9a-f]{1,16};x=[0-9a-f]{1,16}$"
+)
+_UINT_RE = re.compile(r"^(0|[1-9][0-9]{0,18})$")
+
+
+class Denied(Exception):
+    """The requested command is not on the allow-list (or malformed)."""
+
+
+class DispatchFailure(Exception):
+    """An allowed command failed; message is a short, non-sensitive summary."""
+
+
+@dataclass(frozen=True)
+class Command:
+    name: str
+    cursor: str | None = None
+    max_entries: int = 0
+    inode: int | None = None
+    offset: int = 0
+    max_bytes: int = 0
+
+
+def _uint(token: str, low: int, high: int) -> int:
+    if not _UINT_RE.match(token):
+        raise Denied("not an unsigned integer")
+    value = int(token)
+    if not low <= value <= high:
+        raise Denied("integer out of range")
+    return value
+
+
+def parse_command(raw: str | None) -> Command:
+    """Strictly parse SSH_ORIGINAL_COMMAND into an allow-listed Command."""
+    if raw is None or raw == "":
+        raise Denied("no command (interactive sessions are not allowed)")
+    if len(raw) > MAX_COMMAND_CHARS:
+        raise Denied("command too long")
+    if not _TOKEN_CHARS.match(raw):
+        raise Denied("illegal characters or spacing")
+    tokens = raw.split(" ")
+    name = tokens[0]
+    args = tokens[1:]
+    if name in ("version", "inventory", "packages", "posture"):
+        if args:
+            raise Denied(f"{name} takes no arguments")
+        return Command(name=name)
+    if name == "journal":
+        if len(args) != 2:
+            raise Denied("usage: journal <cursor|-> <max_entries>")
+        cursor = None
+        if args[0] != "-":
+            if not CURSOR_RE.match(args[0]):
+                raise Denied("malformed journal cursor")
+            cursor = args[0]
+        return Command(name=name, cursor=cursor,
+                       max_entries=_uint(args[1], 1, MAX_JOURNAL_ENTRIES))
+    if name == "audit":
+        if len(args) != 3:
+            raise Denied("usage: audit <inode|-> <offset> <max_bytes>")
+        inode = None if args[0] == "-" else _uint(args[0], 1, 2**64 - 1)
+        return Command(name=name, inode=inode, offset=_uint(args[1], 0, 2**53),
+                       max_bytes=_uint(args[2], MIN_AUDIT_BYTES, MAX_AUDIT_BYTES))
+    raise Denied("unknown command")
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def emit_json(obj: object) -> None:
+    sys.stdout.write(json.dumps(obj, ensure_ascii=True, separators=(",", ":"),
+                                sort_keys=False, allow_nan=False))
+    sys.stdout.write("\n")
+
+
+def run_fixed(argv: list[str], timeout: float = SUBPROCESS_TIMEOUT,
+              limit: int = MAX_SUBPROCESS_OUTPUT) -> tuple[int, bytes, bytes]:
+    """Run a fixed argv (no shell) with a timeout and bounded stdout/stderr."""
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=SAFE_ENV, close_fds=True,
+                                shell=False)
+    except OSError as exc:
+        raise DispatchFailure(f"cannot execute {os.path.basename(argv[0])}: {exc.strerror}") from None
+    out = bytearray()
+    err = bytearray()
+    deadline = time.monotonic() + timeout
+    sel = selectors.DefaultSelector()
+    assert proc.stdout is not None and proc.stderr is not None
+    sel.register(proc.stdout, selectors.EVENT_READ, out)
+    sel.register(proc.stderr, selectors.EVENT_READ, err)
+    try:
+        while sel.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DispatchFailure(f"{os.path.basename(argv[0])} timed out")
+            for key, _ in sel.select(timeout=min(remaining, 1.0)):
+                chunk = os.read(key.fd, 65536)
+                if not chunk:
+                    sel.unregister(key.fileobj)
+                    continue
+                buf = key.data
+                buf.extend(chunk)
+                if len(out) > limit or len(err) > 65536:
+                    raise DispatchFailure(f"{os.path.basename(argv[0])} output too large")
+        rc = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        raise DispatchFailure(f"{os.path.basename(argv[0])} timed out") from None
+    finally:
+        sel.close()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        proc.stdout.close()
+        proc.stderr.close()
+    return rc, bytes(out), bytes(err)
+
+
+def first_line(data: bytes, limit: int = 200) -> str:
+    text = data.decode("utf-8", "replace").strip().splitlines()
+    return text[0][:limit] if text else ""
+
+
+def read_text(path: str, limit: int = 1024 * 1024) -> str | None:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            return handle.read(limit).decode("utf-8", "replace")
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def file_facts(path: str, with_hash: bool = True) -> dict[str, object]:
+    """Metadata (+ sha256 when readable) of a file, never following symlinks."""
+    facts: dict[str, object] = {"path": path}
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        facts["exists"] = False
+        return facts
+    except OSError as exc:
+        facts["exists"] = None
+        facts["error"] = exc.strerror
+        return facts
+    facts.update({
+        "exists": True,
+        "mode": "%04o" % stat.S_IMODE(st.st_mode),
+        "uid": st.st_uid,
+        "gid": st.st_gid,
+        "size": st.st_size,
+        "mtime": int(st.st_mtime),
+    })
+    if stat.S_ISLNK(st.st_mode):
+        facts["kind"] = "symlink"
+        try:
+            facts["symlink_target"] = os.readlink(path)[:1024]
+        except OSError:
+            facts["symlink_target"] = None
+        return facts
+    if not stat.S_ISREG(st.st_mode):
+        facts["kind"] = "dir" if stat.S_ISDIR(st.st_mode) else "other"
+        return facts
+    facts["kind"] = "file"
+    if not with_hash:
+        return facts
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except PermissionError:
+        facts["readable"] = False
+        return facts
+    except OSError as exc:
+        facts["readable"] = False
+        facts["error"] = exc.strerror
+        return facts
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_FILE_HASH_BYTES:
+                facts["readable"] = True
+                facts["sha256"] = None
+                facts["error"] = "too large to hash"
+                return facts
+            digest.update(chunk)
+    except OSError as exc:
+        facts["readable"] = False
+        facts["error"] = exc.strerror
+        return facts
+    finally:
+        os.close(fd)
+    facts["readable"] = True
+    facts["sha256"] = digest.hexdigest()
+    return facts
+
+
+def os_release() -> dict[str, str]:
+    text = read_text("/etc/os-release") or read_text("/usr/lib/os-release") or ""
+    result: dict[str, str] = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key in OS_RELEASE_KEYS:
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            result[key] = value[:256]
+    return result
+
+
+def host_facts() -> dict[str, object]:
+    uts = os.uname()
+    uptime = None
+    text = read_text("/proc/uptime")
+    if text:
+        try:
+            uptime = float(text.split()[0])
+        except (ValueError, IndexError):
+            uptime = None
+    boot_id = (read_text("/proc/sys/kernel/random/boot_id") or "").strip() or None
+    return {
+        "hostname": uts.nodename,
+        "kernel_release": uts.release,
+        "kernel_version": uts.version,
+        "machine": uts.machine,
+        "boot_id": boot_id,
+        "uptime_seconds": uptime,
+        "os_release": os_release(),
+    }
+
+
+# ── journal ────────────────────────────────────────────────────────────────────
+
+
+def _journal_value(value: object, limit: int) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        # Multiple values or a binary field (list of byte values).
+        if value and all(isinstance(v, int) for v in value):
+            return bytes(v & 0xFF for v in value[:limit * 4]).decode("utf-8", "replace")[:limit]
+        value = value[0] if value else None
+        if isinstance(value, list):
+            return _journal_value(value, limit)
+        if value is None:
+            return None
+    return str(value)[:limit]
+
+
+def filter_journal_entry(entry: dict[str, object]) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for field in JOURNAL_FIELDS:
+        if field in entry:
+            limit = MAX_MESSAGE_CHARS if field == "MESSAGE" else 512
+            out[field] = _journal_value(entry[field], limit)
+    return out
+
+
+def cmd_journal(command: Command) -> int:
+    # All journals readable by the collector (system + per-user): sudo and
+    # post-authentication sshd lines are stored in the invoking user's journal,
+    # so --system would silently drop them.
+    argv = ["/usr/bin/journalctl", "--no-pager", "--quiet", "-o", "json",
+            "--output-fields=" + ",".join(f for f in JOURNAL_FIELDS if not f.startswith("__"))]
+    if command.cursor:
+        # Inclusive seek: the first entry is dropped when it IS the checkpoint, which
+        # proves the checkpoint still exists (no rotation/vacuum gap).
+        argv.append("--cursor=" + command.cursor)
+    else:
+        argv.append("--since=" + JOURNAL_INITIAL_SINCE)
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=SAFE_ENV, close_fds=True)
+    except OSError as exc:
+        raise DispatchFailure(f"cannot execute journalctl: {exc.strerror}") from None
+    assert proc.stdout is not None and proc.stderr is not None
+    deadline = time.monotonic() + JOURNAL_TIMEOUT
+    entries = 0
+    written = 0
+    malformed = 0
+    oversized = 0
+    truncated = False
+    timed_out = False
+    first = True
+    cursor_exact: bool | None = None
+    last_cursor: str | None = None
+    try:
+        for raw in proc.stdout:
+            if time.monotonic() > deadline:
+                timed_out = True
+                truncated = True
+                break
+            if len(raw) > MAX_JOURNAL_LINE_BYTES:
+                oversized += 1
+                first = False
+                continue
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                malformed += 1
+                continue
+            if not isinstance(entry, dict):
+                malformed += 1
+                continue
+            if first:
+                first = False
+                if command.cursor:
+                    if entry.get("__CURSOR") == command.cursor:
+                        cursor_exact = True
+                        continue
+                    cursor_exact = False
+            line = json.dumps(filter_journal_entry(entry), ensure_ascii=True,
+                              separators=(",", ":"))
+            sys.stdout.write(line + "\n")
+            written += len(line) + 1
+            entries += 1
+            cursor = entry.get("__CURSOR")
+            if isinstance(cursor, str):
+                last_cursor = cursor
+            if entries >= command.max_entries or written >= MAX_JOURNAL_OUTPUT_BYTES:
+                truncated = True
+                break
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        try:
+            _, err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _, err = proc.communicate()
+    rc = proc.returncode
+    if command.cursor and first:
+        # Nothing at all was returned: the checkpoint entry itself is gone.
+        cursor_exact = False
+    error = None
+    if rc not in (0, None, -9) and not truncated and entries == 0:
+        error = first_line(err) or f"journalctl exited with status {rc}"
+    emit_json({"_extorq": {
+        "type": "journal_end",
+        "protocol": PROTOCOL,
+        "entries": entries,
+        "truncated": truncated,
+        "timed_out": timed_out,
+        "cursor_requested": command.cursor is not None,
+        "cursor_exact": cursor_exact,
+        "last_cursor": last_cursor,
+        "skipped_malformed": malformed,
+        "skipped_oversized": oversized,
+        "journalctl_exit": rc,
+        "error": error,
+        "since": None if command.cursor else JOURNAL_INITIAL_SINCE,
+    }})
+    return EXIT_OK
+
+
+# ── audit ──────────────────────────────────────────────────────────────────────
+
+
+def _audit_files() -> list[tuple[str, os.stat_result]]:
+    """Existing audit log files ordered oldest -> newest (audit.log.N ... audit.log)."""
+    files: list[tuple[str, os.stat_result]] = []
+    for index in range(AUDIT_MAX_ROTATED, 0, -1):
+        path = f"{AUDIT_LOG}.{index}"
+        try:
+            files.append((path, os.stat(path)))
+        except OSError:
+            continue
+    try:
+        files.append((AUDIT_LOG, os.stat(AUDIT_LOG)))
+    except PermissionError:
+        raise DispatchFailure("audit log not readable by the collector (log_group=adm?)") from None
+    except OSError:
+        raise DispatchFailure("audit log not found") from None
+    return files
+
+
+def plan_audit_read(files: list[tuple[str, int, int]], inode: int | None,
+                    offset: int) -> tuple[int, int, bool, str | None]:
+    """Decide which file (index into ``files``) and offset to read.
+
+    ``files`` are (path, inode, size) ordered oldest -> newest; the last entry is
+    the live audit.log. Returns (index, start_offset, gap, gap_reason).
+    """
+    current = len(files) - 1
+    if inode is None:
+        size = files[current][2]
+        return current, (offset if offset <= size else 0), False, None
+    for index, (_, file_inode, size) in enumerate(files):
+        if file_inode != inode:
+            continue
+        if offset > size:
+            # The file shrank under the checkpoint: truncated/rewritten.
+            return index, 0, True, "file_truncated"
+        while offset >= files[index][2] and index < current:
+            index += 1  # rotated file fully consumed: continue with the next newer one
+            offset = 0
+        return index, offset, False, None
+    # The checkpointed file rotated out of the retained set: data was lost.
+    return current, 0, True, "rotated_past_offset"
+
+
+def cmd_audit(command: Command) -> int:
+    files_stat = _audit_files()
+    files = [(path, st.st_ino, st.st_size) for path, st in files_stat]
+    index, start, gap, gap_reason = plan_audit_read(files, command.inode, command.offset)
+    path = files[index][0]
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except PermissionError:
+        raise DispatchFailure("audit log not readable by the collector") from None
+    except OSError:
+        raise DispatchFailure("audit log disappeared during read") from None
+    try:
+        st = os.fstat(fd)
+        if st.st_ino != files[index][1]:
+            raise DispatchFailure("audit log rotated during read; retry")
+        os.lseek(fd, start, os.SEEK_SET)
+        data = b""
+        while len(data) < command.max_bytes:
+            chunk = os.read(fd, command.max_bytes - len(data))
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        os.close(fd)
+    oversized_line = False
+    cut = data.rfind(b"\n")
+    if cut >= 0:
+        payload = data[:cut + 1]
+    elif len(data) >= command.max_bytes:
+        payload = b""
+        oversized_line = True  # a single line longer than max_bytes: skip it
+    else:
+        payload = b""  # partial line being written right now: retry next poll
+    consumed = len(payload) if not oversized_line else len(data)
+    next_offset = start + consumed
+    current_inode, current_size = files[-1][1], files[-1][2]
+    more = next_offset < st.st_size or index < len(files) - 1
+    emit_json({"_extorq": {
+        "type": "audit",
+        "protocol": PROTOCOL,
+        "file": os.path.basename(path),
+        "inode": st.st_ino,
+        "size": st.st_size,
+        "start_offset": start,
+        "next_offset": next_offset,
+        "bytes": len(payload),
+        "gap": gap,
+        "gap_reason": gap_reason,
+        "oversized_line_skipped": oversized_line,
+        "more": more,
+        "current_inode": current_inode,
+        "current_size": current_size,
+        "rotated_files": len(files) - 1,
+    }})
+    sys.stdout.flush()
+    sys.stdout.buffer.write(payload)
+    sys.stdout.buffer.flush()
+    return EXIT_OK
+
+
+# ── inventory ──────────────────────────────────────────────────────────────────
+
+
+def _unit_details(path: str) -> dict[str, object]:
+    text = read_text(path, limit=256 * 1024)
+    if text is None:
+        return {}
+    exec_start: list[str] = []
+    description = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("ExecStart=") and len(exec_start) < 4:
+            exec_start.append(stripped[len("ExecStart="):][:MAX_EXEC_CHARS])
+        elif stripped.startswith("Description=") and description is None:
+            description = stripped[len("Description="):][:256]
+    return {"exec_start": exec_start, "description": description}
+
+
+def collect_units() -> tuple[list[dict[str, object]], list[dict[str, object]], bool]:
+    units: list[dict[str, object]] = []
+    enablement: list[dict[str, object]] = []
+    seen_real: set[str] = set()
+    truncated = False
+    for unit_dir in UNIT_DIRS:
+        try:
+            real = os.path.realpath(unit_dir)
+        except OSError:
+            continue
+        if real in seen_real or not os.path.isdir(unit_dir):
+            continue
+        seen_real.add(real)
+        try:
+            names = sorted(os.listdir(unit_dir))
+        except OSError:
+            units.append({"path": unit_dir, "kind": "dir", "readable": False})
+            continue
+        for name in names:
+            if len(units) >= MAX_UNITS:
+                truncated = True
+                break
+            path = os.path.join(unit_dir, name)
+            if name.endswith((".wants", ".requires", ".upholds")) and os.path.isdir(path):
+                relation = name.rsplit(".", 1)[1]
+                target = name[: -(len(relation) + 1)]
+                try:
+                    links = sorted(os.listdir(path))
+                except OSError:
+                    continue
+                for link in links[:500]:
+                    link_path = os.path.join(path, link)
+                    try:
+                        link_target = os.readlink(link_path)[:1024]
+                    except OSError:
+                        link_target = None
+                    enablement.append({"unit": link, "relation": relation, "target": target,
+                                       "dir": unit_dir, "link_target": link_target})
+                continue
+            if name.endswith(".d") and os.path.isdir(path):
+                try:
+                    dropins = sorted(os.listdir(path))
+                except OSError:
+                    continue
+                for dropin in dropins[:100]:
+                    if dropin.endswith(".conf"):
+                        dpath = os.path.join(path, dropin)
+                        facts = file_facts(dpath)
+                        facts.update({"name": name[:-2], "unit_dir": unit_dir, "role": "dropin"})
+                        facts.update(_unit_details(dpath))
+                        units.append(facts)
+                continue
+            if not name.endswith(UNIT_SUFFIXES):
+                continue
+            facts = file_facts(path)
+            facts.update({"name": name, "unit_dir": unit_dir, "role": "unit"})
+            if facts.get("kind") == "file":
+                facts.update(_unit_details(path))
+            units.append(facts)
+    return units, enablement, truncated
+
+
+def _split_addr(text: str) -> tuple[str | None, str | None, int | None]:
+    """Parse ss 'Local Address:Port' -> (address, interface, port)."""
+    if text.startswith("["):
+        host, _, port = text[1:].partition("]:")
+    else:
+        host, _, port = text.rpartition(":")
+    iface = None
+    if "%" in host:
+        host, _, iface = host.partition("%")
+    try:
+        port_num = int(port) if port not in ("*", "") else None
+    except ValueError:
+        port_num = None
+    return (host or None), iface, port_num
+
+
+def parse_ss(text: str) -> list[dict[str, object]]:
+    listeners: list[dict[str, object]] = []
+    for line in text.splitlines():
+        parts = line.split(None, 6)
+        if len(parts) < 6:
+            continue
+        netid, state, local = parts[0], parts[1], parts[4]
+        address, iface, port = _split_addr(local)
+        processes: list[dict[str, object]] = []
+        if len(parts) == 7:
+            for match in re.finditer(r'\("([^"]{1,64})",pid=(\d+),fd=(\d+)\)', parts[6]):
+                processes.append({"name": match.group(1), "pid": int(match.group(2))})
+        listeners.append({
+            "proto": netid, "state": state, "local_address": address, "interface": iface,
+            "local_port": port,
+            # Without root, ss only shows the owner of the collector's own sockets:
+            # process stays unknown (null) rather than guessed.
+            "processes": processes or None,
+        })
+        if len(listeners) >= MAX_LISTENERS:
+            break
+    return listeners
+
+
+def collect_processes() -> tuple[list[dict[str, object]], bool]:
+    procs: list[dict[str, object]] = []
+    truncated = False
+    user_cache: dict[int, str | None] = {}
+    try:
+        pids = sorted((int(p) for p in os.listdir("/proc") if p.isdigit()))
+    except OSError:
+        return procs, False
+    for pid in pids:
+        stat_text = read_text(f"/proc/{pid}/stat", 4096)
+        if not stat_text or ")" not in stat_text:
+            continue
+        comm = stat_text[stat_text.find("(") + 1: stat_text.rfind(")")][:64]
+        fields = stat_text[stat_text.rfind(")") + 2:].split()
+        try:
+            ppid = int(fields[1])
+            start_ticks = int(fields[19])
+        except (IndexError, ValueError):
+            continue
+        if pid == 2 or ppid == 2:
+            continue  # kernel threads
+        uid = None
+        status = read_text(f"/proc/{pid}/status", 8192) or ""
+        for line in status.splitlines():
+            if line.startswith("Uid:"):
+                try:
+                    uid = int(line.split()[1])
+                except (IndexError, ValueError):
+                    uid = None
+                break
+        if uid is not None and uid not in user_cache:
+            try:
+                user_cache[uid] = pwd.getpwuid(uid).pw_name
+            except KeyError:
+                user_cache[uid] = None
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as handle:
+                raw_args = handle.read(MAX_ARGS_CHARS * 4)
+        except OSError:
+            raw_args = b""
+        args = raw_args.replace(b"\x00", b" ").decode("utf-8", "replace").strip()[:MAX_ARGS_CHARS]
+        procs.append({"pid": pid, "ppid": ppid, "uid": uid,
+                      "user": user_cache.get(uid) if uid is not None else None,
+                      "comm": comm, "args": args, "start_ticks": start_ticks})
+        if len(procs) >= MAX_PROCESSES:
+            truncated = True
+            break
+    return procs, truncated
+
+
+def collect_users() -> tuple[list[dict[str, object]], dict[str, list[str]]]:
+    users: list[dict[str, object]] = []
+    groups_by_user: dict[str, list[str]] = {}
+    group_names_by_gid: dict[int, str] = {}
+    privileged: dict[str, list[str]] = {}
+    try:
+        all_groups = grp.getgrall()
+    except OSError:
+        all_groups = []
+    for group in all_groups:
+        group_names_by_gid[group.gr_gid] = group.gr_name
+        for member in group.gr_mem:
+            groups_by_user.setdefault(member, []).append(group.gr_name)
+        if group.gr_name in PRIVILEGED_GROUPS:
+            privileged[group.gr_name] = sorted(group.gr_mem)[:200]
+    for entry in pwd.getpwall()[:MAX_USERS]:
+        primary = group_names_by_gid.get(entry.pw_gid)
+        member_of = sorted(set(groups_by_user.get(entry.pw_name, []) + ([primary] if primary else [])))
+        users.append({"name": entry.pw_name[:64], "uid": entry.pw_uid, "gid": entry.pw_gid,
+                      "home": entry.pw_dir[:256], "shell": entry.pw_shell[:256],
+                      "groups": member_of[:64]})
+    return users, privileged
+
+
+def collect_cron() -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for path in CRON_PATHS:
+        facts = file_facts(path)
+        if facts.get("exists"):
+            entries.append(facts)
+    for cron_dir in CRON_DIRS:
+        try:
+            names = sorted(os.listdir(cron_dir))
+        except FileNotFoundError:
+            continue
+        except OSError:
+            entries.append({"path": cron_dir, "kind": "dir", "readable": False})
+            continue
+        for name in names:
+            if len(entries) >= MAX_CRON:
+                return entries
+            entries.append(file_facts(os.path.join(cron_dir, name)))
+    return entries
+
+
+def collect_sensitive_files() -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    for path in SENSITIVE_FILES:
+        result.append(file_facts(path))
+    for pattern in SENSITIVE_GLOBS:
+        parent = os.path.dirname(pattern)
+        try:
+            os.listdir(parent)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            result.append({"path": parent, "kind": "dir", "readable": False})
+            continue
+        for path in sorted(glob.glob(pattern))[:200]:
+            result.append(file_facts(path))
+    return result
+
+
+def cmd_inventory(_command: Command) -> int:
+    errors: list[str] = []
+    units, enablement, units_truncated = collect_units()
+    listeners: list[dict[str, object]] = []
+    try:
+        rc, out, err = run_fixed(["/usr/bin/ss", "-H", "-t", "-u", "-l", "-p", "-n"], timeout=20)
+        if rc == 0:
+            listeners = parse_ss(out.decode("utf-8", "replace"))
+        else:
+            errors.append("ss: " + (first_line(err) or f"exit {rc}"))
+    except DispatchFailure as exc:
+        errors.append(str(exc))
+    processes, procs_truncated = collect_processes()
+    users, privileged = collect_users()
+    emit_json({
+        "type": "inventory",
+        "protocol": PROTOCOL,
+        "collected_at": utc_now(),
+        "host": host_facts(),
+        "systemd_units": units,
+        "enablement": enablement,
+        "listeners": listeners,
+        "processes": processes,
+        "users": users,
+        "privileged_groups": privileged,
+        "cron": collect_cron(),
+        "sensitive_files": collect_sensitive_files(),
+        "truncated": {"systemd_units": units_truncated, "processes": procs_truncated},
+        "errors": errors,
+    })
+    return EXIT_OK
+
+
+# ── packages ───────────────────────────────────────────────────────────────────
+
+
+def cmd_packages(_command: Command) -> int:
+    fmt = ("${db:Status-Abbrev}\\t${Package}\\t${Version}\\t${Architecture}\\t"
+           "${source:Package}\\t${source:Version}\\n")
+    rc, out, err = run_fixed(["/usr/bin/dpkg-query", "-W", "-f=" + fmt])
+    if rc != 0:
+        raise DispatchFailure("dpkg-query failed: " + (first_line(err) or f"exit {rc}"))
+    packages: list[dict[str, str]] = []
+    truncated = False
+    for line in out.decode("utf-8", "replace").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 6:
+            continue
+        status = parts[0].strip()
+        if len(status) < 2 or status[1] in ("n", "c"):
+            continue  # not installed / config files only
+        packages.append({"name": parts[1][:128], "version": parts[2][:128],
+                         "architecture": parts[3][:32], "source_name": parts[4][:128],
+                         "source_version": parts[5][:128], "status": status[:3]})
+        if len(packages) >= MAX_PACKAGES:
+            truncated = True
+            break
+    arch = None
+    try:
+        rc_arch, arch_out, _ = run_fixed(["/usr/bin/dpkg", "--print-architecture"], timeout=10)
+        if rc_arch == 0:
+            arch = arch_out.decode("ascii", "replace").strip()[:32] or None
+    except DispatchFailure:
+        arch = None
+    emit_json({
+        "type": "packages",
+        "protocol": PROTOCOL,
+        "schema": "extorq.linux.packages.v1",
+        "collected_at": utc_now(),
+        "hostname": os.uname().nodename,
+        "os_release": os_release(),
+        "dpkg_architecture": arch,
+        "packages": packages,
+        "count": len(packages),
+        "truncated": truncated,
+        "errors": [],
+    })
+    return EXIT_OK
+
+
+# ── posture ────────────────────────────────────────────────────────────────────
+
+
+def parse_sshd_config(root: str = "/etc/ssh/sshd_config") -> dict[str, object]:
+    """Effective *global* sshd settings from config files (first value wins).
+
+    sshd -T needs root (host keys), so the files are parsed directly. Match blocks
+    are recorded separately and never override global values here.
+    """
+    settings: dict[str, dict[str, str]] = {}
+    matches: list[dict[str, object]] = []
+    files_read: list[str] = []
+    unreadable: list[str] = []
+
+    def process(path: str, depth: int, in_match: dict[str, object] | None) -> None:
+        if depth > 8:
+            return
+        text = read_text(path, limit=512 * 1024)
+        if text is None:
+            unreadable.append(path)
+            return
+        files_read.append(path)
+        current = in_match
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            keyword = parts[0].lower()
+            value = parts[1].strip() if len(parts) > 1 else ""
+            if "=" in parts[0]:
+                keyword, _, value = line.partition("=")
+                keyword = keyword.strip().lower()
+            # sshd accepts "Keyword value", "Keyword=value" and "Keyword = value".
+            value = value.strip()
+            if value.startswith("="):
+                value = value[1:].strip()
+            if len(value) >= 2 and value[0] == value[-1] == '"':
+                value = value[1:-1]
+            if keyword == "match":
+                current = {"criteria": value[:256], "file": path, "settings": {}}
+                matches.append(current)
+                continue
+            if keyword == "include":
+                for pattern in value.split():
+                    full = pattern if pattern.startswith("/") else os.path.join("/etc/ssh", pattern)
+                    for inc in sorted(glob.glob(full)):
+                        process(inc, depth + 1, current)
+                continue
+            if current is not None:
+                current_settings = current["settings"]
+                assert isinstance(current_settings, dict)
+                current_settings.setdefault(keyword, value[:256])
+            elif keyword not in settings:
+                settings[keyword] = {"value": value[:256], "file": path}
+
+    process(root, 0, None)
+    return {"settings": settings, "match_blocks": matches[:32], "files_read": files_read,
+            "unreadable": unreadable}
+
+
+def parse_apt_periodic() -> dict[str, object]:
+    values: dict[str, str] = {}
+    files = sorted(glob.glob("/etc/apt/apt.conf.d/*"))
+    for path in files:
+        text = read_text(path, limit=256 * 1024)
+        if text is None:
+            continue
+        for match in re.finditer(r'(APT::Periodic::[A-Za-z-]+)\s+"([^"]*)"\s*;', text):
+            values[match.group(1)] = match.group(2)[:64]  # later files override earlier
+    return values
+
+
+def systemctl_state(verb: str, unit: str) -> str | None:
+    try:
+        rc, out, _ = run_fixed(["/usr/bin/systemctl", verb, unit], timeout=10)
+    except DispatchFailure:
+        return None
+    text = out.decode("utf-8", "replace").strip()
+    return text.splitlines()[0][:64] if text else None
+
+
+def read_sysctls() -> dict[str, str | None]:
+    values: dict[str, str | None] = {}
+    for name in SYSCTLS:
+        text = read_text("/proc/sys/" + name.replace(".", "/"), limit=256)
+        values[name] = text.strip() if text is not None else None
+    return values
+
+
+def pending_security_updates() -> dict[str, object]:
+    try:
+        rc, out, err = run_fixed(["/usr/bin/apt", "list", "--upgradable"], timeout=90)
+    except DispatchFailure as exc:
+        return {"available": False, "error": str(exc), "packages": []}
+    if rc != 0:
+        return {"available": False, "error": first_line(err) or f"exit {rc}", "packages": []}
+    packages: list[dict[str, object]] = []
+    total = 0
+    pattern = re.compile(r"^([^/\s]+)/(\S+)\s+(\S+)\s+(\S+)(?:\s+\[upgradable from:\s+([^\]]+)\])?")
+    for line in out.decode("utf-8", "replace").splitlines():
+        match = pattern.match(line)
+        if not match:
+            continue
+        total += 1
+        suites = match.group(2).split(",")
+        if not any(s.endswith("-security") for s in suites):
+            continue
+        packages.append({"name": match.group(1)[:128], "suites": suites[:8],
+                         "candidate": match.group(3)[:128], "architecture": match.group(4)[:32],
+                         "installed": (match.group(5) or "")[:128] or None})
+        if len(packages) >= 2000:
+            break
+    lists_mtime = None
+    for stamp in ("/var/lib/apt/periodic/update-success-stamp", "/var/lib/apt/lists"):
+        try:
+            lists_mtime = int(os.stat(stamp).st_mtime)
+            break
+        except OSError:
+            continue
+    return {"available": True, "error": None, "packages": packages, "upgradable_total": total,
+            "apt_lists_mtime": lists_mtime}
+
+
+def cmd_posture(_command: Command) -> int:
+    ufw_text = read_text("/etc/ufw/ufw.conf")
+    ufw_enabled = None
+    if ufw_text is not None:
+        match = re.search(r"^\s*ENABLED\s*=\s*(\S+)", ufw_text, re.MULTILINE)
+        ufw_enabled = match.group(1).strip("\"'").lower() if match else None
+    apparmor = read_text("/sys/module/apparmor/parameters/enabled")
+    reboot_pkgs = read_text("/var/run/reboot-required.pkgs", limit=64 * 1024)
+    readable_by_collector = {}
+    for path in ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh/ssh_host_ed25519_key"):
+        # access() only: content of these files is never read.
+        readable_by_collector[path] = os.access(path, os.R_OK) if os.path.exists(path) else None
+    passwd_uid0 = [u.pw_name for u in pwd.getpwall() if u.pw_uid == 0][:16]
+    emit_json({
+        "type": "posture",
+        "protocol": PROTOCOL,
+        "collected_at": utc_now(),
+        "host": host_facts(),
+        "checks": {
+            "sshd": parse_sshd_config(),
+            "apt_periodic": parse_apt_periodic(),
+            "unattended_upgrades": {
+                "installed": os.path.exists("/usr/bin/unattended-upgrade"),
+                "service_enabled": systemctl_state("is-enabled", "unattended-upgrades.service"),
+                "upgrade_timer_enabled": systemctl_state("is-enabled", "apt-daily-upgrade.timer"),
+            },
+            "auditd": {
+                "active": systemctl_state("is-active", "auditd.service"),
+                "enabled": systemctl_state("is-enabled", "auditd.service"),
+            },
+            "apparmor": {"enabled": apparmor.strip() if apparmor is not None else None},
+            "ufw": {"config_readable": ufw_text is not None, "enabled": ufw_enabled},
+            "sysctl": read_sysctls(),
+            "reboot_required": {
+                "required": os.path.exists("/var/run/reboot-required"),
+                "packages": sorted(set(reboot_pkgs.split()))[:64] if reboot_pkgs else [],
+            },
+            "security_updates": pending_security_updates(),
+            "file_access": readable_by_collector,
+            "uid0_accounts": passwd_uid0,
+        },
+    })
+    return EXIT_OK
+
+
+# ── main ───────────────────────────────────────────────────────────────────────
+
+HANDLERS = {
+    "journal": cmd_journal,
+    "audit": cmd_audit,
+    "inventory": cmd_inventory,
+    "packages": cmd_packages,
+    "posture": cmd_posture,
+}
+
+
+def cmd_version(_command: Command) -> int:
+    emit_json({
+        "type": "version",
+        "protocol": PROTOCOL,
+        "dispatcher": "extorq-collect-dispatch",
+        "version": DISPATCHER_VERSION,
+        "commands": ["version"] + sorted(HANDLERS),
+        "limits": {"journal_max_entries": MAX_JOURNAL_ENTRIES, "audit_max_bytes": MAX_AUDIT_BYTES},
+        "hostname": os.uname().nodename,
+        "user": pwd.getpwuid(os.getuid()).pw_name,
+    })
+    return EXIT_OK
+
+
+def _log_denial(raw: str | None, reason: str) -> None:
+    """Record a boundary violation in the journal (content never logged verbatim)."""
+    try:
+        import syslog
+
+        data = (raw or "").encode("utf-8", "replace")
+        first = (raw or "").split(" ", 1)[0]
+        token = first if re.fullmatch(r"[a-z]{1,16}", first) else "?"
+        syslog.openlog("extorq-collect-dispatch", syslog.LOG_PID, syslog.LOG_AUTHPRIV)
+        syslog.syslog(syslog.LOG_WARNING,
+                      "denied command: first_token=%s length=%d sha256=%s reason=%s"
+                      % (token, len(data), hashlib.sha256(data).hexdigest()[:16], reason[:80]))
+        syslog.closelog()
+    except Exception:  # noqa: BLE001 - logging must never change the decision
+        pass
+
+
+def main() -> int:
+    signal.alarm(WATCHDOG_SECONDS)
+    raw = os.environ.get("SSH_ORIGINAL_COMMAND")
+    try:
+        command = parse_command(raw)
+    except Denied as exc:
+        _log_denial(raw, str(exc))
+        sys.stderr.write("denied\n")
+        return EXIT_DENIED
+    handler = cmd_version if command.name == "version" else HANDLERS[command.name]
+    try:
+        return handler(command)
+    except DispatchFailure as exc:
+        sys.stdout.flush()
+        sys.stderr.write("error: %s\n" % str(exc)[:200])
+        return EXIT_TEMPFAIL if "timed out" in str(exc) or "retry" in str(exc) else EXIT_SOFTWARE
+    except BrokenPipeError:
+        return EXIT_TEMPFAIL
+    except Exception as exc:  # noqa: BLE001 - never leak tracebacks to the caller
+        sys.stderr.write("error: internal %s\n" % type(exc).__name__)
+        return EXIT_SOFTWARE
+
+
+if __name__ == "__main__":
+    sys.exit(main())

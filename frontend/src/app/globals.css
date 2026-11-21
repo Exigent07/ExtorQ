@@ -1,0 +1,311 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * ExtorQ Security Console design tokens.
+ *
+ * Style: "data terminal" on graphite. Dark only. Panels sit one step darker than the
+ * ground; separation is a 1px line; colour is reserved for data (severity, health) and
+ * the only selection mark is a 1px ink line. Contrast of every text tier was measured
+ * against ground, surface and raised fills (>= 4.5:1; see frontend/AGENTS.md).
+ *
+ * Components use the semantic shadcn names (background, card, muted-foreground, ...)
+ * or the ExtorQ utilities below (bg-surface, text-sev-high, border-rule, ...).
+ * Never hard-code a hex value in a component.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+/* ── Variants used by the generated shadcn/ui components (ejected from shadcn 4.23) ── */
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-checked {
+  &:where([data-state="checked"]),
+  &:where([data-checked]:not([data-checked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-unchecked {
+  &:where([data-state="unchecked"]),
+  &:where([data-unchecked]:not([data-unchecked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-selected {
+  &:where([data-selected="true"]) {
+    @slot;
+  }
+}
+@custom-variant data-disabled {
+  &:where([data-disabled="true"]),
+  &:where([data-disabled]:not([data-disabled="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-active {
+  &:where([data-state="active"]),
+  &:where([data-active]:not([data-active="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-horizontal {
+  &:where([data-orientation="horizontal"]) {
+    @slot;
+  }
+}
+@custom-variant data-vertical {
+  &:where([data-orientation="vertical"]) {
+    @slot;
+  }
+}
+
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ── Raw tokens ─────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --xq-ground: #171719;
+  --xq-surface: #131217;
+  --xq-raised: #212023;
+  --xq-overlay: #1c1b1f;
+  /* Lines: panel edge, row rule, control outline */
+  --xq-border: #26252a;
+  --xq-rule: #1e1d22;
+  --xq-control: #3a3a3e;
+  /* Text tiers: 16.9 / 9.0 / 5.8 : 1 on the panel surface */
+  --xq-text: #f4f4f5;
+  --xq-text-2: #b4b4b8;
+  --xq-muted: #8d8f95;
+  /* The one selection mark (data-terminal): a 1px ink line */
+  --xq-line: #f4f4f5;
+
+  /* Severity: ink on its own dark tint (pills), or as a 6px mark */
+  --xq-sev-critical: #f0607a;
+  --xq-sev-critical-bg: #2c1a20;
+  --xq-sev-high: #ef8f4a;
+  --xq-sev-high-bg: #2b1f16;
+  --xq-sev-medium: #dcae4f;
+  --xq-sev-medium-bg: #29231a;
+  --xq-sev-low: #6ea8dc;
+  --xq-sev-low-bg: #18222e;
+  --xq-sev-info: #a0a2a8;
+  --xq-sev-info-bg: #212023;
+
+  /* Health / state */
+  --xq-ok: #4fb38f;
+  --xq-ok-bg: #18261f;
+  --xq-warn: #dcae4f;
+  --xq-warn-bg: #29231a;
+  --xq-bad: #f0607a;
+  --xq-bad-bg: #2c1a20;
+  --xq-off: #8d8f95;
+  --xq-off-bg: #212023;
+
+  /* Charts */
+  --xq-grid: #2a292e;
+
+  /* Layout */
+  --xq-rail: 56px;
+  --xq-gap: 24px;
+  --xq-pad: 32px;
+  --xq-row: 42px;
+
+  /* shadcn/ui semantic mapping */
+  --radius: 0.375rem;
+  --background: var(--xq-ground);
+  --foreground: var(--xq-text);
+  --card: var(--xq-surface);
+  --card-foreground: var(--xq-text);
+  --popover: var(--xq-overlay);
+  --popover-foreground: var(--xq-text);
+  --primary: var(--xq-text);
+  --primary-foreground: var(--xq-surface);
+  --secondary: var(--xq-raised);
+  --secondary-foreground: var(--xq-text);
+  --muted: var(--xq-raised);
+  --muted-foreground: var(--xq-muted);
+  --accent: var(--xq-raised);
+  --accent-foreground: var(--xq-text);
+  --destructive: var(--xq-bad);
+  --border: var(--xq-border);
+  --input: var(--xq-control);
+  --ring: #a8a8ae;
+  --chart-1: var(--xq-text);
+  --chart-2: var(--xq-text-2);
+  --chart-3: var(--xq-muted);
+  --chart-4: var(--xq-control);
+  --chart-5: var(--xq-raised);
+  --sidebar: var(--xq-ground);
+  --sidebar-foreground: var(--xq-text);
+  --sidebar-primary: var(--xq-text);
+  --sidebar-primary-foreground: var(--xq-surface);
+  --sidebar-accent: var(--xq-raised);
+  --sidebar-accent-foreground: var(--xq-text);
+  --sidebar-border: var(--xq-border);
+  --sidebar-ring: var(--ring);
+}
+
+/* ── Tailwind theme ─────────────────────────────────────────────────────────── */
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", monospace;
+  --font-heading: var(--font-sans);
+
+  /* Type scale (dense): 11 / 12 / 13 body / 14 / 16 card titles / 20 sections / 26 title */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.625rem;
+  --text-2xl--line-height: 2rem;
+
+  --color-ground: var(--xq-ground);
+  --color-surface: var(--xq-surface);
+  --color-raised: var(--xq-raised);
+  --color-overlay: var(--xq-overlay);
+  --color-rule: var(--xq-rule);
+  --color-control: var(--xq-control);
+  --color-ink: var(--xq-text);
+  --color-ink-2: var(--xq-text-2);
+  --color-line: var(--xq-line);
+  --color-grid: var(--xq-grid);
+
+  --color-sev-critical: var(--xq-sev-critical);
+  --color-sev-critical-bg: var(--xq-sev-critical-bg);
+  --color-sev-high: var(--xq-sev-high);
+  --color-sev-high-bg: var(--xq-sev-high-bg);
+  --color-sev-medium: var(--xq-sev-medium);
+  --color-sev-medium-bg: var(--xq-sev-medium-bg);
+  --color-sev-low: var(--xq-sev-low);
+  --color-sev-low-bg: var(--xq-sev-low-bg);
+  --color-sev-info: var(--xq-sev-info);
+  --color-sev-info-bg: var(--xq-sev-info-bg);
+
+  --color-ok: var(--xq-ok);
+  --color-ok-bg: var(--xq-ok-bg);
+  --color-warn: var(--xq-warn);
+  --color-warn-bg: var(--xq-warn-bg);
+  --color-bad: var(--xq-bad);
+  --color-bad-bg: var(--xq-bad-bg);
+  --color-off: var(--xq-off);
+  --color-off-bg: var(--xq-off-bg);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.66);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.33);
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height, auto);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height, auto);
+    }
+    to {
+      height: 0;
+    }
+  }
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────────── */
+@layer base {
+  * {
+    @apply border-border outline-ring/60;
+  }
+  html {
+    @apply bg-background font-sans;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background text-sm text-foreground antialiased;
+    min-height: 100dvh;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--xq-control);
+    color: var(--xq-text);
+  }
+  /* Figures stack: tabular digits everywhere a number can update or align. */
+  table,
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

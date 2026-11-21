@@ -1,0 +1,105 @@
+#cloud-config
+# ExtorQ lab VM. Rendered by infra/vm/lib/render_cloud_init.py from
+# infra/vm/cloud-init/user-data.yaml.tmpl into var/vm/seed/user-data.
+# Placeholders (NAME or B64:path wrapped in double at-signs) are replaced by
+# JSON-encoded strings (valid YAML double-quoted scalars) or by the base64
+# content of a repository file.
+# The rendered file embeds the VM's SSH host private key: it exists only in
+# var/vm/seed (0600, gitignored) and is never committed.
+
+hostname: @@HOSTNAME@@
+preserve_hostname: false
+manage_etc_hosts: true
+timezone: Etc/UTC
+
+# SSH: key-only, no root, pre-generated host key (the Mac pins it in
+# var/vm/known_hosts so clients use StrictHostKeyChecking=yes).
+ssh_pwauth: false
+disable_root: true
+ssh_deletekeys: true
+# ssh_keys is provided, so cloud-init writes it and generates nothing; the
+# schema requires a non-empty list, which also documents ed25519-only intent.
+ssh_genkeytypes: [ed25519]
+ssh_keys:
+  ed25519_private: @@HOST_KEY_PRIVATE@@
+  ed25519_public: @@HOST_KEY_PUBLIC@@
+ssh_publish_hostkeys:
+  enabled: false
+
+users:
+  - name: extorq-admin
+    gecos: ExtorQ lab operator
+    shell: /bin/bash
+    groups: [sudo]
+    # Lab operator: key-only login, the account has no password.
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - @@ADMIN_PUBKEY@@
+  - name: extorq-collector
+    gecos: ExtorQ restricted collector (dispatch boundary only)
+    shell: /bin/sh
+    groups: [adm, systemd-journal]
+    lock_passwd: true
+    # No ssh_authorized_keys here on purpose: the key is installed root-owned
+    # in /etc/ssh/authorized_keys/extorq-collector (see write_files).
+
+package_update: true
+package_upgrade: false
+packages:
+  - nginx
+  - auditd
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-extorq-hardening.conf
+    owner: root:root
+    permissions: "0644"
+    encoding: b64
+    content: @@B64:files/sshd/10-extorq-hardening.conf@@
+  - path: /etc/ssh/authorized_keys/extorq-collector
+    owner: root:root
+    permissions: "0644"
+    content: @@COLLECTOR_AUTHORIZED_KEY_LINE@@
+  - path: /usr/local/sbin/extorq-collect-dispatch
+    owner: root:root
+    permissions: "0755"
+    encoding: b64
+    content: @@B64:files/extorq-collect-dispatch@@
+  - path: /usr/local/sbin/extorq-provision
+    owner: root:root
+    permissions: "0755"
+    encoding: b64
+    content: @@B64:files/provision/extorq-provision.sh@@
+  - path: /opt/extorq/lab-portal/app.py
+    owner: root:root
+    permissions: "0644"
+    encoding: b64
+    content: @@B64:lab-portal/app.py@@
+  - path: /opt/extorq/lab-portal/README.md
+    owner: root:root
+    permissions: "0644"
+    encoding: b64
+    content: @@B64:lab-portal/README.md@@
+  - path: /etc/systemd/system/lab-portal.service
+    owner: root:root
+    permissions: "0644"
+    encoding: b64
+    content: @@B64:files/systemd/lab-portal.service@@
+  # Deferred: written after the packages (nginx, auditd) are installed.
+  - path: /etc/nginx/conf.d/extorq-lab.conf
+    owner: root:root
+    permissions: "0644"
+    encoding: b64
+    content: @@B64:files/nginx/extorq-lab.conf@@
+    defer: true
+  - path: /etc/audit/rules.d/extorq.rules
+    owner: root:root
+    permissions: "0640"
+    encoding: b64
+    content: @@B64:files/audit/extorq.rules@@
+    defer: true
+
+runcmd:
+  - [/usr/local/sbin/extorq-provision]
+
+final_message: "ExtorQ lab VM provisioned (cloud-init $VERSION) after $UPTIME seconds"

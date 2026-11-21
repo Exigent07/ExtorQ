@@ -1,0 +1,143 @@
+# OTel Collector Contrib DaemonSet: node log collection (container logs + API audit log).
+# Rendered by infra/kind/kind.sh (placeholders __OTEL_IMAGE__, __OTEL_CONFIG_SHA__).
+#
+# Why this pod is not "restricted" (documented accepted risk):
+#   * hostPath volumes: the only way to read node-level files. /var/log/pods and
+#     /var/log/kubernetes/audit are mounted READ-ONLY; /var/lib/extorq-otel is the
+#     only writable mount (checkpoints + persistent sending queue).
+#   * runAsUser 0: kube-apiserver writes the audit log as root:root 0600, so only
+#     UID 0 can read it without CAP_DAC_OVERRIDE. Every capability is dropped,
+#     privilege escalation is disabled, and the root filesystem is read-only, so
+#     UID 0 here grants owner access to root-owned files and nothing else.
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: extorq-otel-collector
+  namespace: extorq-system
+  labels:
+    app.kubernetes.io/name: extorq-otel-collector
+    app.kubernetes.io/part-of: extorq
+  annotations:
+    extorq.io/accepted-risk: >-
+      Node log collector: read-only hostPath /var/log/pods and /var/log/kubernetes/audit,
+      writable hostPath /var/lib/extorq-otel (checkpoints); UID 0 required to read the
+      root-owned 0600 audit log; all capabilities dropped, no privilege escalation,
+      read-only root filesystem.
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: extorq-otel-collector
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: extorq-otel-collector
+        app.kubernetes.io/part-of: extorq
+      annotations:
+        extorq.io/config-sha256: "__OTEL_CONFIG_SHA__"
+        extorq.io/accepted-risk: >-
+          Node log collector: read-only hostPath log mounts, writable checkpoint
+          hostPath, UID 0 for the root-owned audit log; capabilities dropped.
+    spec:
+      serviceAccountName: extorq-otel-collector
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        runAsNonRoot: false
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: otel-collector
+          image: __OTEL_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args: ["--config=/conf/collector.yaml"]
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: GOMEMLIMIT
+              value: "180MiB"
+          ports:
+            - name: health
+              containerPort: 13133
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+              readOnly: true
+            - name: gateway-ca
+              mountPath: /etc/extorq/gateway-ca
+              readOnly: true
+            - name: otel-token
+              mountPath: /var/run/secrets/extorq/otel-token
+              readOnly: true
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: auditlog
+              mountPath: /var/log/kubernetes/audit
+              readOnly: true
+            - name: storage
+              mountPath: /var/lib/extorq-otel
+      volumes:
+        - name: config
+          configMap:
+            name: extorq-otel-config
+        - name: gateway-ca
+          configMap:
+            name: extorq-gateway-ca
+        - name: otel-token
+          secret:
+            secretName: extorq-otel-token
+            defaultMode: 0400
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+        - name: auditlog
+          hostPath:
+            path: /var/log/kubernetes/audit
+            type: Directory
+        - name: storage
+          hostPath:
+            path: /var/lib/extorq-otel
+            type: DirectoryOrCreate

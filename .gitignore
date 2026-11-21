@@ -46,3 +46,11 @@ next-env.d.ts
 .idea/
 .vscode/
 .claude/settings.local.json
+
+# ── Key material / cluster credentials outside var/ (defence in depth, F-IC-2) ──
+id_rsa*
+id_ecdsa*
+id_ed25519*
+!*.pub
+*kubeconfig*
+*.kubeconfig

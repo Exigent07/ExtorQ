@@ -1,0 +1,37 @@
+<!--
+  System log tables: keep what helps security and troubleshooting, drop high-volume
+  profiling logs that only cost memory and disk on a laptop.
+-->
+<clickhouse>
+    <!-- Who ran what (queries are parameterised; values are not inlined by ExtorQ). -->
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_log>
+    <!-- Login success/failure audit trail (authentication attempts from service users). -->
+    <session_log>
+        <database>system</database>
+        <table>session_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </session_log>
+    <part_log remove="remove"/>
+    <trace_log remove="remove"/>
+    <query_thread_log remove="remove"/>
+    <query_views_log remove="remove"/>
+    <background_schedule_pool_log remove="remove"/>
+    <text_log remove="remove"/>
+    <metric_log remove="remove"/>
+    <instrumentation_trace_log remove="remove"/>
+    <query_metric_log remove="remove"/>
+    <asynchronous_metric_log remove="remove"/>
+    <iceberg_metadata_log remove="remove"/>
+    <delta_lake_metadata_log remove="remove"/>
+    <opentelemetry_span_log remove="remove"/>
+    <processors_profile_log remove="remove"/>
+    <asynchronous_insert_log remove="remove"/>
+    <blob_storage_log remove="remove"/>
+    <aggregated_zookeeper_log remove="remove"/>
+</clickhouse>

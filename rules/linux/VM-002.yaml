@@ -1,0 +1,80 @@
+rule_id: VM-002
+version: 1.0.0
+title: New or modified systemd unit (persistence)
+description: >-
+  A systemd unit file appeared or changed in a persistence location on a Linux host (or an
+  existing unit was newly enabled), as observed by comparing inventory snapshots collected
+  over SSH. An auditd file watch (key extorq_systemd) on the same path corroborates the
+  write and raises confidence to high. Units on the allowlist and the collector's baseline
+  snapshot are not alerted.
+severity: high
+status: stable
+mitre_techniques: [T1543.002]
+asset_types: [linux_host]
+requires:
+  - source_type: linux.inventory
+    event_types:
+      - persistence.systemd.unit_created
+      - persistence.systemd.unit_modified
+      - persistence.systemd.unit_enabled
+  - source_type: linux.auditd
+    event_types: [file.audit.watch]
+    optional: true
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: event
+group_by: [asset_id, unit_path, sha256]
+params:
+  audit_key: extorq_systemd
+  # Exact unit file paths expected to change (e.g. managed by configuration management).
+  allowlist_paths: []
+  # Unit names whose enablement is expected.
+  allowlist_units: []
+false_positives:
+  - Package installation or upgrade that ships or updates a unit (the investigation context
+    shows package.* events on the same asset in the window).
+  - Configuration management or an administrator deploying a service; add the exact unit
+    path to allowlist_paths only if the path is controlled by that process.
+blind_spots:
+  - Units created and removed between two inventory snapshots (short-lived persistence);
+    auditd still records the write but this rule triggers on the inventory diff only.
+  - Persistence through other mechanisms (cron, shell profiles, rc.local, timers outside
+    watched directories, user units outside the collected paths).
+  - Allowlisting is path-based: an attacker able to write an allowlisted unit evades this
+    rule (config.file.changed monitoring of that path is the compensating control).
+  - Without auditd (missing_sources), the writer process is unknown and confidence is medium.
+references:
+  - https://attack.mitre.org/techniques/T1543/002/
+  - https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html
+query: VM-002.sql
+summary_template: >-
+  systemd unit {unit} ({unit_path}) changed on {asset_id}: {change_types}; ExecStart
+  {exec_start}; auditd corroborated: {audit_corroborated}; writer {writer_executables}
+tests:
+  - name: unit-created-with-auditd
+    description: New unit in /etc/systemd/system with an auditd watch hit on the same path.
+    fixture: tests/VM-002/positive_created_with_audit_sim.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+  - name: unit-modified-inventory-only
+    description: Existing unit content changed; no auditd event (optional source absent).
+    fixture: tests/VM-002/positive_modified_inventory_only.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: unit-enabled-only
+    description: An existing unit newly enabled (symlink in multi-user.target.wants).
+    fixture: tests/VM-002/positive_enabled_only.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: baseline-and-unrelated
+    description: >-
+      Baseline snapshot events, an auditd hit with another key, a deleted unit and a
+      cron change: nothing to alert.
+    fixture: tests/VM-002/negative_baseline_and_unrelated.jsonl
+    expect: no_alert

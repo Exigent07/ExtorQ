@@ -1,0 +1,114 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "audit"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "observedTimeUnixNano": "1795256643769265168",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"e5fc2dbe-0355-4c1d-adc3-ef2b5cd2ed66\",\"stage\":\"ResponseStarted\",\"requestURI\":\"/api/v1/namespaces/kube-system/configmaps?allowWatchBookmarks=true\\u0026fieldSelector=metadata.name%3Dkube-apiserver-legacy-service-account-token-tracking\\u0026resourceVersionMatch=NotOlderThan\\u0026sendInitialEvents=true\\u0026timeout=9m42s\\u0026timeoutSeconds=582\\u0026watch=true\",\"verb\":\"watch\",\"user\":{\"username\":\"system:apiserver\",\"uid\":\"42f92fcf-b2fe-4f0e-968b-1f8341d99a0f\",\"groups\":[\"system:authenticated\",\"system:masters\"]},\"sourceIPs\":[\"::1\"],\"userAgent\":\"kube-apiserver/v1.37.0 (linux/arm64) kubernetes/f54c212\",\"objectRef\":{\"resource\":\"configmaps\",\"namespace\":\"kube-system\",\"name\":\"kube-apiserver-legacy-service-account-token-tracking\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T10:16:01.071078Z\",\"stageTimestamp\":\"2026-11-21T10:16:01.071484Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795256643770809334",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"5e37b40e-36ff-4d71-af89-8b3c11bc9f48\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/nodes\",\"verb\":\"list\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.3\"],\"userAgent\":\"kubectl/v1.37.0 (linux/arm64) kubernetes/f54c212\",\"objectRef\":{\"resource\":\"nodes\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":200},\"requestReceivedTimestamp\":\"2026-11-21T10:16:04.321913Z\",\"stageTimestamp\":\"2026-11-21T10:16:04.323000Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795256643773442251",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Request\",\"auditID\":\"5d16e734-7936-4ca0-91b4-f5ffb708ec00\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/api/v1/namespaces/extorq-restricted/pods?fieldManager=kubectl-client-side-apply\\u0026fieldValidation=Strict\",\"verb\":\"create\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"pods\",\"namespace\":\"extorq-restricted\",\"name\":\"b2-fixture-privileged\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"status\":\"Failure\",\"message\":\"pods \\\"b2-fixture-privileged\\\" is forbidden: violates PodSecurity \\\"baseline:latest\\\": non-default capabilities (container \\\"shell\\\" must not include \\\"NET_ADMIN\\\", \\\"SYS_ADMIN\\\" in securityContext.capabilities.add), host namespaces (hostNetwork=true, hostPID=true), hostPath volumes (volume \\\"root\\\"), privileged (container \\\"shell\\\" must not set securityContext.privileged=true)\",\"reason\":\"Forbidden\",\"details\":{\"name\":\"b2-fixture-privileged\",\"kind\":\"pods\"},\"code\":403},\"requestObject\":{\"kind\":\"Pod\",\"apiVersion\":\"v1\",\"metadata\":{\"name\":\"b2-fixture-privileged\",\"namespace\":\"extorq-restricted\",\"annotations\":{\"kubectl.kubernetes.io/last-applied-configuration\":\"{\\\"apiVersion\\\":\\\"v1\\\",\\\"kind\\\":\\\"Pod\\\",\\\"metadata\\\":{\\\"annotations\\\":{},\\\"name\\\":\\\"b2-fixture-privileged\\\",\\\"namespace\\\":\\\"extorq-restricted\\\"},\\\"spec\\\":{\\\"containers\\\":[{\\\"command\\\":[\\\"sleep\\\",\\\"60\\\"],\\\"env\\\":[{\\\"name\\\":\\\"FIXTURE_FAKE_PASSWORD\\\",\\\"value\\\":\\\"synthetic-not-a-secret-123\\\"}],\\\"image\\\":\\\"alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1\\\",\\\"name\\\":\\\"shell\\\",\\\"securityContext\\\":{\\\"capabilities\\\":{\\\"add\\\":[\\\"SYS_ADMIN\\\",\\\"NET_ADMIN\\\"]},\\\"privileged\\\":true,\\\"runAsUser\\\":0},\\\"volumeMounts\\\":[{\\\"mountPath\\\":\\\"/host\\\",\\\"name\\\":\\\"root\\\"}]}],\\\"hostNetwork\\\":true,\\\"hostPID\\\":true,\\\"volumes\\\":[{\\\"hostPath\\\":{\\\"path\\\":\\\"/\\\"},\\\"name\\\":\\\"root\\\"}]}}\\n\"}},\"spec\":{\"volumes\":[{\"name\":\"root\",\"hostPath\":{\"path\":\"/\",\"type\":\"\"}}],\"containers\":[{\"name\":\"shell\",\"image\":\"alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1\",\"command\":[\"sleep\",\"60\"],\"env\":[{\"name\":\"FIXTURE_FAKE_PASSWORD\",\"value\":\"synthetic-not-a-secret-123\"}],\"resources\":{},\"volumeMounts\":[{\"name\":\"root\",\"mountPath\":\"/host\"}],\"terminationMessagePath\":\"/dev/termination-log\",\"terminationMessagePolicy\":\"File\",\"imagePullPolicy\":\"IfNotPresent\",\"securityContext\":{\"capabilities\":{\"add\":[\"SYS_ADMIN\",\"NET_ADMIN\"]},\"privileged\":true,\"runAsUser\":0}}],\"restartPolicy\":\"Always\",\"terminationGracePeriodSeconds\":30,\"dnsPolicy\":\"ClusterFirst\",\"hostNetwork\":true,\"hostPID\":true,\"securityContext\":{},\"schedulerName\":\"default-scheduler\",\"enableServiceLinks\":true},\"status\":{}},\"requestReceivedTimestamp\":\"2026-11-21T10:18:31.127335Z\",\"stageTimestamp\":\"2026-11-21T10:18:31.130561Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\",\"pod-security.kubernetes.io/audit-violations\":\"would violate PodSecurity \\\"restricted:latest\\\": host namespaces (hostNetwork=true, hostPID=true), privileged (container \\\"shell\\\" must not set securityContext.privileged=true), allowPrivilegeEscalation != false (container \\\"shell\\\" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container \\\"shell\\\" must set securityContext.capabilities.drop=[\\\"ALL\\\"]; container \\\"shell\\\" must not include \\\"NET_ADMIN\\\", \\\"SYS_ADMIN\\\" in securityContext.capabilities.add), restricted volume types (volume \\\"root\\\" uses restricted volume type \\\"hostPath\\\"), runAsNonRoot != true (pod or container \\\"shell\\\" must set securityContext.runAsNonRoot=true), runAsUser=0 (container \\\"shell\\\" must not set runAsUser=0), seccompProfile (pod or container \\\"shell\\\" must set securityContext.seccompProfile.type to \\\"RuntimeDefault\\\" or \\\"Localhost\\\")\",\"pod-security.kubernetes.io/enforce-policy\":\"baseline:latest\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795256643773442751",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"RequestResponse\",\"auditID\":\"0ffa3d01-f434-49f1-a9cc-e66e82aaae31\",\"stage\":\"ResponseComplete\",\"requestURI\":\"/apis/rbac.authorization.k8s.io/v1/clusterrolebindings?fieldManager=kubectl-create\\u0026fieldValidation=Strict\",\"verb\":\"create\",\"user\":{\"username\":\"kubernetes-admin\",\"groups\":[\"kubeadm:cluster-admins\",\"system:authenticated\"],\"extra\":{\"authentication.kubernetes.io/credential-id\":[\"X509SHA256=88307946d93443c57cf16ab166320201f81eca8a49f0a8fd1cfd1d9a0fc830ab\"]}},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"kubectl/v1.36.1 (darwin/arm64) kubernetes/7569396\",\"objectRef\":{\"resource\":\"clusterrolebindings\",\"name\":\"b2-fixture-crb\",\"apiGroup\":\"rbac.authorization.k8s.io\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"code\":201},\"requestObject\":{\"kind\":\"ClusterRoleBinding\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"metadata\":{\"name\":\"b2-fixture-crb\"},\"subjects\":[{\"kind\":\"ServiceAccount\",\"name\":\"b2-fixture-sa\",\"namespace\":\"extorq-apps\"}],\"roleRef\":{\"apiGroup\":\"rbac.authorization.k8s.io\",\"kind\":\"ClusterRole\",\"name\":\"cluster-admin\"}},\"responseObject\":{\"kind\":\"ClusterRoleBinding\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"metadata\":{\"name\":\"b2-fixture-crb\",\"uid\":\"db60ef96-bc11-497c-bf26-570f9bdcbc1a\",\"resourceVersion\":\"747\",\"creationTimestamp\":\"2026-11-21T10:18:31Z\",\"managedFields\":[{\"manager\":\"kubectl-create\",\"operation\":\"Update\",\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"time\":\"2026-11-21T10:18:31Z\",\"fieldsType\":\"FieldsV1\",\"fieldsV1\":{\"f:roleRef\":{},\"f:subjects\":{}}}]},\"subjects\":[{\"kind\":\"ServiceAccount\",\"name\":\"b2-fixture-sa\",\"namespace\":\"extorq-apps\"}],\"roleRef\":{\"apiGroup\":\"rbac.authorization.k8s.io\",\"kind\":\"ClusterRole\",\"name\":\"cluster-admin\"}},\"requestReceivedTimestamp\":\"2026-11-21T10:18:31.254211Z\",\"stageTimestamp\":\"2026-11-21T10:18:31.255853Z\",\"annotations\":{\"authorization.k8s.io/decision\":\"allow\",\"authorization.k8s.io/reason\":\"RBAC: allowed by ClusterRoleBinding \\\"kubeadm:cluster-admins\\\" of ClusterRole \\\"cluster-admin\\\" to Group \\\"kubeadm:cluster-admins\\\"\"}}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      },
+      {
+       "observedTimeUnixNano": "1795256643773449293",
+       "body": {
+        "stringValue": "{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"a64c836d-9ed1-465e-abb1-18bfe4c36f5f\",\"stage\":\"ResponseStarted\",\"requestURI\":\"/api/v1/namespaces\",\"verb\":\"list\",\"user\":{},\"sourceIPs\":[\"172.18.0.1\"],\"userAgent\":\"curl/8.7.1\",\"objectRef\":{\"resource\":\"namespaces\",\"apiVersion\":\"v1\"},\"responseStatus\":{\"metadata\":{},\"status\":\"Failure\",\"message\":\"Unauthorized\",\"reason\":\"Unauthorized\",\"code\":401},\"requestReceivedTimestamp\":\"2026-11-21T10:18:32.087756Z\",\"stageTimestamp\":\"2026-11-21T10:18:32.088162Z\"}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.name",
+         "value": {
+          "stringValue": "kube-apiserver-audit.log"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

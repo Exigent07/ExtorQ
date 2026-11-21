@@ -1,0 +1,63 @@
+# ExtorQ lab cluster `extorq-lab` (kind v0.33, Kubernetes v1.37.0).
+#
+# Rendered by `infra/kind/kind.sh up`: the token __EXTORQ_KIND_DIR__ is replaced
+# with the absolute path of infra/kind (kind needs absolute extraMount paths) and
+# the result is written to var/kind/cluster.rendered.yaml. Do not run
+# `kind create cluster --config` on this file directly.
+#
+# kubeadm config API: Kubernetes >= 1.31 uses kubeadm.k8s.io/v1beta4, where
+# `extraArgs` is a LIST of {name, value}. The patch below pins apiVersion so it
+# is applied only to a v1beta4 ClusterConfiguration; `kind.sh up` verifies the
+# resulting kube-apiserver flags and fails loudly if the patch did not apply.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: extorq-lab
+networking:
+  # API server stays on the Mac loopback (random port, recorded in the kubeconfig).
+  apiServerAddress: "127.0.0.1"
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    labels:
+      extorq.io/lab: "true"
+    kubeadmConfigPatches:
+      - |
+        apiVersion: kubeadm.k8s.io/v1beta4
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            - name: audit-policy-file
+              value: /etc/kubernetes/policies/audit-policy.yaml
+            - name: audit-log-path
+              value: /var/log/kubernetes/audit/kube-apiserver-audit.log
+            - name: audit-log-format
+              value: json
+            # Rotation: 50 MB per file, 5 backups, 7 days (bounded: <= 300 MB on the node).
+            - name: audit-log-maxsize
+              value: "50"
+            - name: audit-log-maxbackup
+              value: "5"
+            - name: audit-log-maxage
+              value: "7"
+          extraVolumes:
+            - name: audit-policies
+              hostPath: /etc/kubernetes/policies
+              mountPath: /etc/kubernetes/policies
+              readOnly: true
+              pathType: DirectoryOrCreate
+            - name: audit-logs
+              hostPath: /var/log/kubernetes/audit
+              mountPath: /var/log/kubernetes/audit
+              readOnly: false
+              pathType: DirectoryOrCreate
+    extraMounts:
+      # Audit policy: read-only bind mount of the versioned file in this repo.
+      - hostPath: __EXTORQ_KIND_DIR__/audit-policy.yaml
+        containerPath: /etc/kubernetes/policies/audit-policy.yaml
+        readOnly: true
+    extraPortMappings:
+      # lab-portal NodePort -> Mac loopback only (never 0.0.0.0).
+      - containerPort: 30080
+        hostPort: 8089
+        listenAddress: "127.0.0.1"
+        protocol: TCP

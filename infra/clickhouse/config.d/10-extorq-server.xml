@@ -1,0 +1,53 @@
+<!--
+  ExtorQ ClickHouse server overrides (owned by agent A, see docs/data-flow.md).
+  Mounted read-only into /etc/clickhouse-server/config.d/ by compose.yaml.
+-->
+<clickhouse>
+    <!-- Console logging only: the root filesystem is read-only and Docker's json-file
+         driver (max-size/max-file in compose.yaml) handles retention. -->
+    <logger>
+        <level>information</level>
+        <console>1</console>
+        <log remove="remove"/>
+        <errorlog remove="remove"/>
+    </logger>
+
+    <!-- Memory. compose.yaml limits the container to 3 GiB; ClickHouse reads that cgroup
+         limit as its RAM, so 0.7 caps tracked server memory at ~2.1 GiB (~27% of the
+         7.75 GiB Docker Desktop VM). Caches are sized for a laptop, not a server. -->
+    <max_server_memory_usage>0</max_server_memory_usage>
+    <max_server_memory_usage_to_ram_ratio>0.7</max_server_memory_usage_to_ram_ratio>
+    <mark_cache_size>268435456</mark_cache_size>
+    <index_mark_cache_size>67108864</index_mark_cache_size>
+    <uncompressed_cache_size>134217728</uncompressed_cache_size>
+    <index_uncompressed_cache_size>67108864</index_uncompressed_cache_size>
+    <mmap_cache_size>256</mmap_cache_size>
+    <max_concurrent_queries>64</max_concurrent_queries>
+
+    <!-- Network surface: listen inside the container network only (the port is never
+         published; the loopback-only debug proxy is an explicit compose profile).
+         Disable protocols ExtorQ does not use. -->
+    <listen_host remove="remove"/>
+    <listen_host>0.0.0.0</listen_host>
+    <listen_try>0</listen_try>
+    <mysql_port remove="remove"/>
+    <postgresql_port remove="remove"/>
+    <interserver_http_port remove="remove"/>
+
+    <!-- Access control hardening (SQL-driven RBAC lives in /var/lib/clickhouse/access). -->
+    <access_control_improvements>
+        <users_without_row_policies_can_read_rows>true</users_without_row_policies_can_read_rows>
+        <on_cluster_queries_require_cluster_grant>true</on_cluster_queries_require_cluster_grant>
+        <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
+        <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
+        <settings_constraints_replace_previous>true</settings_constraints_replace_previous>
+        <allow_impersonate_user>false</allow_impersonate_user>
+        <table_engines_require_grant>true</table_engines_require_grant>
+        <readonly_restricts_set_role>true</readonly_restricts_set_role>
+    </access_control_improvements>
+
+    <!-- Never phone home. -->
+    <send_crash_reports>
+        <enabled>false</enabled>
+    </send_crash_reports>
+</clickhouse>

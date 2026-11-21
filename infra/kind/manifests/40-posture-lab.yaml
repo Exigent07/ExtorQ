@@ -1,0 +1,48 @@
+# Deliberately weak but HARMLESS workload: it exists only so the posture scanner
+# (extorq-posture-k8s) reports genuine findings against a real object.
+#
+# Weaknesses (intentional): runs as root (runAsUser 0), no resource limits,
+# hostPath /var/log mounted read-only, service-account token automounted,
+# no seccomp profile, writable root filesystem.
+# Nothing here grants real privilege: not privileged, no host namespaces, no added
+# capabilities, no RBAC bindings (the default service account has no permissions
+# beyond the built-in discovery roles). The container only sleeps.
+# Not annotated with extorq.io/accepted-risk on purpose: its findings stay open.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weak-log-reader
+  namespace: extorq-posture-lab
+  labels:
+    app.kubernetes.io/name: weak-log-reader
+    app.kubernetes.io/part-of: extorq
+    extorq.io/purpose: posture-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: weak-log-reader
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: weak-log-reader
+        app.kubernetes.io/part-of: extorq
+    spec:
+      automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: reader
+          image: __POSTURE_LAB_IMAGE__
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c", "trap 'exit 0' TERM INT; while true; do sleep 3600 & wait $!; done"]
+          volumeMounts:
+            - name: node-logs
+              mountPath: /host/var/log
+              readOnly: true
+      volumes:
+        - name: node-logs
+          hostPath:
+            path: /var/log
+            type: Directory

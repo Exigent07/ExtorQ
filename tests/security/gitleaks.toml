@@ -1,0 +1,23 @@
+# Gitleaks configuration for tests/security/test_security_secret_scan.py (owner: agent F).
+#
+# Extends the upstream default rule set. Every allowlist entry below was
+# reviewed by agent F and must stay as narrow as possible (a specific rule and
+# a specific value shape). Request additions in docs/team/interface-changes/F.md;
+# never allowlist a whole directory of real configuration.
+
+title = "ExtorQ secret scan (gitleaks defaults + reviewed allowlist)"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "ExtorQ SourceType identifiers such as k8s.api_inventory (catalog.py) are not credentials"
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^(linux|macos|k8s|github|scanner|extorq)\.[a-z0-9_]+$''']
+
+[[allowlists]]
+description = "Public OpenPGP v4 fingerprints assigned to *_KEY_FPR shell variables (infra/vm/vm.sh pins the Ubuntu cloud-image signing key)"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''^\s*[A-Z][A-Z0-9_]*_KEY_FPR="[0-9A-F]{40}"\s*$''']

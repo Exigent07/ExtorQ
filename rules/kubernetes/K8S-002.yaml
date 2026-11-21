@@ -1,0 +1,100 @@
+rule_id: K8S-002
+version: 1.0.0
+title: Risky RBAC grant in Kubernetes
+description: >-
+  A Role, ClusterRole, RoleBinding or ClusterRoleBinding was created or changed so that it
+  grants risky privileges: cluster-admin, wildcard verbs/resources, escalate/bind/impersonate,
+  secrets read, pods/exec, or binds broad subjects (system:anonymous,
+  system:unauthenticated, system:authenticated, all service accounts, default service
+  accounts). Evidence comes from the kube-apiserver audit log (successful write, actor
+  known) and/or the API inventory diff (resulting object state); both use the same risk
+  vocabulary, and agreement of the two sources raises confidence to high.
+severity: high
+status: stable
+mitre_techniques: [T1098, T1078.004]
+asset_types: [kubernetes_cluster]
+requires:
+  - source_type: k8s.audit
+    event_types: [k8s.api.request]
+  - source_type: k8s.api_inventory
+    event_types: [k8s.resource.created, k8s.resource.updated]
+    optional: true
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: event
+group_by: [cluster, kind, namespace, name, risk_signature]
+params:
+  risky_flags:
+    - cluster_admin
+    - wildcard_verbs
+    - wildcard_resources
+    - full_wildcard_rule
+    - escalation_verbs
+    - secrets_access
+    - pod_exec
+    - wildcard_non_resource_urls
+    - binds_anonymous
+    - binds_unauthenticated
+    - binds_authenticated
+    - binds_all_service_accounts
+    - binds_default_service_account
+  # Controllers that legitimately rewrite RBAC objects (role aggregation, bootstrap policy).
+  excluded_users:
+    - system:serviceaccount:kube-system:clusterrole-aggregation-controller
+    - system:apiserver
+false_positives:
+  - Installing operators or Helm charts that legitimately ship cluster-admin bindings or
+    wildcard ClusterRoles (review the actor and the chart provenance).
+  - Administrators granting temporary elevated access during an incident or upgrade.
+  - Re-applying an unchanged risky object produces an update event with the same risk
+    signature; it extends the existing alert instead of creating a new one.
+blind_spots:
+  - Privileges obtained without touching RBAC objects (e.g. stolen tokens of an existing
+    privileged service account, node credentials) are out of scope.
+  - Changes by the excluded system controllers, and inventory-only observations of objects
+    named 'system:*' (bootstrap defaults), are ignored; the audit side still sees writes to
+    'system:*' objects by any other actor.
+  - Aggregated ClusterRoles gain rules through the aggregation controller (excluded); the
+    triggering label change on the source role is visible only if that role is itself risky.
+  - Without the audit source (missing_sources) the actor is unknown and only the state
+    diff is evaluated (confidence medium).
+references:
+  - https://kubernetes.io/docs/concepts/security/rbac-good-practices/
+  - https://attack.mitre.org/techniques/T1098/
+query: K8S-002.sql
+summary_template: >-
+  Risky RBAC {kind} {namespace}/{name} on {asset_id}: flags {risk_flags}; role_ref
+  {role_ref}; subjects {subjects}; actor(s) {actors}; sources {sources}
+tests:
+  - name: crb-patch-binds-authenticated
+    description: Real audit record (B2 capture) patching a ClusterRoleBinding to system:authenticated.
+    fixture: tests/K8S-002/positive_crb_patch_subjects.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: role-wildcard-create
+    description: Real audit record creating a Role with a full wildcard rule.
+    fixture: tests/K8S-002/positive_role_wildcard.jsonl
+    expect: alert
+    alerts: 1
+  - name: clusterrole-escalate-audit-and-state-agree
+    description: >-
+      Real audit record creating a ClusterRole with escalate/bind/impersonate, plus a
+      synthetic inventory diff of the same object with the same risk flags.
+    fixture: tests/K8S-002/positive_escalate_audit_and_state.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+  - name: aggregation-controller-and-denied-and-delete
+    description: >-
+      Real records: role aggregation controller patching ClusterRole admin (excluded actor),
+      a forbidden ClusterRoleBinding create (403) and a ClusterRoleBinding delete.
+    fixture: tests/K8S-002/negative_controller_denied_delete.jsonl
+    expect: no_alert
+  - name: benign-rbac-state
+    description: Synthetic inventory diff of a read-only Role (no risky flags) and a baseline snapshot.
+    fixture: tests/K8S-002/negative_benign_state.jsonl
+    expect: no_alert

@@ -1,0 +1,104 @@
+rule_id: VM-001
+version: 1.0.0
+title: Burst of failed SSH authentication from one source
+description: >-
+  Five or more distinct SSH connections (src_ip, src_port) from the same source address
+  fail authentication against a Linux host within five minutes (sliding window), or one
+  source accumulates ten or more 'Failed <method>' attempts in that window (several
+  passwords tried per connection). Evidence is the set of sshd failure lines
+  (login_failed, invalid_user, preauth_closed, max_auth_exceeded) collected from journald.
+severity: medium
+status: stable
+mitre_techniques: [T1110, T1110.001, T1110.003]
+asset_types: [linux_host]
+requires:
+  - source_type: linux.journald
+    event_types:
+      - auth.ssh.login_failed
+      - auth.ssh.invalid_user
+      - auth.ssh.preauth_closed
+      - auth.ssh.max_auth_exceeded
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 900
+  late_tolerance_seconds: 300
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 300
+group_by: [asset_id, src_ip]
+params:
+  window_seconds: 300
+  threshold_connections: 5
+  threshold_failures: 10
+  # Addresses that aggregate many origins (QEMU user-mode NAT gateway, loopback).
+  # A match lowers confidence to medium: the burst is real, its origin is not attributable.
+  shared_nat_ips: ["10.0.2.2", "127.0.0.1", "::1"]
+false_positives:
+  - An administrator or automation repeatedly using a wrong key or password (for example a
+    misconfigured Ansible inventory or CI deploy key) from one host.
+  - Several legitimate users behind one NAT or VPN egress address mistyping credentials at
+    the same time. In this lab every connection from the Mac host arrives from the QEMU NAT
+    gateway 10.0.2.2, so the source is never attributable to one origin (confidence medium).
+  - Vulnerability scanners or SSH health checks that open many unauthenticated connections.
+blind_spots:
+  - Low-and-slow guessing below five connections (or ten failures) per five minutes per
+    source address.
+  - Distributed guessing from many source addresses (one or two attempts each).
+  - Successful logins are not evaluated here; success after failures is shown by the
+    investigation context, not by this rule.
+  - Authentication handled outside sshd/journald (e.g. a PAM module logging elsewhere) and
+    lines journald dropped under rate limiting.
+  - Attempts that never reach sshd authentication (connections refused by a firewall).
+references:
+  - https://attack.mitre.org/techniques/T1110/
+  - https://man.openbsd.org/sshd_config#MaxAuthTries
+query: VM-001.sql
+summary_template: >-
+  {distinct_connections} SSH connections from {src_ip} failed authentication on {asset_id}
+  ({failed_attempts} failed attempts, usernames: {usernames}) between {first_seen} and
+  {last_seen}
+tests:
+  - name: burst-from-external-source
+    description: Six connections from one documentation-range address in one minute.
+    fixture: tests/VM-001/positive_burst_external.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {src_ip: 203.0.113.45}
+  - name: burst-crossing-bucket-boundary
+    description: >-
+      Three connections just before and three just after a 5-minute bucket boundary;
+      fixed buckets would miss it, the sliding window must produce exactly one alert.
+    fixture: tests/VM-001/positive_bucket_boundary.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+  - name: burst-via-qemu-nat-gateway
+    description: Burst arriving from the QEMU NAT gateway 10.0.2.2 (simulation-tagged).
+    fixture: tests/VM-001/positive_nat_gateway_sim.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    entities: {src_ip: 10.0.2.2}
+  - name: many-passwords-few-connections
+    description: Two connections trying six passwords each (MaxAuthTries) = 12 failures.
+    fixture: tests/VM-001/positive_failures_two_connections.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: below-threshold
+    description: Four failed connections in five minutes.
+    fixture: tests/VM-001/negative_below_threshold.jsonl
+    expect: no_alert
+  - name: slow-guessing
+    description: Six failed connections, one every four minutes (never five in a window).
+    fixture: tests/VM-001/negative_slow.jsonl
+    expect: no_alert
+  - name: distributed-sources
+    description: Six failed connections from six different addresses.
+    fixture: tests/VM-001/negative_distributed.jsonl
+    expect: no_alert
+  - name: successful-logins
+    description: Six successful logins (auth.ssh.login_succeeded) from one address.
+    fixture: tests/VM-001/negative_successes.jsonl
+    expect: no_alert

@@ -1,0 +1,87 @@
+rule_id: K8S-001
+version: 1.0.0
+title: Privileged pod denied by Pod Security admission
+description: >-
+  A request to create a pod (or add an ephemeral container) asking for privileged mode,
+  host namespaces (hostNetwork/hostPID/hostIPC), hostPath volumes or dangerous added
+  capabilities was rejected with HTTP 403 because it violates the namespace's Pod
+  Security Standard. The control worked; the alert records who tried to run a
+  privileged workload, where, and with which settings. Evidence is the kube-apiserver
+  audit event (ResponseComplete stage) normalised by the OTLP audit pipeline.
+severity: medium
+status: stable
+mitre_techniques: [T1610, T1611]
+asset_types: [kubernetes_cluster]
+requires:
+  - source_type: k8s.audit
+    event_types: [k8s.api.request]
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 900
+  late_tolerance_seconds: 300
+dedup:
+  strategy: event
+group_by: [cluster, audit_id]
+params:
+  # risk_flags (shared audit/inventory vocabulary from otlp_k8s) that make a pod "privileged".
+  privileged_flags:
+    [privileged, host_pid, host_network, host_ipc, host_path, host_path_root, dangerous_capabilities]
+  # Pod Security violation texts for the same controls (used when the request summary is absent).
+  violation_pattern: "privileged \\(|host namespaces|hostPath volumes|hostPort|non-default capabilities|unrestricted capabilities"
+false_positives:
+  - An administrator deploying a legitimate node agent (CNI, CSI driver, log collector)
+    into a namespace whose Pod Security level does not allow it; the fix is an exempt or
+    privileged namespace, not a suppression.
+  - Server-side dry runs (kubectl --dry-run=server) are denied the same way; they are
+    alerted (reconnaissance of the admission policy) with features.dry_run = true.
+  - Controllers retrying a privileged Deployment/DaemonSet in a restricted namespace
+    produce one denial per retry, and therefore one alert per audit id (identity is the
+    audit id per PLAN 5.3); the alerts share the same group (cluster|namespace|user).
+blind_spots:
+  - Privileged pods admitted in namespaces with a permissive Pod Security level (or
+    exempted users/namespaces) are not denied and therefore not detected here.
+  - Requests whose audit body was not logged (audit level Metadata) may lack risk flags;
+    the rule then relies on the violation text (confidence medium).
+  - Violations of other Pod Security controls (runAsNonRoot, seccomp, ...) alone are not
+    in scope.
+  - Audit pipeline outages (OTel collector, gateway) hide denials; see collector health.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-admission/
+  - https://attack.mitre.org/techniques/T1611/
+query: K8S-001.sql
+summary_template: >-
+  Pod Security admission denied {verb} of privileged pod {pod} in namespace {namespace} by
+  {user} on {asset_id} (flags: {privileged_flags}; policy {enforce_policy}; dry run:
+  {dry_run})
+tests:
+  - name: psa-denied-privileged-pod
+    description: Real audit record (B2 capture) of a privileged/hostPID/hostPath pod denied.
+    fixture: tests/K8S-001/positive_psa_privileged_pod.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {namespace: extorq-restricted, pod: b2-fixture-privileged}
+  - name: psa-denied-dry-run
+    description: Real audit record of the same request as a server-side dry run.
+    fixture: tests/K8S-001/positive_psa_dry_run.jsonl
+    expect: alert
+    alerts: 1
+  - name: psa-denied-ephemeral-container
+    description: Real audit record of a privileged ephemeral (debug) container denied.
+    fixture: tests/K8S-001/positive_psa_ephemeral_container.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+  - name: psa-denied-simulation-tagged
+    description: Captured record with the pod renamed to extorq-sim-<run id> (synthetic edit).
+    fixture: tests/K8S-001/positive_psa_simulation.jsonl
+    expect: alert
+    alerts: 1
+  - name: non-psa-admission-denial
+    description: Real bootstrap mirror pod (hostNetwork) refused for a missing PriorityClass.
+    fixture: tests/K8S-001/negative_admission_denied_not_psa.jsonl
+    expect: no_alert
+  - name: other-denials-and-successes
+    description: Real 401/403 and successful audit records unrelated to pod security.
+    fixture: tests/K8S-001/negative_unrelated_audit.jsonl
+    expect: no_alert

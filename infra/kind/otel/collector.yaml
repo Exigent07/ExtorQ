@@ -1,0 +1,193 @@
+# ExtorQ node log collector (otel/opentelemetry-collector-contrib 0.165.0).
+# Deployed by infra/kind/kind.sh as ConfigMap extorq-system/extorq-otel-config.
+#
+# Two pipelines, one exporter:
+#   logs/containers: /var/log/pods/**  -> container parser -> k8s_attributes
+#   logs/audit:      kube-apiserver audit log (raw JSON line kept as the body)
+#   -> otlp_http (JSON) -> ExtorQ ingest gateway /v1/otlp/v1/logs (TLS, bearer token)
+#
+# Durability: file_log read offsets AND the exporter's sending queue are persisted
+# by the file_storage extension in /var/lib/extorq-otel (node hostPath), so a pod
+# restart resumes from the last checkpoint and queued batches survive.
+extensions:
+  health_check:
+    endpoint: ${env:POD_IP}:13133
+  file_storage:
+    directory: /var/lib/extorq-otel
+    create_directory: false
+    timeout: 2s
+    fsync: true
+    compaction:
+      on_start: true
+      directory: /var/lib/extorq-otel
+      max_transaction_size: 65536
+  bearertokenauth/extorq:
+    scheme: Bearer
+    # Mounted from Secret extorq-system/extorq-otel-token (re-read when it changes).
+    filename: /var/run/secrets/extorq/otel-token/token
+
+receivers:
+  file_log/containers:
+    include:
+      - /var/log/pods/*/*/*.log
+    exclude:
+      # Never read our own output (feedback loop).
+      - /var/log/pods/extorq-system_extorq-otel-collector-*/*/*.log
+    start_at: beginning
+    include_file_path: true
+    include_file_name: false
+    # The normaliser keeps at most 16 KiB of a line; longer lines are cut here.
+    max_log_size: 16KiB
+    max_concurrent_files: 64
+    poll_interval: 500ms
+    storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+    operators:
+      # CRI log format parser: timestamp, stream (log.iostream), partial-line
+      # recombination, and k8s.{namespace,pod,container}.* from the file path.
+      - type: container
+        id: container-parser
+        add_metadata_from_filepath: true
+
+  file_log/audit:
+    include:
+      # Active file plus rotated backups (kube-apiserver-audit-<timestamp>.log):
+      # a backup's fingerprint matches the file it was rotated from, so reading
+      # resumes at the stored offset instead of re-reading or skipping data.
+      - /var/log/kubernetes/audit/kube-apiserver-audit*.log
+    start_at: beginning
+    include_file_path: false
+    include_file_name: true
+    # A longer line is cut, fails JSON parsing and is quarantined (visible, not silent).
+    max_log_size: 256KiB
+    poll_interval: 500ms
+    storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+    spike_limit_mib: 40
+
+  k8s_attributes:
+    auth_type: serviceAccount
+    passthrough: false
+    filter:
+      # Only watch pods scheduled on this node.
+      node_from_env_var: K8S_NODE_NAME
+    pod_association:
+      - sources:
+          - from: resource_attribute
+            name: k8s.pod.uid
+    extract:
+      metadata:
+        - k8s.pod.name
+        - k8s.pod.uid
+        - k8s.namespace.name
+        - k8s.node.name
+        - k8s.deployment.name
+        - k8s.replicaset.name
+        - k8s.daemonset.name
+        - k8s.statefulset.name
+        - k8s.job.name
+        - k8s.cronjob.name
+
+  resource/containers:
+    attributes:
+      - key: extorq.source
+        value: container
+        action: upsert
+      # Files are always read on the collector's own node. k8s_attributes cannot
+      # associate static control-plane pods (their log-path UID is the static-pod
+      # hash, not the mirror pod UID), so fill the node name only when missing.
+      - key: k8s.node.name
+        value: ${env:K8S_NODE_NAME}
+        action: insert
+      - key: k8s.cluster.name
+        value: extorq-lab
+        action: upsert
+      - key: extorq.collector.version
+        value: otelcol-contrib/0.165.0
+        action: upsert
+
+  resource/audit:
+    attributes:
+      - key: extorq.source
+        value: audit
+        action: upsert
+      - key: k8s.cluster.name
+        value: extorq-lab
+        action: upsert
+      - key: k8s.node.name
+        value: ${env:K8S_NODE_NAME}
+        action: upsert
+      - key: extorq.collector.version
+        value: otelcol-contrib/0.165.0
+        action: upsert
+
+  batch:
+    # Gateway limits: 1000 records and 4 MiB (decompressed) per request; a 413 is a
+    # permanent error for the exporter, so batches stay small: 100 records x typical
+    # 1-10 KB audit lines, container lines <= 16 KiB.
+    send_batch_size: 100
+    send_batch_max_size: 100
+    timeout: 2s
+
+exporters:
+  otlp_http/extorq:
+    logs_endpoint: https://host.docker.internal:8443/v1/otlp/v1/logs
+    encoding: json
+    compression: gzip
+    timeout: 15s
+    auth:
+      authenticator: bearertokenauth/extorq
+    tls:
+      ca_file: /etc/extorq/gateway-ca/ca.crt
+      min_version: "1.2"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 2s
+      randomization_factor: 0.5
+      multiplier: 2
+      max_interval: 60s
+      # Bounded: a batch that still fails after 2 h is dropped and counted in
+      # otelcol_exporter_send_failed_log_records; later batches stay queued on disk.
+      max_elapsed_time: 2h
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      num_consumers: 2
+      queue_size: 2000
+
+service:
+  extensions: [health_check, file_storage, bearertokenauth/extorq]
+  telemetry:
+    logs:
+      level: info
+      encoding: json
+    metrics:
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: 8888
+  pipelines:
+    logs/containers:
+      receivers: [file_log/containers]
+      processors: [memory_limiter, k8s_attributes, resource/containers, batch]
+      exporters: [otlp_http/extorq]
+    logs/audit:
+      receivers: [file_log/audit]
+      processors: [memory_limiter, resource/audit, batch]
+      exporters: [otlp_http/extorq]

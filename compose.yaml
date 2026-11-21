@@ -1,0 +1,373 @@
+# ExtorQ runtime stack (PLAN §4.1). Owner: agent A.
+#
+#   make up        core: clickhouse, migrate, ingest, writer
+#   make up-full   + detector, ai-worker, api, frontend, grafana   (profile "full")
+#   make up-debug  + clickhouse-debug proxy on 127.0.0.1:18123      (profile "debug")
+#
+# Security properties:
+# * Only loopback ports are published (8443 gateway, 8000 api, 3000 console, 3001 grafana,
+#   18123 debug proxy in the "debug" profile only). ClickHouse itself is never published.
+# * "data" is an internal network (no egress). The gateway lives on "edge" only and has
+#   no network path to ClickHouse; its only link to the data plane is the spool volume.
+# * Secrets are compose file secrets from var/secrets and var/tls (`make bootstrap`); the
+#   AI keys come from the user's .env via `environment:` secret sources and are mounted
+#   only into the services that need them (ai-worker: Jev, api: Gemini).
+# * Every container: non-root user, cap_drop ALL, no-new-privileges, memory limit,
+#   read-only root filesystem where the software allows it (tmpfs for scratch space).
+
+name: extorq
+
+x-hardening: &hardening
+  security_opt:
+    - "no-new-privileges:true"
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-backend: &backend
+  <<: *hardening
+  image: extorq/backend:0.1.0
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  user: "10001:10001"
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m
+  pids_limit: 256
+  mem_limit: 512m
+  restart: unless-stopped
+
+x-backend-env: &backend-env
+  EXTORQ_ENVIRONMENT: lab
+  EXTORQ_LOG_LEVEL: INFO
+  EXTORQ_CLICKHOUSE_HOST: clickhouse
+  EXTORQ_CLICKHOUSE_PORT: "8123"
+  EXTORQ_CLICKHOUSE_PASSWORD_DIR: /run/secrets
+
+services:
+  # ── core ──────────────────────────────────────────────────────────────────
+  clickhouse:
+    <<: *hardening
+    image: clickhouse/clickhouse-server:26.8.42.13@sha256:db658a280d1b427056eca37244fcf8939319969e9ca0552f6f3a46c97defac8f
+    # Run the server directly as the image's clickhouse user (uid 101): no root
+    # entrypoint, no chown, no runtime writes to /etc (read-only root filesystem).
+    entrypoint: ["/usr/bin/clickhouse-server", "--config-file=/etc/clickhouse-server/config.xml"]
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    networks: [data]
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./infra/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
+      - ./infra/clickhouse/users.d/10-extorq-users.xml:/etc/clickhouse-server/users.d/10-extorq-users.xml:ro
+    secrets:
+      - source: clickhouse_admin_users_xml
+        target: /etc/clickhouse-server/users.d/20-extorq-admin.xml
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    mem_limit: 3g
+    pids_limit: 2048
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  migrate:
+    <<: *backend
+    command: ["migrate"]
+    restart: "no"
+    networks: [data]
+    environment:
+      <<: *backend-env
+      EXTORQ_INSTANCE_NAME: migrate
+    secrets:
+      - extorq_admin_password
+      - extorq_ingest_password
+      - extorq_detect_password
+      - extorq_rules_ro_password
+      - extorq_ai_password
+      - extorq_api_ro_password
+      - extorq_api_writer_password
+      - extorq_grafana_password
+    mem_limit: 256m
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  ingest:
+    <<: *backend
+    command: ["gateway"]
+    networks: [edge]
+    ports:
+      - "127.0.0.1:8443:8443"
+    environment:
+      <<: *backend-env
+      EXTORQ_INSTANCE_NAME: ingest
+      EXTORQ_GATEWAY_BIND_HOST: 0.0.0.0
+      EXTORQ_GATEWAY_PORT: "8443"
+      EXTORQ_TLS_CERT_FILE: /run/secrets/tls_gateway_crt
+      EXTORQ_TLS_KEY_FILE: /run/secrets/tls_gateway_key
+      EXTORQ_PRODUCERS_FILE: /run/secrets/producers_json
+      EXTORQ_SPOOL_PATH: /var/lib/extorq/spool/spool.db
+    secrets:
+      - producers_json
+      - tls_gateway_crt
+      - tls_gateway_key
+      - tls_ca_crt
+    volumes:
+      - spool:/var/lib/extorq/spool
+    healthcheck:
+      test: ["CMD", "extorq", "healthcheck", "gateway"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 30s
+
+  writer:
+    <<: *backend
+    command: ["writer"]
+    networks: [data]
+    environment:
+      <<: *backend-env
+      EXTORQ_INSTANCE_NAME: writer
+      EXTORQ_SPOOL_PATH: /var/lib/extorq/spool/spool.db
+      EXTORQ_WRITER_HEARTBEAT_FILE: /tmp/writer.heartbeat
+    secrets:
+      - extorq_ingest_password
+    volumes:
+      - spool:/var/lib/extorq/spool
+    healthcheck:
+      test: ["CMD", "extorq", "healthcheck", "writer"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # ── debug (loopback-only ClickHouse HTTP proxy for tests/debugging) ──────
+  clickhouse-debug:
+    <<: *hardening
+    profiles: [debug]
+    image: alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e
+    user: "65534:65534"
+    read_only: true
+    command: ["-d", "TCP-LISTEN:8123,fork,reuseaddr,max-children=32", "TCP:clickhouse:8123"]
+    networks: [data, edge]
+    ports:
+      - "127.0.0.1:18123:8123"
+    mem_limit: 64m
+    pids_limit: 64
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── full profile (services owned by C2, E, D1, D2) ───────────────────────
+  detector:
+    <<: *backend
+    profiles: [full]
+    command: ["detector"]
+    networks: [data]
+    environment:
+      <<: *backend-env
+      EXTORQ_INSTANCE_NAME: detector
+      EXTORQ_RULES_DIR: /app/rules
+    secrets:
+      - extorq_detect_password
+      - extorq_rules_ro_password
+    volumes:
+      - type: bind
+        source: ./rules
+        target: /app/rules
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  ai-worker:
+    <<: *backend
+    profiles: [full]
+    command: ["ai-worker"]
+    networks: [data, edge]
+    environment:
+      <<: *backend-env
+      EXTORQ_INSTANCE_NAME: ai-worker
+      JEV_API_KEY_FILE: /run/secrets/jev_api_key
+    secrets:
+      - extorq_ai_password
+      - jev_api_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    <<: *backend
+    profiles: [full]
+    command: ["api"]
+    networks: [data, edge]
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      <<: *backend-env
+      EXTORQ_INSTANCE_NAME: api
+      EXTORQ_API_BIND_HOST: 0.0.0.0
+      EXTORQ_API_PORT: "8000"
+      EXTORQ_API_SERVICE_TOKEN_FILE: /run/secrets/api_service_token
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+    secrets:
+      - extorq_api_ro_password
+      - extorq_api_writer_password
+      - api_service_token
+      - gemini_api_key
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    <<: *hardening
+    profiles: [full]
+    image: extorq/frontend:0.1.0
+    build:
+      context: ./frontend
+    user: "1001:1001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      - /app/.next/cache:size=128m,uid=1001,gid=1001
+    networks: [edge]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      EXTORQ_API_BASE_URL: http://api:8000
+      EXTORQ_API_TOKEN_FILE: /run/secrets/api_service_token
+      EXTORQ_ANALYST_PASSWORD_FILE: /run/secrets/console_analyst_password
+      EXTORQ_VIEWER_PASSWORD_FILE: /run/secrets/console_viewer_password
+      EXTORQ_SESSION_SECRET_FILE: /run/secrets/console_session_secret
+    secrets:
+      - api_service_token
+      - console_analyst_password
+      - console_viewer_password
+      - console_session_secret
+    mem_limit: 512m
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "node", "-e",
+             "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  grafana:
+    <<: *hardening
+    profiles: [full]
+    image: extorq/grafana:0.1.0
+    build:
+      context: ./infra/grafana
+    user: "472:0"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    networks: [data, edge]
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_HTTP_ADDR: 0.0.0.0
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      EXTORQ_CLICKHOUSE_HOST: clickhouse
+      EXTORQ_CLICKHOUSE_PORT: "8123"
+    secrets:
+      - grafana_admin_password
+      - extorq_grafana_password
+    volumes:
+      - grafana-data:/var/lib/grafana
+    mem_limit: 512m
+    pids_limit: 256
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+networks:
+  data:
+    internal: true
+  edge: {}
+
+volumes:
+  clickhouse-data: {}
+  spool: {}
+  grafana-data: {}
+
+secrets:
+  clickhouse_admin_users_xml:
+    file: ./var/secrets/clickhouse/extorq_admin_users.xml
+  extorq_admin_password:
+    file: ./var/secrets/clickhouse/extorq_admin_password
+  extorq_ingest_password:
+    file: ./var/secrets/clickhouse/extorq_ingest_password
+  extorq_detect_password:
+    file: ./var/secrets/clickhouse/extorq_detect_password
+  extorq_rules_ro_password:
+    file: ./var/secrets/clickhouse/extorq_rules_ro_password
+  extorq_ai_password:
+    file: ./var/secrets/clickhouse/extorq_ai_password
+  extorq_api_ro_password:
+    file: ./var/secrets/clickhouse/extorq_api_ro_password
+  extorq_api_writer_password:
+    file: ./var/secrets/clickhouse/extorq_api_writer_password
+  extorq_grafana_password:
+    file: ./var/secrets/clickhouse/extorq_grafana_password
+  producers_json:
+    file: ./var/secrets/producers.json
+  tls_gateway_crt:
+    file: ./var/tls/gateway.crt
+  tls_gateway_key:
+    file: ./var/tls/gateway.key
+  tls_ca_crt:
+    file: ./var/tls/ca.crt
+  api_service_token:
+    file: ./var/secrets/api_service_token
+  console_analyst_password:
+    file: ./var/secrets/analyst_password
+  console_viewer_password:
+    file: ./var/secrets/viewer_password
+  console_session_secret:
+    file: ./var/secrets/frontend_session_secret
+  grafana_admin_password:
+    file: ./var/secrets/grafana_admin_password
+  jev_api_key:
+    environment: JEV_API_KEY
+  gemini_api_key:
+    environment: GEMINI_API_KEY

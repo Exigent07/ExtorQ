@@ -1,0 +1,18 @@
+## ExtorQ lab audit rules (deployed by cloud-init from infra/vm/files/audit/extorq.rules).
+## Loaded by augenrules after the distribution defaults.
+
+## Persistence and authentication-relevant configuration (write/attribute changes).
+-w /etc/systemd/system -p wa -k extorq_systemd
+-w /usr/lib/systemd/system -p wa -k extorq_systemd
+-w /etc/ssh/sshd_config -p wa -k extorq_sshd
+-w /etc/ssh/sshd_config.d -p wa -k extorq_sshd
+-w /etc/sudoers -p wa -k extorq_sudoers
+-w /etc/sudoers.d -p wa -k extorq_sudoers
+-w /etc/passwd -p wa -k extorq_identity
+-w /etc/shadow -p wa -k extorq_identity
+-w /etc/cron.d -p wa -k extorq_cron
+
+## Commands executed with euid 0 on behalf of a real logged-in user
+## (auid >= 1000 and set), e.g. everything run through sudo.
+-a always,exit -F arch=b64 -S execve -S execveat -F euid=0 -F auid>=1000 -F auid!=unset -k extorq_root_exec
+-a always,exit -F arch=b32 -S execve -S execveat -F euid=0 -F auid>=1000 -F auid!=unset -k extorq_root_exec

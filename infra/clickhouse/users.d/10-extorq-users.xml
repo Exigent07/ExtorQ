@@ -1,0 +1,28 @@
+<!--
+  ExtorQ XML-defined access entities.
+  * The built-in passwordless `default` user (network ::/0, access_management=1 in the
+    image's users.xml) is REMOVED: nothing can log in without an ExtorQ identity.
+  * `extorq_admin` itself is defined in a generated, private file
+    (var/secrets/clickhouse/extorq_admin_users.xml -> users.d/20-extorq-admin.xml)
+    because it contains a password hash. Service users are created by migration
+    0002 (SQL-driven RBAC, stored under /var/lib/clickhouse/access).
+-->
+<clickhouse>
+    <users>
+        <default remove="remove"/>
+    </users>
+    <profiles>
+        <!-- Admin is used by `extorq migrate` only. -->
+        <extorq_admin>
+            <max_execution_time>300</max_execution_time>
+            <max_memory_usage>1073741824</max_memory_usage>
+            <max_threads>4</max_threads>
+        </extorq_admin>
+        <!-- Defaults for any session without a more specific profile. -->
+        <default>
+            <max_memory_usage>1073741824</max_memory_usage>
+            <max_threads>4</max_threads>
+            <log_queries>1</log_queries>
+        </default>
+    </profiles>
+</clickhouse>

@@ -1,0 +1,148 @@
+# ExtorQ kube-apiserver audit policy (extorq-lab).
+#
+# Rules are evaluated top to bottom; the FIRST matching rule sets the level.
+# Rationale per rule: docs/telemetry/kubernetes.md ("Audit policy").
+#
+# Levels: None (not logged) < Metadata (who/what/when/result, no bodies)
+#         < Request (+ request body) < RequestResponse (+ response body).
+#
+# Hard guarantees (tested by reading the node's audit log):
+#   * Bodies of secrets, configmaps, TokenRequests (serviceaccounts/token) and
+#     TokenReviews are NEVER logged (they contain credentials).
+#   * Pod writes keep the request body so privileged / host-namespace specs and
+#     Pod Security denials are visible (the normaliser forwards only a compact
+#     summary of security-relevant fields, never the full body).
+#   * RBAC writes keep request + response (who granted what to whom).
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  # 1. Probes and version checks (kubelet probes the API server every few seconds).
+  - level: None
+    nonResourceURLs:
+      - /healthz*
+      - /livez*
+      - /readyz*
+      - /version
+      - /version/
+
+  # 2. API discovery documents refreshed by authenticated clients (kubectl caches,
+  #    controllers). Unauthenticated discovery attempts still fall through to rule 13.
+  - level: None
+    userGroups: ["system:authenticated"]
+    verbs: ["get"]
+    nonResourceURLs:
+      - /api
+      - /api/*
+      - /apis
+      - /apis/*
+      - /openapi/*
+
+  # 3. Leases: leader election and node heartbeats (every ~10 s per holder).
+  - level: None
+    resources:
+      - group: coordination.k8s.io
+        resources: ["leases"]
+
+  # 4. Credentials and sensitive data: METADATA ONLY, for every user and verb
+  #    (including system components). Listed before the system-read exclusions on
+  #    purpose: secret access is high-value evidence and low volume.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["secrets", "configmaps", "serviceaccounts/token"]
+      - group: authentication.k8s.io
+        resources: ["tokenreviews"]
+
+  # 5. High-volume read-only traffic from system components.
+  - level: None
+    userGroups: ["system:nodes"]
+    verbs: ["get", "list", "watch"]
+  - level: None
+    users:
+      - system:kube-scheduler
+      - system:kube-controller-manager
+      - system:kube-proxy
+      - system:apiserver
+    verbs: ["get", "list", "watch"]
+  - level: None
+    # kube-controller-manager runs each controller with its own kube-system
+    # service account (--use-service-account-credentials); coredns, kube-proxy and
+    # kindnet also live here.
+    userGroups: ["system:serviceaccounts:kube-system"]
+    verbs: ["get", "list", "watch"]
+
+  # 6. Endpoints / EndpointSlices / Events reads by anyone (high volume, low value).
+  - level: None
+    verbs: ["get", "list", "watch"]
+    resources:
+      - group: ""
+        resources: ["endpoints", "events"]
+      - group: discovery.k8s.io
+        resources: ["endpointslices"]
+      - group: events.k8s.io
+        resources: ["events"]
+
+  # 7. Event writes by system components. Events are collected separately through
+  #    the Events API by the inventory collector (k8s.event.observed); auditing the
+  #    kubelet/controller writes would only duplicate them. Event writes by any other
+  #    identity are still logged (rule 13).
+  - level: None
+    userGroups: ["system:nodes", "system:serviceaccounts:kube-system"]
+    resources:
+      - group: ""
+        resources: ["events"]
+      - group: events.k8s.io
+        resources: ["events"]
+  - level: None
+    users: ["system:kube-scheduler", "system:kube-controller-manager"]
+    resources:
+      - group: ""
+        resources: ["events"]
+      - group: events.k8s.io
+        resources: ["events"]
+
+  # 8. RBAC writes: request AND response bodies (roleRef, subjects, rules).
+  - level: RequestResponse
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+    resources:
+      - group: rbac.authorization.k8s.io
+        resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+
+  # 9. Pod writes: request body (privileged, host namespaces, hostPath, capabilities).
+  #    Covers PodSecurity admission denials, which are logged with the body and a
+  #    403 response status.
+  - level: Request
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["pods", "pods/ephemeralcontainers"]
+
+  # 10. Interactive access to containers. All verbs: kubectl >= 1.31 uses WebSocket
+  #     upgrades (GET) as well as the legacy SPDY POST (create).
+  - level: Request
+    resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach", "pods/portforward"]
+
+  # 11. Authentication / authorization reviews and certificate requests.
+  - level: Metadata
+    resources:
+      - group: authentication.k8s.io
+        resources: ["selfsubjectreviews"]
+      - group: authorization.k8s.io
+        resources:
+          - subjectaccessreviews
+          - selfsubjectaccessreviews
+          - selfsubjectrulesreviews
+          - localsubjectaccessreviews
+      - group: certificates.k8s.io
+        resources: ["certificatesigningrequests", "certificatesigningrequests/approval"]
+
+  # 12. All other writes.
+  - level: Metadata
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+
+  # 13. Everything else (reads by non-system identities, anonymous requests, proxies).
+  - level: Metadata

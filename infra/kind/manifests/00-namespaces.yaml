@@ -1,0 +1,69 @@
+# ExtorQ lab namespaces and their Pod Security Admission (PSA) levels.
+# The node image pins Kubernetes v1.37.0, so "latest" policy versions are
+# deterministic for this cluster.
+---
+# Node-level log collection (OTel Collector DaemonSet). PSA "privileged" is
+# required because the collector mounts hostPath volumes (forbidden by baseline).
+# warn/audit=baseline keep the deviation visible in kubectl warnings and in the
+# audit log (pod-security.kubernetes.io/audit-violations annotation).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: extorq-system
+  labels:
+    app.kubernetes.io/part-of: extorq
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: latest
+  annotations:
+    extorq.io/accepted-risk: >-
+      PSA privileged: the node log collector needs read-only hostPath mounts of
+      /var/log/pods and /var/log/kubernetes/audit plus a writable hostPath for its
+      checkpoints (/var/lib/extorq-otel). See docs/telemetry/kubernetes.md.
+---
+# Lab web application (lab-portal). Must satisfy "restricted"; enforced at baseline.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: extorq-apps
+  labels:
+    app.kubernetes.io/part-of: extorq
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+---
+# K8S-001 target: baseline enforcement denies privileged / host-namespace pods.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: extorq-restricted
+  labels:
+    app.kubernetes.io/part-of: extorq
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+---
+# Deliberately weak (but harmless) workload for genuine posture findings.
+# Enforcement is privileged so the weak pod is admitted; warn/audit=baseline
+# record the violations.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: extorq-posture-lab
+  labels:
+    app.kubernetes.io/part-of: extorq
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: latest

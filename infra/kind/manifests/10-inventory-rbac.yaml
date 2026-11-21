@@ -1,0 +1,62 @@
+# Read-only identity of the host-native inventory/posture collector
+# (extorq_collectors.kubernetes). Tokens are minted on demand with the TokenRequest
+# API (`infra/kind/kind.sh token`); no long-lived token Secret exists.
+#
+# Deliberately NOT granted: secrets, configmaps (may hold credentials), any write
+# verb, pods/log, pods/exec, nodes/proxy.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: extorq-inventory
+  namespace: extorq-system
+  labels:
+    app.kubernetes.io/name: extorq-inventory
+    app.kubernetes.io/part-of: extorq
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: extorq-inventory-reader
+  labels:
+    app.kubernetes.io/name: extorq-inventory
+    app.kubernetes.io/part-of: extorq
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - serviceaccounts
+      - events
+      - nodes
+      - services
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: extorq-inventory-reader
+  labels:
+    app.kubernetes.io/name: extorq-inventory
+    app.kubernetes.io/part-of: extorq
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: extorq-inventory-reader
+subjects:
+  - kind: ServiceAccount
+    name: extorq-inventory
+    namespace: extorq-system

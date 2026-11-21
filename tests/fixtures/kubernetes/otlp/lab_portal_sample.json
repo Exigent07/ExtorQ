@@ -1,0 +1,626 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "k8s.namespace.name",
+      "value": {
+       "stringValue": "extorq-apps"
+      }
+     },
+     {
+      "key": "k8s.pod.name",
+      "value": {
+       "stringValue": "lab-portal-b7fcd5dc9-c8g4n"
+      }
+     },
+     {
+      "key": "k8s.pod.uid",
+      "value": {
+       "stringValue": "f1e96337-4cff-459a-9d1c-8e28b7a747f5"
+      }
+     },
+     {
+      "key": "k8s.container.name",
+      "value": {
+       "stringValue": "lab-portal"
+      }
+     },
+     {
+      "key": "k8s.container.restart_count",
+      "value": {
+       "stringValue": "0"
+      }
+     },
+     {
+      "key": "k8s.replicaset.name",
+      "value": {
+       "stringValue": "lab-portal-b7fcd5dc9"
+      }
+     },
+     {
+      "key": "k8s.deployment.name",
+      "value": {
+       "stringValue": "lab-portal"
+      }
+     },
+     {
+      "key": "k8s.node.name",
+      "value": {
+       "stringValue": "extorq-lab-control-plane"
+      }
+     },
+     {
+      "key": "extorq.source",
+      "value": {
+       "stringValue": "container"
+      }
+     },
+     {
+      "key": "k8s.cluster.name",
+      "value": {
+       "stringValue": "extorq-lab"
+      }
+     },
+     {
+      "key": "extorq.collector.version",
+      "value": {
+       "stringValue": "otelcol-contrib/0.165.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver",
+      "version": "0.165.0"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1795257249095869004",
+       "observedTimeUnixNano": "1795257327895771263",
+       "body": {
+        "stringValue": "lab-portal 1.0.0 listening on 0.0.0.0:8080 (log_access=1, credential=configured)"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stderr"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257295577598012",
+       "observedTimeUnixNano": "1795257327895775971",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:55.577Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"05e1d7a7156542ab88351e1185634245\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"invalid_password\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":214.593}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257295577848470",
+       "observedTimeUnixNano": "1795257327895776804",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:55.577Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"05e1d7a7156542ab88351e1185634245\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":215.002}"
+       },
+       "attributes": [
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257295955628387",
+       "observedTimeUnixNano": "1795257327895777054",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:55.955Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"33092728e304453cb71d78bf6353d821\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"invalid_password\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":375.957}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257295955811928",
+       "observedTimeUnixNano": "1795257327895777346",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:55.955Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"33092728e304453cb71d78bf6353d821\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":376.216}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257296268136387",
+       "observedTimeUnixNano": "1795257327895777596",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:56.267Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"7cfb06c3986b4d5bab721370c85554a8\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"invalid_password\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":309.982}"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257296268458303",
+       "observedTimeUnixNano": "1795257327895777804",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:56.268Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"7cfb06c3986b4d5bab721370c85554a8\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":310.309}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257296660509345",
+       "observedTimeUnixNano": "1795257327895778096",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:56.660Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"2487375769c94811bcef8f0fe1fe770c\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"invalid_password\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":389.287}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257296660885345",
+       "observedTimeUnixNano": "1795257327895778346",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:56.660Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"2487375769c94811bcef8f0fe1fe770c\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":389.82}"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257296959615387",
+       "observedTimeUnixNano": "1795257327895778596",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:56.959Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"a98ad5b8f72a445c8d2c1bc39eab31ce\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"invalid_password\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":296.721}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257296959700970",
+       "observedTimeUnixNano": "1795257327895778804",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:56.959Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"a98ad5b8f72a445c8d2c1bc39eab31ce\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":296.882}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297255883096",
+       "observedTimeUnixNano": "1795257327895779054",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.255Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"auth.login_failed\",\"user\":\"fixture-unknown-user\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"691fe3de724348149b23fd03c7f14271\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":\"unknown_user\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":294.588}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297256063846",
+       "observedTimeUnixNano": "1795257327895779263",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.255Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"fixture-unknown-user\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"691fe3de724348149b23fd03c7f14271\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":294.873}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297257929304",
+       "observedTimeUnixNano": "1795257327895779596",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.257Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"authz.denied\",\"user\":null,\"src_ip\":\"10.244.0.1\",\"request_id\":\"0fec0bad7b67471a83e6246bfc403362\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/admin\",\"status\":401,\"reason\":\"missing_session\",\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.047}"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297257953179",
+       "observedTimeUnixNano": "1795257327895793346",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.257Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":null,\"src_ip\":\"10.244.0.1\",\"request_id\":\"0fec0bad7b67471a83e6246bfc403362\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/admin\",\"status\":401,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.167}"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297558550512",
+       "observedTimeUnixNano": "1795257327895793763",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.558Z\",\"level\":\"info\",\"service\":\"lab-portal\",\"event\":\"auth.login_succeeded\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"d8549ec3b91143aab6066b48925fe568\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":200,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":299.318}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297558746387",
+       "observedTimeUnixNano": "1795257327895794013",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.558Z\",\"level\":\"info\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"d8549ec3b91143aab6066b48925fe568\",\"request_id_source\":\"generated\",\"method\":\"POST\",\"route\":\"/login\",\"status\":200,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":299.501}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297560273471",
+       "observedTimeUnixNano": "1795257327895794263",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.560Z\",\"level\":\"info\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":\"lab-admin\",\"src_ip\":\"10.244.0.1\",\"request_id\":\"bf5c9da58c014ea0adda356faf032a56\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/admin\",\"status\":200,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.154}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297561336721",
+       "observedTimeUnixNano": "1795257327895794513",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.561Z\",\"level\":\"info\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":null,\"src_ip\":\"10.244.0.1\",\"request_id\":\"87fea8f620d1459391bff2705f0a4eee\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/\",\"status\":200,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.08}"
+       },
+       "attributes": [
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1795257297562545887",
+       "observedTimeUnixNano": "1795257327895794721",
+       "body": {
+        "stringValue": "{\"ts\":\"2026-11-21T10:34:57.562Z\",\"level\":\"warning\",\"service\":\"lab-portal\",\"event\":\"http.request\",\"user\":null,\"src_ip\":\"10.244.0.1\",\"request_id\":\"30c197587dfe488aa0a5f96f03aea377\",\"request_id_source\":\"generated\",\"method\":\"GET\",\"route\":\"/does-not-exist\",\"status\":404,\"reason\":null,\"user_agent\":\"extorq-b2-fixture/1.0\",\"duration_ms\":0.183}"
+       },
+       "attributes": [
+        {
+         "key": "logtag",
+         "value": {
+          "stringValue": "F"
+         }
+        },
+        {
+         "key": "log.file.path",
+         "value": {
+          "stringValue": "/var/log/pods/extorq-apps_lab-portal-b7fcd5dc9-c8g4n_f1e96337-4cff-459a-9d1c-8e28b7a747f5/lab-portal/0.log"
+         }
+        },
+        {
+         "key": "log.iostream",
+         "value": {
+          "stringValue": "stdout"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

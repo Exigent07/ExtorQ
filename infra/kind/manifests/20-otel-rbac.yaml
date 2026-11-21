@@ -1,0 +1,43 @@
+# Identity of the OTel Collector DaemonSet. The k8sattributes processor needs to
+# read pod/namespace/node metadata and ReplicaSets (to resolve Deployment names).
+# No secrets, no configmaps, no write verbs.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: extorq-otel-collector
+  namespace: extorq-system
+  labels:
+    app.kubernetes.io/name: extorq-otel-collector
+    app.kubernetes.io/part-of: extorq
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: extorq-otel-k8sattributes
+  labels:
+    app.kubernetes.io/name: extorq-otel-collector
+    app.kubernetes.io/part-of: extorq
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: extorq-otel-k8sattributes
+  labels:
+    app.kubernetes.io/name: extorq-otel-collector
+    app.kubernetes.io/part-of: extorq
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: extorq-otel-k8sattributes
+subjects:
+  - kind: ServiceAccount
+    name: extorq-otel-collector
+    namespace: extorq-system

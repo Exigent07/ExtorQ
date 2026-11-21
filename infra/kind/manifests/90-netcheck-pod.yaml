@@ -1,0 +1,71 @@
+# Short-lived connectivity check (`infra/kind/kind.sh netcheck`): can a pod resolve
+# and reach the ingest gateway with TLS verified against the ExtorQ CA?
+# Rendered by kind.sh (__NETCHECK_IMAGE__, __GATEWAY_URL__); deleted after the run.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: extorq-b2-netcheck
+  namespace: extorq-system
+  labels:
+    app.kubernetes.io/name: extorq-b2-netcheck
+    app.kubernetes.io/part-of: extorq
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: netcheck
+      image: __NETCHECK_IMAGE__
+      imagePullPolicy: IfNotPresent
+      env:
+        - name: GATEWAY_URL
+          value: "__GATEWAY_URL__"
+      command: ["python3", "-I", "-c"]
+      args:
+        - |
+          import os, socket, ssl, sys, urllib.parse, urllib.request
+          url = os.environ["GATEWAY_URL"].rstrip("/") + "/healthz"
+          parts = urllib.parse.urlsplit(url)
+          host, port = parts.hostname, parts.port or 443
+          try:
+              addrs = sorted({ai[4][0] for ai in socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)})
+          except OSError as exc:
+              print(f"RESOLVE FAILED {host}: {exc}")
+              sys.exit(2)
+          print(f"resolve {host} -> {addrs}")
+          ctx = ssl.create_default_context(cafile="/etc/extorq/gateway-ca/ca.crt")
+          try:
+              with urllib.request.urlopen(url, context=ctx, timeout=10) as resp:
+                  body = resp.read(200).decode("utf-8", "replace")
+                  print(f"GET {url} -> HTTP {resp.status} {body} (TLS verified with ExtorQ CA)")
+                  sys.exit(0 if resp.status == 200 else 3)
+          except Exception as exc:  # report and fail
+              print(f"GET {url} FAILED: {type(exc).__name__}: {exc}")
+              sys.exit(4)
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 64Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: gateway-ca
+          mountPath: /etc/extorq/gateway-ca
+          readOnly: true
+  volumes:
+    - name: gateway-ca
+      configMap:
+        name: extorq-gateway-ca

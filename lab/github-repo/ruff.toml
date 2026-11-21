@@ -1,0 +1,10 @@
+# Lint configuration of the lab repository itself (ruff picks the nearest config file,
+# so this also applies when the ExtorQ monorepo lints lab/github-repo/).
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+
+[lint.per-file-ignores]
+"tests/**" = ["S101"]
