@@ -1,0 +1,71 @@
+[project]
+name = "extorq-workspace"
+version = "0.1.0"
+description = "ExtorQ security telemetry, detection and investigation platform (uv workspace root)"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "extorq",
+  "extorq-collectors",
+  "extorq-scanners",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["backend", "collectors", "scanners"]
+
+[tool.uv.sources]
+extorq = { workspace = true }
+extorq-collectors = { workspace = true }
+extorq-scanners = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "pytest>=9.2,<10",
+  "pytest-timeout>=2.3",
+  "ruff>=0.17,<0.18",
+  "mypy>=2.4,<3",
+  "types-PyYAML>=6.0",
+]
+
+# ── pytest ────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: requires the running docker compose stack (make up)",
+  "lab: requires lab assets (Linux VM, kind cluster, GitHub lab repository)",
+  "live_ai: makes a real, budgeted request to an external AI provider",
+  "failure: failure-injection test that stops/starts shared services (run serially)",
+]
+addopts = "-ra --strict-markers -m 'not integration and not lab and not live_ai and not failure'"
+timeout = 300
+
+# ── ruff ──────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["backend/src", "collectors/src", "scanners/src", "tests"]
+extend-exclude = ["frontend", "var", "infra/vm/files"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "BLE"]
+# S603/S607: collectors intentionally execute fixed, validated system commands
+# (argument lists, never shell=True). S608 (SQL built from strings) stays ON.
+ignore = ["S603", "S607", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108", "S311"]
+
+# ── mypy ──────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+mypy_path = ["backend/src", "collectors/src", "scanners/src"]
+packages = ["extorq", "extorq_collectors", "extorq_scanners"]
+plugins = ["pydantic.mypy"]
+disallow_untyped_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+ignore_missing_imports = true

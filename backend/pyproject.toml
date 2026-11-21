@@ -1,0 +1,26 @@
+[project]
+name = "extorq"
+version = "0.1.0"
+description = "ExtorQ backend: contracts, ingestion gateway, durable pipeline, detection, correlation, AI enrichment and analyst API"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "pydantic>=2.14,<3",
+  "pydantic-settings>=2.16,<3",
+  "fastapi>=0.165,<1",
+  "uvicorn[standard]>=0.54,<1",
+  "clickhouse-connect>=1.13,<2",
+  "httpx>=0.28,<0.29",
+  "structlog>=26.1,<27",
+  "typer>=0.29,<1",
+  "pyyaml>=6.0.4,<7",
+  # AI providers: installed always, enabled only via feature flags at runtime.
+  "typesafe-sdk>=0.7.5,<0.8",
+  "google-genai>=3.6.1,<4",
+]
+
+[project.scripts]
+extorq = "extorq.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13"]
+build-backend = "uv_build"

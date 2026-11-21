@@ -1,0 +1,21 @@
+[project]
+name = "extorq-collectors"
+version = "0.1.0"
+description = "ExtorQ host-native collectors (macOS, Linux via SSH, Kubernetes API, GitHub) and the collector SDK"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "extorq",
+  "kubernetes>=37.0,<38",
+  "httpx>=0.28,<0.29",
+  "pyyaml>=6.0.4,<7",
+]
+
+[project.scripts]
+extorq-collect = "extorq_collectors.cli:app"
+
+[tool.uv.sources]
+extorq = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13"]
+build-backend = "uv_build"

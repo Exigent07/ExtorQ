@@ -1,0 +1,48 @@
+# ── Secrets: never commit ─────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+var/
+*.pem
+*.key
+*.p12
+*.token
+secrets/
+
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Node / Next.js ────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.pnpm-store/
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Local databases, buffers and telemetry captures ──────────────────
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.qcow2
+*.img
+*.iso
+
+# ── OS / editors ──────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+.claude/settings.local.json

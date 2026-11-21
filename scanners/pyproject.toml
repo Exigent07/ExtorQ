@@ -1,0 +1,21 @@
+[project]
+name = "extorq-scanners"
+version = "0.1.0"
+description = "ExtorQ security scanner integrations (Trivy, Gitleaks, Semgrep) producing ScanRun and PostureFinding records"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "extorq",
+  "extorq-collectors",
+  "pyyaml>=6.0.4,<7",
+]
+
+[project.scripts]
+extorq-scan = "extorq_scanners.cli:app"
+
+[tool.uv.sources]
+extorq = { workspace = true }
+extorq-collectors = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13"]
+build-backend = "uv_build"
