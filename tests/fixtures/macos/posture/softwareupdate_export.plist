@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AutomaticDownload</key>
+	<true/>
+	<key>AutomaticallyInstallMacOSUpdates</key>
+	<true/>
+	<key>ConfigDataInstall</key>
+	<true/>
+	<key>CriticalUpdateInstall</key>
+	<true/>
+	<key>FirstOfferDateDictionary</key>
+	<dict>
+		<key>MSU_UPDATE_26A428_patch_27.0_major</key>
+		<date>2026-09-13T10:12:31Z</date>
+		<key>MSU_UPDATE_26A434_patch_27.0.1_minor</key>
+		<date>2026-10-05T17:21:14Z</date>
+		<key>MSU_UPDATE_26B123_patch_27.2_minor</key>
+		<date>2026-11-02T08:10:57Z</date>
+		<key>MSU_UPDATE_26B131_patch_27.2.1_minor</key>
+		<date>2026-11-11T07:14:53Z</date>
+	</dict>
+	<key>InstallDateDictionary</key>
+	<dict>
+		<key>26A428</key>
+		<date>2026-09-13T12:04:25Z</date>
+		<key>26A434</key>
+		<date>2026-10-12T08:13:20Z</date>
+	</dict>
+	<key>LastSuccessfulDate</key>
+	<date>2026-11-21T10:04:37Z</date>
+	<key>RecommendedUpdates</key>
+	<array>
+		<dict>
+			<key>Display Name</key>
+			<string>Command Line Tools for Xcode 27.2</string>
+			<key>Display Version</key>
+			<string>27.2</string>
+			<key>Identifier</key>
+			<string>Command Line Tools for Xcode 27.2</string>
+			<key>Product Key</key>
+			<string>142-50405</string>
+		</dict>
+	</array>
+</dict>
+</plist>

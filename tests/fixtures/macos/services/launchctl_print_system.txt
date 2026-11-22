@@ -1,0 +1,41 @@
+system = {
+	type = system
+	handle = 0
+	creator = launchd[1]
+	creator euid = 0
+	subdomains = {
+		pid/376
+		pid/366
+	}
+
+	services = {
+		       0      - 	com.apple.backgroundassets.managed.relay.service
+		   52639   (pe) 	com.apple.lskdd
+		     438      - 	com.apple.runningboardd
+		       0      0 	com.apple.tmp_cleaner
+		       0      - 	com.apple.ftp-proxy
+		       0      0 	com.apple.bootpd
+		     333      - 	com.apple.logd
+		     375      - 	com.apple.opendirectoryd
+		       0      0 	org.cups.cupsd
+		     485      - 	com.apple.mDNSResponder.reloaded
+		     516      - 	com.example.thirdparty.helper
+	}
+
+	unmanaged processes = {
+	}
+
+	endpoints = {
+		       0    M   D   com.apple.fpsd.arcadeservice
+		  0x1103    M   A   com.apple.logd.admin
+	}
+
+	disabled services = {
+		"com.apple.ftpd" => disabled
+		"com.apple.bootpd" => enabled
+		"com.apple.ftp-proxy" => enabled
+		"com.example.thirdparty.helper" => enabled
+	}
+
+	properties = uncorked | audit check done | bootcache hack
+}

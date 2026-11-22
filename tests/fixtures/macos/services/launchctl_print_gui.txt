@@ -1,0 +1,55 @@
+gui/501 = {
+	type = login
+	session = Aqua
+	creator = loginwindow[409]
+
+	environment = {
+		(removed from fixture: environment values are never collected)
+	}
+
+	services = {
+		   57312   (pe) 	com.apple.syncdefaultsd
+		     842      - 	com.apple.assistantd
+		       0      0 	com.apple.DataDetectorsLocalSources
+		       0      - 	com.apple.RemoteDesktop.agent
+		     656      - 	com.apple.controlcenter
+		   75945      - 	application.com.apple.Terminal.1152921500311915865.1152921500311915870
+		    7800      - 	application.com.example.thirdparty.app.1000001.1000002
+		     902      - 	com.example.thirdparty.php
+		     904      - 	com.example.thirdparty.redis
+		     905      - 	com.example.thirdparty.mysql
+		     738      - 	com.apple.GenerativeFunctions.agentstored
+	}
+
+	unmanaged processes = {
+		com.apple.xpc.launchd.unmanaged.ExampleHelper.7310 = {
+			active count = 4
+			dynamic endpoints = {
+			}
+			pid-local endpoints = {
+				"com.apple.coredrag" = {
+					port = 0x12f8d3
+					active = 1
+				}
+			}
+		}
+	}
+
+	endpoints = {
+	}
+
+	externally-hosted endpoints = {
+		0x1195e3    M   D   com.apple.BKAgentService
+		 0x42033    M   D   com.apple.lsd.extensions
+	}
+
+	disabled services = {
+		"com.example.thirdparty.mysql" => enabled
+		"com.example.thirdparty.redis" => enabled
+		"com.apple.FolderActionsDispatcher" => disabled
+		"com.example.thirdparty.php" => enabled
+		"com.apple.ScriptMenuApp" => disabled
+	}
+
+	properties = gui | gui login
+}

@@ -1,0 +1,25 @@
+p666
+cidentityservicesd
+Ltestuser
+f7
+tIPv4
+PUDP
+n*:*
+p7310
+cExample Helper (Plugin)
+Ltestuser
+f40
+tIPv6
+PUDP
+n[2001:db8::10]:62437->[2001:db8::30]:443
+f41
+tIPv4
+PUDP
+n*:5353
+p95469
+cqemu-system-aarch64
+Ltestuser
+f16
+tIPv4
+PUDP
+n*:61740

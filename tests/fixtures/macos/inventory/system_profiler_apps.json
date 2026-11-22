@@ -1,0 +1,77 @@
+{
+  "SPApplicationsDataType": [
+    {
+      "_name": "TextEdit",
+      "arch_kind": "arch_arm",
+      "lastModified": "2026-09-24T07:10:37Z",
+      "obtained_from": "apple",
+      "path": "/System/Applications/TextEdit.app",
+      "signed_by": [
+        "macOS Software Signing",
+        "Apple Code Signing Certification Authority",
+        "Apple Root CA"
+      ],
+      "version": "1.21"
+    },
+    {
+      "_name": "Time Machine",
+      "arch_kind": "arch_arm",
+      "lastModified": "2026-09-24T07:10:37Z",
+      "obtained_from": "apple",
+      "path": "/System/Applications/Time Machine.app",
+      "signed_by": [
+        "macOS Software Signing",
+        "Apple Code Signing Certification Authority",
+        "Apple Root CA"
+      ],
+      "version": "1.3"
+    },
+    {
+      "_name": "Tips",
+      "arch_kind": "arch_arm",
+      "lastModified": "2026-09-24T07:10:37Z",
+      "obtained_from": "apple",
+      "path": "/System/Applications/Tips.app",
+      "signed_by": [
+        "macOS Software Signing",
+        "Apple Code Signing Certification Authority",
+        "Apple Root CA"
+      ],
+      "version": "27.0"
+    },
+    {
+      "_name": "Automator Application Stub",
+      "arch_kind": "arch_arm",
+      "lastModified": "2026-09-24T07:10:37Z",
+      "obtained_from": "unknown",
+      "path": "/System/Library/CoreServices/Automator Application Stub.app",
+      "version": "1.3"
+    },
+    {
+      "_name": "ExampleApp",
+      "arch_kind": "arch_arm",
+      "lastModified": "2026-11-01T10:00:00Z",
+      "obtained_from": "identified_developer",
+      "path": "/Applications/ExampleApp.app",
+      "signed_by": [
+        "Developer ID Application: Example Corp (EXAMPLE001)",
+        "Developer ID Certification Authority",
+        "Apple Root CA"
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "_name": "Example Store App",
+      "arch_kind": "arch_arm",
+      "lastModified": "2026-11-01T10:00:00Z",
+      "obtained_from": "mac_app_store",
+      "path": "/Applications/Example Store App.app",
+      "signed_by": [
+        "Apple Mac OS Application Signing",
+        "Apple Worldwide Developer Relations Certification Authority",
+        "Apple Root CA"
+      ],
+      "version": "2.3"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+_mbsetupuser             /bin/bash
+_mdnsresponder           /usr/bin/false
+_spotlight               /usr/bin/false
+_www                     /usr/bin/false
+daemon                   /usr/bin/false
+nobody                   /usr/bin/false
+root                     /bin/sh
+testuser                  /bin/zsh

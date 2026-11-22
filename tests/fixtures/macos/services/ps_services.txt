@@ -1,0 +1,19 @@
+    1     0     0 root             Sun Nov 15 14:21:19 2026     /sbin/launchd
+  333     1     0 root             Sun Nov 15 14:21:55 2026     /usr/libexec/logd
+  375     1     0 root             Sun Nov 15 14:21:55 2026     /usr/libexec/opendirectoryd
+  409     1   501 testuser          Sun Nov 15 14:21:56 2026     /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow
+  485     1    65 _mdnsresponder   Sun Nov 15 14:21:56 2026     /usr/sbin/mDNSResponder
+  497     1     0 root             Sun Nov 15 14:21:56 2026     /usr/libexec/syspolicyd
+  516     1     0 root             Sun Nov 15 14:21:56 2026     /Library/PrivilegedHelperTools/com.example.thirdparty.helper
+  656     1   501 testuser          Sun Nov 15 14:21:59 2026     /System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter
+  666     1   501 testuser          Sun Nov 15 14:21:59 2026     /System/Library/PrivateFrameworks/IDS.framework/identityservicesd.app/Contents/MacOS/identityservicesd
+  902     1   501 testuser         Sun Nov 15 14:22:06 2026     php-fpm: master process (/opt/homebrew/etc/php-fpm.conf)
+  904     1   501 testuser         Sun Nov 15 14:22:06 2026     /opt/homebrew/opt/redis/bin/redis-server 127.0.0.1:6379
+  905     1   501 testuser         Sun Nov 15 14:22:06 2026     /bin/sh
+ 1068   905   501 testuser         Sun Nov 15 14:22:10 2026     /opt/homebrew/opt/mysql/bin/mysqld
+ 1094   902   501 testuser         Sun Nov 15 14:22:10 2026     php-fpm: pool www
+ 1095   902   501 testuser         Sun Nov 15 14:22:10 2026     php-fpm: pool www
+ 7800     1   501 testuser         Fri Nov 20 21:41:29 2026     /Applications/ExampleApp.app/Contents/MacOS/ExampleApp
+ 7801  7800   501 testuser         Fri Nov 20 21:41:29 2026     /Applications/ExampleApp.app/Contents/MacOS/example-backend
+ 7310  7800   501 testuser         Fri Nov 20 21:41:30 2026     /Applications/ExampleApp.app/Contents/Frameworks/Example Helper (Plugin).app/Contents/MacOS/Example Helper (Plugin)
+95469     1   501 testuser          Sat Nov 21 15:59:05 2026     qemu-system-aarch64

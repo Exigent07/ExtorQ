@@ -1,0 +1,8 @@
+_mbsetupuser             248
+_mdnsresponder           65
+_spotlight               89
+_www                     70
+daemon                   1
+nobody                   -2
+root                     0
+testuser                  501
