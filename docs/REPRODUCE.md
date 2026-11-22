@@ -147,6 +147,34 @@ make lint && make typecheck
 | A detection test times out | Check `uv run extorq-collect status` (outbox=0?) and `docker logs extorq-detector-1`; the bound in the report shows which stage is slow. |
 | Leftovers after an interrupted run | `ls ~/Library/LaunchAgents \| grep extorq.test`; `kubectl --context kind-extorq-lab get pods,clusterrolebindings -A \| grep extorq-test`; on the VM `ls /etc/systemd/system /etc/cron.d \| grep extorq-test`; in the repo `gh api repos/Exigent07/extorq-lab/commits --jq '.[].commit.message'`. |
 
-## 7. Results of the reference run
+## 7. Results of the reference run (2026-11-22/23, clean database)
 
-See the section appended below by the run of 2026-11-22/23.
+The database was cleared first (`make reset-data`, after a verified recovery bundle and pausing the
+OTel collector), then re-baselined: 6 assets, 85 services, all four collectors healthy.
+
+| Run | Command | Result | Wall clock |
+|---|---|---|---|
+| Pure run, full (negative controls included) | `make test-detections` | **22 / 22 passed**, every negative control silent, every cleanup verified | 5 min 12 s |
+| One wave, every positive at once | `make test-detections-instant` | **22 / 22 passed** | **1 min 58 s** |
+
+Time from the attack to the alert being found: median **40-60 s**, 17 of 22 within 60 s; Linux,
+Kubernetes and macOS 40-70 s, GitHub 80-110 s (it polls an external API). Reports:
+`var/reports/detection-tests-20261122T224158Z.*` (pure run) and `...T224722Z.*` (one wave).
+
+Notes for reading the numbers honestly:
+
+* Instant mode skips the negative controls (they need their own quiet window); they are proven by
+  the full run. Run it right after another run and some rules are still inside their open episode,
+  so the new activity *extends* the earlier alert; a positive is accepted only when that alert's
+  **evidence contains this run's own events**, never merely because an alert exists.
+* CORR-002 (the multi-stage correlation) is not part of the concurrent runs: it needs 30 minutes
+  without HTTP probing, so it is run separately with `make test-detections-corr`. It was not
+  executed in this reference run (rule logic is covered by the ClickHouse rule harness).
+* The macOS unit test `test_shipped_config_loads_through_the_sdk` asserts the shipped 60 s
+  intervals and fails while `make fast-on` is active; run `make fast-off` first.
+* GitHub shows **ok** with the warning "broad token accepted by allow_broad_token" in its health
+  details. Free-plan limits (branch protection, rulesets, security_and_analysis) are listed as gaps
+  but do not degrade it.
+* Jev AI triage is on by default. The 300/day cap was reduced to the remaining 172 for the rest of
+  that UTC day because clearing `ai_assessments` also clears the usage counter (128 calls had been
+  made); restore the default with `docker compose --profile full up -d --no-deps ai-worker`.

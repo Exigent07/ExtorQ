@@ -63,32 +63,32 @@ alert's `last_seen`.
 
 ## Results of the reference run
 
-Report: `var/reports/detection-tests-20261122T220138Z.json`. Time from the attack to the alert being found (poll granularity 10 s, fast profile):
+Report: `var/reports/detection-tests-20261122T224722Z.json`. Time from the attack to the alert being found (poll granularity 10 s, fast profile):
 
 | Asset | Rule | Captured after the action |
 |---|---|---|
-| github | GH-001 | 80 s |
-| github | GH-002 | 90 s |
-| github | GH-003 | 90 s |
-| github | GH-004 | 100 s |
-| github | GH-005 | 100 s |
-| k8s | APP-001 | 60 s |
-| k8s | K8S-001 | 60 s |
-| k8s | K8S-002 | 60 s |
-| k8s | K8S-003 | 50 s |
-| k8s | K8S-004 | 50 s |
-| k8s | K8S-005 | 60 s |
-| linux | APP-001 | 60 s |
-| linux | HTTP-001 | 60 s |
-| linux | VM-001 | 60 s |
-| linux | VM-002 | 70 s |
-| linux | VM-003 | 50 s |
-| linux | VM-004 | 50 s |
-| macos | MAC-001 | 50 s |
-| macos | MAC-002 | 50 s |
-| macos | MAC-003 | 60 s |
-| macos | MAC-004 | 50 s |
-| macos | MAC-005 | 50 s |
+| github | GH-001 | 70 s |
+| github | GH-002 | 70 s |
+| github | GH-003 | 60 s |
+| github | GH-004 | 80 s |
+| github | GH-005 | 80 s |
+| k8s | APP-001 | 30 s |
+| k8s | K8S-001 | 30 s |
+| k8s | K8S-002 | 40 s |
+| k8s | K8S-003 | 40 s |
+| k8s | K8S-004 | 40 s |
+| k8s | K8S-005 | 40 s |
+| linux | APP-001 | 30 s |
+| linux | HTTP-001 | 30 s |
+| linux | VM-001 | 30 s |
+| linux | VM-002 | 40 s |
+| linux | VM-003 | 40 s |
+| linux | VM-004 | 40 s |
+| macos | MAC-001 | 40 s |
+| macos | MAC-002 | 40 s |
+| macos | MAC-003 | 40 s |
+| macos | MAC-004 | 30 s |
+| macos | MAC-005 | 90 s |
 
 ## 2. Ubuntu 24.04 VM lab-vm-01 (`linux:lab-vm-01`)
 
