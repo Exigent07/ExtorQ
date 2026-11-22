@@ -32,7 +32,6 @@ from extorq.contracts.common import (
     Severity,
     Sha256Hex,
     ShortStr,
-    SimulationRunId,
     UtcDatetime,
 )
 
@@ -123,7 +122,6 @@ class DetectionAlert(ContractModel):
     evidence_truncated: bool = False
     features: Attributes = Field(default_factory=dict)
     mitre_techniques: list[MitreTechnique] = Field(default_factory=list, max_length=16)
-    simulation_run_ids: list[SimulationRunId] = Field(default_factory=list, max_length=16)
     created_at: UtcDatetime
     updated_at: UtcDatetime
     detector_version: ShortStr

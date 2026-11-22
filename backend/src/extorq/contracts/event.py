@@ -43,7 +43,6 @@ from extorq.contracts.common import (
     Severity,
     Sha256Hex,
     ShortStr,
-    SimulationRunId,
     UtcDatetime,
 )
 from extorq.contracts.service import ServiceRef
@@ -168,14 +167,6 @@ class Provenance(ContractModel):
     redaction_count: int = Field(default=0, ge=0)
 
 
-class SimulationTag(ContractModel):
-    """Set only when the telemetry itself carries an ExtorQ simulation marker
-    (``extorq-sim-<run_id>``). The event remains genuine telemetry."""
-
-    run_id: SimulationRunId
-    scenario_id: ShortStr | None = None
-
-
 class SecurityEvent(ContractModel):
     schema_version: SchemaVersion = SCHEMA_VERSION
     event_id: HexId
@@ -208,7 +199,6 @@ class SecurityEvent(ContractModel):
     #: Sanitized source evidence excerpt (redacted, truncated). Untrusted content.
     raw: LongStr | None = None
     provenance: Provenance
-    simulation: SimulationTag | None = None
 
     @model_validator(mode="after")
     def _bounded_size(self) -> SecurityEvent:

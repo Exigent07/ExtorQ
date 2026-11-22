@@ -34,7 +34,6 @@ from extorq.contracts.health import CollectorHealth
 from extorq.contracts.identity import canonical_json, iso_utc, stable_id
 from extorq.contracts.scan import ScanRun
 from extorq.contracts.service import Service, ServiceInstance
-from extorq.contracts.simulation import SimulationRun
 
 MAX_BATCH_RECORDS = 1000
 MAX_BODY_BYTES = 4 * 1024 * 1024
@@ -50,7 +49,6 @@ class RecordKind(StrEnum):
     FINDING = "finding"
     SCAN_RUN = "scan_run"
     COLLECTOR_HEALTH = "collector_health"
-    SIMULATION_RUN = "simulation_run"
     SERVICE = "service"
     SERVICE_INSTANCE = "service_instance"
 
@@ -85,11 +83,6 @@ class CollectorHealthRecord(ContractModel):
     data: CollectorHealth
 
 
-class SimulationRunRecord(ContractModel):
-    kind: Literal["simulation_run"] = "simulation_run"
-    data: SimulationRun
-
-
 class ServiceRecord(ContractModel):
     kind: Literal["service"] = "service"
     data: Service
@@ -107,7 +100,6 @@ IngestRecord = Annotated[
     | FindingRecord
     | ScanRunRecord
     | CollectorHealthRecord
-    | SimulationRunRecord
     | ServiceRecord
     | ServiceInstanceRecord,
     Field(discriminator="kind"),
@@ -157,8 +149,6 @@ def record_identity(record: IngestRecord) -> str:
         return stable_id("rec.scan.v1", data.scan_run_id, data.status.value, finished)
     if isinstance(data, CollectorHealth):
         return stable_id("rec.health.v1", data.collector_id, iso_utc(data.reported_at))
-    if isinstance(data, SimulationRun):
-        return stable_id("rec.sim.v1", data.run_id, data.status.value)
     if isinstance(data, InventoryItem):
         return stable_id(
             "rec.inv.v1",

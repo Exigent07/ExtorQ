@@ -339,3 +339,56 @@ records stay valid). Lead-owned artefacts (already merged and applied):
 * **Data minimisation:** raw captures from the user's personal Mac (launchd/process/app
   inventories) are not committed; macOS fixtures are reduced to minimal representative
   samples before entering git history (owner B3).
+
+## 12. User decisions (2026-11-22) and the detection-test matrix
+
+**Decisions (binding):**
+1. **No simulation category.** Contract schema **2.0** removed `SimulationTag`/`event.simulation`,
+   `SimulationRun` and the `simulation_run` record kind, `alerts.simulation_run_ids`,
+   `InvestigationContext.simulation_run_ids`, the `simulation_run` relationship basis and the
+   `extorq.simulation` source type. Migration `0008_remove_simulation.sql` drops the storage.
+   Detection tests are **real activity** on the monitored assets, verified by the test runner by
+   asset + rule + time window. No `extorq-sim-*` markers, badges, filters or categories anywhere.
+2. **Jev only.** Gemini is removed everywhere (contracts: `AIProvider.GEMINI`, `AITask.SUMMARY`,
+   summary/validation models; code, API endpoint, UI panel, compose secret, settings, docs).
+3. **No "lab" labels in the product UI** (environment pill, "Security console · Lab", breadcrumb
+   roots, environment badges). Real resource names (hostnames, cluster and repository names) stay.
+4. **Clean-slate verification:** the database is cleared and every asset is re-verified with the
+   matrix below; results go to `docs/testing.md` with exact commands and outcomes.
+5. New catalog types: `github.secret.exposed` (redacted match only), `software.installed`,
+   `software.removed` (macOS).
+
+**Detection-test matrix** (`detection_tests/`, runner `uv run python -m detection_tests run
+--asset <linux|kubernetes|github|macos|all>`, `make test-detections`). Every positive test has a
+negative control that must NOT raise the same rule, and every test cleans up after itself.
+Artefact names are realistic but identifiable for cleanup (prefix `extorq-test-`), never "sim".
+
+| Asset | Rule | Positive (real activity) | Negative control (must not alert that rule) |
+|---|---|---|---|
+| Linux | VM-001 SSH auth failure burst | ≥8 SSH connections from the Mac with commonly guessed users (root, admin, oracle, test, ubuntu) and a throwaway key | 3 successful key logins by the admin user |
+| Linux | VM-002 systemd persistence | as admin+sudo: create `/etc/systemd/system/extorq-test-*.service` (ExecStart=/bin/true), daemon-reload, enable; cleanup | restart an existing unit (state change only) |
+| Linux | **VM-003** local account created | `sudo useradd -M -s /usr/sbin/nologin extorq-test-*`; cleanup `userdel` | create/delete a temp file in /tmp |
+| Linux | **VM-004** cron persistence | `sudo tee /etc/cron.d/extorq-test-*` (harmless `true` job); cleanup | `crontab -l` / read-only cron listing |
+| Linux | HTTP-001 web probing | ≥12 probe-like paths (/.env, /.git/config, /wp-login.php, /phpmyadmin/, /server-status, /admin ...) | 20 normal 2xx requests |
+| Linux | APP-001 web login failures | 6 failed POST /login on the VM web app | 1 failed + 1 successful login |
+| Linux | CORR-002 multi-stage | HTTP-001 → VM-001 → VM-002 tests in order within 30 min | VM-001 test alone |
+| Kubernetes | K8S-001 privileged pod denied | privileged pod into `extorq-restricted` → 403 | compliant pod in `extorq-restricted` (admitted), deleted |
+| Kubernetes | K8S-002 risky RBAC | ClusterRoleBinding of a test SA to `cluster-admin`; cleanup | RoleBinding of a test SA to built-in `view` in one namespace |
+| Kubernetes | **K8S-003** interactive exec into pod | `kubectl exec` into the web app pod running `id` | `kubectl logs` of the same pod |
+| Kubernetes | **K8S-004** cluster-wide secret enumeration | `kubectl get secrets -A` by a human identity | `kubectl get configmap <one>` in one namespace |
+| Kubernetes | **K8S-005** privileged/host-namespace pod admitted | privileged or hostPath pod created (201) in a namespace without PSA enforcement; cleanup | unprivileged pod in the same namespace |
+| Kubernetes | APP-001 (cluster web app) | 6 failed logins via NodePort 127.0.0.1:8089 | successful login |
+| GitHub | GH-001 workflow permission escalation | CI workflow → `permissions: write-all`; revert | change that reduces permissions |
+| GitHub | **GH-002** privileged trigger + untrusted checkout | add `pull_request_target` workflow checking out the PR head; revert | `pull_request` workflow with checkout |
+| GitHub | **GH-003** unpinned third-party action | add a third-party action pinned by tag (e.g. `docker/setup-buildx-action@v3`); revert | same action pinned to a full 40-hex SHA |
+| GitHub | **GH-004** script injection via untrusted context | `run:` interpolating `${{ github.event.issue.title }}`; revert | value passed via `env:` and quoted shell variable |
+| GitHub | **GH-005** credential committed | commit a FAKE credential-shaped string (generated, never real); revert | commit a high-entropy non-credential (e.g. SHA-256 checksum line) |
+| macOS | MAC-001 new launch item | `~/Library/LaunchAgents/com.extorq.test.*.plist` (/usr/bin/true, not loaded); cleanup | create/delete a .txt file there |
+| macOS | **MAC-002** launch item runs a shell/interpreter or user-writable path | plist with `["/bin/sh","-c","/tmp/extorq-test-*"]` (never loaded); cleanup | plist pointing to /usr/bin/true (MAC-001 only) |
+| macOS | **MAC-003** listener exposed on all interfaces by a non-allowlisted process | minimal accept-and-close TCP listener on 0.0.0.0:<high port> for ≤3 cycles | same listener on 127.0.0.1 |
+| macOS | **MAC-004** sudo authentication failure burst | `sudo -k`, then 3× wrong password via `sudo -S -v` (no privilege obtained) | a single failed attempt |
+| macOS | **MAC-005** unsigned application installed | minimal unsigned bundle `/Applications/ExtorQ Test.app` (never executed); cleanup | copy of a signed Apple app bundle; cleanup |
+
+GitHub tests push only to the private disposable repository `Exigent07/extorq-lab` (user-approved
+for detection testing) and revert each change. macOS tests never use sudo successfully, never load
+launch items and never change security settings.

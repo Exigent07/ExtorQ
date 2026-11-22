@@ -39,7 +39,6 @@ from extorq.contracts.common import (
     Severity,
     Sha256Hex,
     ShortStr,
-    SimulationRunId,
     UtcDatetime,
 )
 
@@ -67,7 +66,6 @@ class RelationshipBasis(StrEnum):
     SAME_SERVICE_INSTANCE = "same_service_instance"
     CROSS_SERVICE_SAME_ASSET = "cross_service_same_asset"
     CROSS_ASSET = "cross_asset"
-    SIMULATION_RUN = "simulation_run"
 
 
 class EventSummary(ContractModel):
@@ -174,5 +172,4 @@ class InvestigationContext(ContractModel):
     coverage: list[SourceCoverage] = Field(default_factory=list, max_length=32)
     missing_telemetry: list[MediumStr] = Field(default_factory=list, max_length=32)
     limitations: list[MediumStr] = Field(default_factory=list, max_length=32)
-    simulation_run_ids: list[SimulationRunId] = Field(default_factory=list, max_length=16)
     truncated: dict[ShortStr, bool] = Field(default_factory=dict)

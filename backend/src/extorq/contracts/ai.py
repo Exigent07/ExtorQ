@@ -1,15 +1,13 @@
-"""AIAssessment contracts (schema 1.0).
+"""AIAssessment contracts (schema 2.0).
 
 AI output is advisory, stored separately from alerts, and always traceable to
 the InvestigationContext ``input_hash`` it was computed from.
 
-* Jev (TypeSafe System One) answers *typed, bounded* questions (Noul/Choice/
-  Score). ExtorQ post-processes the probabilities deterministically into a
-  triage recommendation with an explicit INSUFFICIENT_CONTEXT outcome. Jev never
-  changes rule severity, suppresses alerts, or counts events.
-* Gemini produces an evidence-grounded summary. Every statement carries
-  evidence ids; the backend verifies each id against the supplied bundle and
-  marks unknown ids as unverified (they are never shown as verified evidence).
+Jev (TypeSafe System One) is the only AI provider. It answers *typed, bounded*
+questions (Noul/Choice/Score); ExtorQ post-processes the probabilities
+deterministically into a triage recommendation with an explicit
+INSUFFICIENT_CONTEXT outcome. Jev never changes rule severity, suppresses
+alerts, counts events or writes anything except ``ai_assessments``.
 """
 
 from __future__ import annotations
@@ -33,12 +31,10 @@ from extorq.contracts.common import (
 
 class AIProvider(StrEnum):
     JEV = "typesafe-jev"
-    GEMINI = "google-gemini"
 
 
 class AITask(StrEnum):
     TRIAGE = "triage"
-    SUMMARY = "summary"
 
 
 class AIStatus(StrEnum):
@@ -84,45 +80,6 @@ class JevTriageResult(ContractModel):
     question_set_version: ShortStr
 
 
-# ── Gemini summary ───────────────────────────────────────────────────
-
-
-class EvidenceStatement(ContractModel):
-    text: MediumStr
-    evidence_ids: list[ShortStr] = Field(default_factory=list, max_length=32)
-    #: Set by the backend after validation: all cited ids exist in the bundle.
-    verified: bool = False
-    unverified_ids: list[ShortStr] = Field(default_factory=list, max_length=32)
-
-
-class SummaryTimelineItem(ContractModel):
-    time: ShortStr
-    description: MediumStr
-    evidence_ids: list[ShortStr] = Field(default_factory=list, max_length=32)
-    verified: bool = False
-    unverified_ids: list[ShortStr] = Field(default_factory=list, max_length=32)
-
-
-class InvestigationSummary(ContractModel):
-    what_happened: list[EvidenceStatement] = Field(max_length=12)
-    timeline: list[SummaryTimelineItem] = Field(max_length=40)
-    why_rule_fired: EvidenceStatement
-    related_activity: list[EvidenceStatement] = Field(default_factory=list, max_length=12)
-    benign_explanations: list[MediumStr] = Field(default_factory=list, max_length=8)
-    missing_information: list[MediumStr] = Field(default_factory=list, max_length=12)
-    limitations: list[MediumStr] = Field(default_factory=list, max_length=12)
-    recommended_next_steps: list[MediumStr] = Field(default_factory=list, max_length=12)
-    overall_confidence: Literal["low", "medium", "high"]
-
-
-class SummaryValidation(ContractModel):
-    schema_valid: bool
-    evidence_ids_cited: int = Field(ge=0)
-    evidence_ids_verified: int = Field(ge=0)
-    evidence_ids_rejected: int = Field(ge=0)
-    statements_without_evidence: int = Field(ge=0)
-
-
 # ── Assessment record ────────────────────────────────────────────────
 
 
@@ -136,12 +93,10 @@ class AIAssessment(ContractModel):
     #: Versioned model id actually used (e.g. "jev-1.14.0", "gemini-3.6-flash").
     model: ShortStr
     task: AITask
-    #: Question-set or prompt-template version (e.g. "triage-v1", "summary-v1").
+    #: Question-set version (e.g. "triage-v2").
     prompt_version: ShortStr
     status: AIStatus
     triage: JevTriageResult | None = None
-    summary: InvestigationSummary | None = None
-    validation: SummaryValidation | None = None
     latency_ms: int | None = Field(default=None, ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)

@@ -12,12 +12,8 @@ from extorq.contracts.ai import (
     AIProvider,
     AIStatus,
     AITask,
-    EvidenceStatement,
-    InvestigationSummary,
     JevAnswer,
     JevTriageResult,
-    SummaryTimelineItem,
-    SummaryValidation,
     TriageRecommendation,
 )
 from extorq.contracts.alert import (
@@ -78,7 +74,6 @@ from extorq.contracts.event import (
     Provenance,
     Resource,
     SecurityEvent,
-    SimulationTag,
     SourceInfo,
 )
 from extorq.contracts.finding import AcceptedRisk, FindingCategory, PackageRef, PostureFinding
@@ -109,7 +104,6 @@ from extorq.contracts.service import (
     ServiceKind,
     ServiceRef,
 )
-from extorq.contracts.simulation import SimulationRun, SimulationStatus
 
 __all__ = [
     "EVENT_CATALOG",
@@ -144,7 +138,6 @@ __all__ = [
     "EventTypeSpec",
     "EvidenceConfidence",
     "EvidenceRole",
-    "EvidenceStatement",
     "FindingCategory",
     "FindingSummary",
     "GitHubInfo",
@@ -157,7 +150,6 @@ __all__ = [
     "InventoryItem",
     "InventoryItemType",
     "InvestigationContext",
-    "InvestigationSummary",
     "JevAnswer",
     "JevTriageResult",
     "KubernetesInfo",
@@ -195,15 +187,10 @@ __all__ = [
     "ServiceRef",
     "ServiceSummary",
     "Severity",
-    "SimulationRun",
-    "SimulationStatus",
-    "SimulationTag",
     "SkippedCheck",
     "SourceCoverage",
     "SourceInfo",
     "SourceType",
-    "SummaryTimelineItem",
-    "SummaryValidation",
     "TelemetryRequirement",
     "TimelineEntry",
     "TriageRecommendation",

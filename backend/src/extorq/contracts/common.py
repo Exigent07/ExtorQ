@@ -21,10 +21,10 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
-#: 1.1 = additive service-model fields (Service, ServiceInstance, event.service, ...).
-#: 1.0 records remain valid; consumers must tolerate both.
-SCHEMA_VERSION = "1.1"
-SchemaVersion = Annotated[str, StringConstraints(pattern=r"^1\.[01]$")]
+#: 2.0 (2026-11-22): the simulation category and the Gemini summary contracts were
+#: removed (breaking); detection tests now use real activity with no telemetry markers.
+SCHEMA_VERSION = "2.0"
+SchemaVersion = Annotated[str, StringConstraints(pattern=r"^2\.0$")]
 
 
 class ContractModel(BaseModel):
@@ -70,8 +70,6 @@ HexId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 #: Rule identifiers such as ``VM-001``, ``K8S-002``, ``GH-001``, ``CORR-001``.
 RuleId = Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9]{1,15}-[0-9]{3}$")]
-#: Simulation run identifiers (lower-case alphanumerics, 8-32 chars).
-SimulationRunId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9]{8,32}$")]
 #: Dotted event type such as ``auth.ssh.login_failed``.
 EventTypeStr = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,5}$")]
 #: MITRE ATT&CK technique id, e.g. ``T1110`` or ``T1543.002``.
@@ -218,7 +216,6 @@ class CollectionMethod(StrEnum):
     FILE_TAIL = "file_tail"
     OTEL_FILELOG = "otel_filelog"
     SCANNER = "scanner"
-    SIMULATION_CONTROL = "simulation_control"
 
 
 class HealthStatus(StrEnum):

@@ -48,7 +48,6 @@ class SourceType(StrEnum):
     SCANNER_SEMGREP = "scanner.semgrep"
     # ExtorQ itself
     EXTORQ_PIPELINE = "extorq.pipeline"
-    EXTORQ_SIMULATION = "extorq.simulation"
 
 
 S = SourceType
@@ -577,6 +576,44 @@ _SPECS: list[EventTypeSpec] = [
         {S.LINUX_INVENTORY, S.MACOS_INVENTORY},
         "Local account disappeared between inventory snapshots.",
         ("actor.name", "attributes.uid"),
+    ),
+    # ── Detection-test additions (schema 2.0) ────────────────────────
+    _spec(
+        "github.secret.exposed",
+        C.SOURCE_CONTROL,
+        {S.GITHUB_API},
+        "A commit added a credential-shaped string (matched by the redaction patterns). Only the "
+        "pattern name, file, line and a redacted match are stored; never the value.",
+        (
+            "github.repository",
+            "github.commit_sha",
+            "resource.path",
+            "attributes.pattern",
+            "attributes.line",
+            "attributes.redacted_match",
+        ),
+    ),
+    _spec(
+        "software.installed",
+        C.PACKAGE,
+        {S.MACOS_INVENTORY},
+        "Application bundle appeared in an inventoried application directory (snapshot diff), "
+        "with its code-signature status when determinable.",
+        (
+            "resource.path",
+            "resource.name",
+            "attributes.bundle_id",
+            "attributes.version",
+            "attributes.signed",
+            "attributes.signature_team_id",
+        ),
+    ),
+    _spec(
+        "software.removed",
+        C.PACKAGE,
+        {S.MACOS_INVENTORY},
+        "Application bundle no longer present (snapshot diff).",
+        ("resource.path", "resource.name", "attributes.bundle_id"),
     ),
     # ── ExtorQ pipeline ──────────────────────────────────────────────
     _spec(
