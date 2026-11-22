@@ -27,7 +27,9 @@ def token(tmp_path: Path) -> str:
 
 @pytest.fixture
 def settings(tmp_path: Path, token: str) -> ApiSettings:
-    return ApiSettings(service_token_file=tmp_path / "api_service_token")
+    # The response cache is off here so tests may change the fake store between two calls;
+    # test_api_cache.py and test_api_lifecycle.py cover the cache with a TTL.
+    return ApiSettings(service_token_file=tmp_path / "api_service_token", cache_ttl_seconds=0)
 
 
 @pytest.fixture

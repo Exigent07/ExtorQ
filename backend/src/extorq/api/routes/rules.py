@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, Response
 
 from extorq.api import schemas as s
 from extorq.api import service
 from extorq.api.auth import CurrentPrincipal
+from extorq.api.cache import cached
 from extorq.api.errors import NotFound
+from extorq.api.repository import Repository
 from extorq.api.routes.common import (
     MAX_OFFSET,
     MAX_PAGE,
@@ -28,6 +31,8 @@ router = APIRouter(tags=["rules"])
 @router.get("/rules", response_model=s.RuleListResponse, summary="List detection rules")
 def list_rules(
     principal: CurrentPrincipal,
+    request: Request,
+    response: Response,
     repo: Repo,
     clock: Clock,
     limit: Limit = 50,
@@ -36,10 +41,26 @@ def list_rules(
     status: Annotated[RuleStatus | None, Query()] = None,
     enabled: Annotated[bool | None, Query()] = None,
 ) -> s.RuleListResponse:
-    now = now_ms(clock)
+    wanted = tuple(sorted({sev.value for sev in severity or ()}))
+    return cached(
+        request,
+        response,
+        ("rules", limit, offset, wanted, status, enabled),
+        lambda: _list_rules(repo, now_ms(clock), limit, offset, frozenset(wanted), status, enabled),
+    )
+
+
+def _list_rules(
+    repo: Repository,
+    now: datetime,
+    limit: int,
+    offset: int,
+    wanted: frozenset[str],
+    status: RuleStatus | None,
+    enabled: bool | None,
+) -> s.RuleListResponse:
     runs = {str(r["rule_id"]): r for r in repo.rule_latest_runs()}
     counts = {str(r["rule_id"]): r for r in repo.alert_counts_by_rule()}
-    wanted = {sev.value for sev in severity or ()}
     items = [
         service.rule_item(row, runs.get(str(row["rule_id"])), counts.get(str(row["rule_id"])), now)
         for row in repo.rules_latest()
@@ -66,13 +87,30 @@ def list_rules(
 def get_rule(
     rule_id: RuleIdPath,
     principal: CurrentPrincipal,
+    request: Request,
+    response: Response,
     repo: Repo,
     clock: Clock,
     runs_limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 20,
     runs_offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
     run_status: Annotated[RuleRunStatus | None, Query()] = None,
 ) -> s.RuleDetailResponse:
-    now = now_ms(clock)
+    return cached(
+        request,
+        response,
+        ("rule", rule_id, runs_limit, runs_offset, run_status),
+        lambda: _rule_detail(repo, now_ms(clock), rule_id, runs_limit, runs_offset, run_status),
+    )
+
+
+def _rule_detail(
+    repo: Repository,
+    now: datetime,
+    rule_id: str,
+    runs_limit: int,
+    runs_offset: int,
+    run_status: RuleRunStatus | None,
+) -> s.RuleDetailResponse:
     versions = repo.rule_versions(rule_id)
     if not versions:
         raise NotFound("rule not found")

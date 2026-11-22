@@ -29,7 +29,7 @@ project guide is `/AGENTS.md`; telemetry details are in `docs/telemetry/kubernet
 
 | File | Purpose |
 |---|---|
-| `kind.sh` | lifecycle: `up` (create + verify audit flags + deploy), `deploy`, `status`, `down`, `load-images`, `token` (TokenRequest token + read-only kubeconfig, 0600), `netcheck` (pod -> gateway TLS), `audit-check` (policy guarantees on the real log), `kubeconfig` |
+| `kind.sh` | lifecycle: `up` (create + verify audit flags + deploy), `deploy`, `status` (incl. inventory token expiry), `down`, `load-images`, `token` (TokenRequest token, 48 h default, + read-only kubeconfig, 0600), `netcheck` (pod -> gateway TLS), `audit-check` (policy guarantees on the real log), `kubeconfig`. Sourcing it defines functions only (tests: `tests/unit/kubernetes/test_k8s_kind_token.py`) |
 | `cluster.yaml` | kind config (rendered to `var/kind/`): node image digest, kubeadm v1beta4 audit flags (extraArgs is a list of `{name, value}`), policy mount, NodePort 30080 -> 127.0.0.1:8089 |
 | `audit-policy.yaml` | audit policy (rule rationale in docs/telemetry/kubernetes.md) |
 | `audit_check.py` | stdin audit-log checker used by `kind.sh audit-check` (prints counts/violations, never bodies) |
@@ -64,6 +64,18 @@ project guide is `/AGENTS.md`; telemetry details are in `docs/telemetry/kubernet
   the helpers in `otlp_k8s.py` (`workload_service_id`, `k8s_service_service_id`,
   `pod_instance_id`, `container_instance_id`, `node_asset_id`, `canonical_container_id`).
   Changing them breaks the join between OTLP events and inventory records.
+* **Inventory token**: `kind.sh token` mints `extorq-system/extorq-inventory` tokens with the
+  TokenRequest API, default **48 h** (`EXTORQ_K8S_TOKEN_DURATION=<n>h|<n>m`, validated to
+  10 min..168 h before any cluster call), and prints the expiry from the token's `exp`
+  claim, never the token. Re-mint at any time: the running collector reads the token file
+  for every request (and re-reads it once on a 401), so **no runner restart** is needed;
+  it reports `degraded` from 2 h before expiry. Trade-off of the 48 h default: the
+  collector cannot refresh its own token without a token-minting privilege it must not
+  hold, and a shorter lifetime would silently drop inventory, posture and K8S-002 state
+  evidence during a long session; a leaked file grants read-only access to non-secret kinds
+  on a loopback-only API server for at most the remaining lifetime. Revoke early by
+  deleting the ServiceAccount (bound tokens die with its UID), then `kind.sh deploy` and
+  `kind.sh token`. Details: `docs/telemetry/kubernetes.md` section 5.
 * **Accepted risks**: annotate the object with `extorq.io/accepted-risk: <reason>`; the
   posture finding stays visible and is marked accepted. Annotate kubeadm-owned objects
   through `kind.sh annotate_once` (patches only when missing: each patch of a risky binding

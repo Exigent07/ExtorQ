@@ -82,7 +82,7 @@ export async function updateAlertStateAction(
 // ── On-demand Gemini overview ────────────────────────────────────────────────────
 
 export type SummaryActionResult =
-  | { ok: true; assessmentId: string; status: string }
+  | { ok: true; assessmentId: string; status: string; error: string | null }
   | Failure;
 
 export async function requestSummaryAction(alertId: string): Promise<SummaryActionResult> {
@@ -110,7 +110,14 @@ export async function requestSummaryAction(alertId: string): Promise<SummaryActi
     return failure(error);
   }
   revalidatePath(`/investigations/${alertId}`);
-  return { ok: true, assessmentId: result.data.assessment.assessment_id, status: result.data.assessment.status };
+  const { assessment } = result.data;
+  return {
+    ok: true,
+    assessmentId: assessment.assessment_id,
+    status: assessment.status,
+    // The API's refusal / failure reason (budget, cooldown); bounded, rendered as text only.
+    error: assessment.status === "ok" || !assessment.error ? null : assessment.error.slice(0, 300),
+  };
 }
 
 // ── Read-only drill-downs (any signed-in role) ───────────────────────────────────

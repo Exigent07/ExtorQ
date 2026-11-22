@@ -73,7 +73,9 @@ def api(
     path: Path = tmp_path_factory.mktemp("d1") / "token"
     path.write_text(token, encoding="utf-8")
     app = create_app(
-        settings=ApiSettings(service_token_file=path),
+        # Cache off: these tests compare reads around writes; test_api_lifecycle_clickhouse.py
+        # covers the cache with the production TTL.
+        settings=ApiSettings(service_token_file=path, cache_ttl_seconds=0),
         repository=repo,
         integrations=PlatformIntegrations(),
     )
@@ -91,8 +93,8 @@ def _window(ds: Dataset) -> tuple[datetime, datetime]:
 def test_assets_are_deduplicated_and_latest_version_wins(
     repo: ClickHouseRepository, dataset: Dataset
 ) -> None:
-    rows, total = repo.list_assets("", "", 50, 0)
-    assert total == 4  # linux (2 versions), github, k8s cluster, k8s node
+    rows = repo.all_assets()
+    assert len(rows) == 4  # linux (2 versions), github, k8s cluster, k8s node
     linux = next(r for r in rows if r["asset_id"] == dataset.linux)
     assert linux["criticality"] == "high"
     assert linux["last_seen"].tzinfo is not None

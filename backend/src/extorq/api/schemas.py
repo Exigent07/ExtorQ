@@ -77,6 +77,14 @@ class SeverityCounts(ApiModel):
 
 # ── Collectors / coverage ─────────────────────────────────────────────────────────
 
+#: Lifecycle of an asset or a collector at request time (rules: ``docs/api/README.md``).
+#: ``active``; ``stale``: not observed (asset) / no recent success (collector);
+#: ``retired``: no collector reports for the asset any more and it has not been observed
+#: within the retirement window (24 h by default). Retired assets and their collectors are
+#: left out of coverage, KPI and health rollups unless ``include_retired=true``; nothing is
+#: deleted.
+LifecycleState = Literal["active", "stale", "retired"]
+
 
 class CollectorStatus(ApiModel):
     """Latest report of one collector (``v_collector_latest``) plus derived staleness."""
@@ -101,6 +109,14 @@ class CollectorStatus(ApiModel):
     stale_reason: str | None = None
     seconds_since_success: float | None = None
     details: JsonObject = Field(default_factory=dict)
+    #: ``retired`` when the collector reports for a retired asset, or is a self-test whose
+    #: latest report is older than the retirement window; else ``stale`` / ``active``
+    #: (``stale`` mirrors the flag above).
+    lifecycle_state: LifecycleState = "active"
+    #: Pipeline self-test (every source type is an ``extorq.*`` pipeline source, e.g. the
+    #: SDK heartbeat ``sdk-heartbeat-example``): it collects no telemetry of its asset and
+    #: never counts toward the asset's coverage.
+    self_test: bool = False
 
 
 CoverageStatus = Literal["ok", "degraded", "stale", "missing"]
@@ -118,6 +134,9 @@ class AssetClassCoverage(ApiModel):
     assets_without_collector: int
     status: CoverageStatus
     last_event_at: datetime | None = None
+    #: Retired assets of the class. Unless the request sets ``include_retired=true`` they
+    #: are left out of every other count, ``status`` and ``last_event_at``.
+    assets_retired: int = 0
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────────
@@ -628,6 +647,8 @@ class AssetListItem(ApiModel):
     observed_by: str
     #: Collectors covering this asset: its own plus those of an ancestor asset (a
     #: Kubernetes node ``k8s:<cluster>/node/<name>`` is covered by the cluster's collectors).
+    #: Pipeline self-tests (``CollectorStatus.self_test``) are not telemetry coverage and are
+    #: never counted.
     collectors_total: int
     collectors_stale: int
     #: How many of ``collectors_total`` report for an ancestor asset (their ``asset_id``
@@ -636,11 +657,25 @@ class AssetListItem(ApiModel):
     coverage_status: CoverageStatus
     last_event_at: datetime | None = None
     open_alerts: int
+    #: ``active`` | ``stale`` | ``retired`` at request time. ``retired``: no collector
+    #: covering the asset has reported within the retirement window (24 h, or 3 x its
+    #: interval when longer) and the asset was not observed within that window either.
+    #: ``stale``: not observed for longer than the stale threshold (1 h, or 3 x the shortest
+    #: interval of its reporting collectors). Retired assets are never deleted.
+    lifecycle_state: LifecycleState = "active"
+    #: Latest evidence of the asset: the newer of ``last_seen`` (asset record refresh) and
+    #: ``last_event_at``.
+    last_observed_at: datetime | None = None
+    #: API-derived explanation of a ``stale`` / ``retired`` state (``null`` when active).
+    lifecycle_reason: str | None = None
 
 
 class AssetListResponse(ApiModel):
     items: list[AssetListItem]
     page: PageInfo
+    #: Retired assets matching the other filters that were left out because the request
+    #: did not set ``include_retired=true`` (0 when it did).
+    retired_excluded: int = 0
 
 
 class AssetRecord(AssetListItem):
@@ -925,6 +960,8 @@ class IngestSecuritySummary(ApiModel):
 class HealthResponse(ApiModel):
     generated_at: datetime
     storage: StorageHealth
+    #: Collector health reports. Retired collectors (``lifecycle_state = retired``) are only
+    #: listed with ``include_retired=true``; ``collectors_retired`` counts them either way.
     collectors: list[CollectorStatus]
     pipeline: list[PipelineComponentHealth]
     rules: list[RuleHealthItem]
@@ -932,6 +969,7 @@ class HealthResponse(ApiModel):
     ai_configuration_source: str
     ingest: IngestSecuritySummary | None = None
     notes: list[str]
+    collectors_retired: int = 0
 
 
 # ── Time series / overview ────────────────────────────────────────────────────────
@@ -955,6 +993,7 @@ class TimeSeriesResponse(ApiModel):
 
 
 class CollectionHealthSummary(ApiModel):
+    #: Collector counts leave retired collectors out unless ``include_retired=true``.
     collectors_total: int
     collectors_ok: int
     collectors_stale: int
@@ -968,6 +1007,25 @@ class CollectionHealthSummary(ApiModel):
     no_collector_reports: bool
     no_pipeline_reports: bool
     no_rule_runs: bool
+    #: Retired collectors (reporting for a retired asset, or a self-test that stopped).
+    collectors_retired: int = 0
+
+
+class AssetLifecycleSummary(ApiModel):
+    """Lifecycle of the inventory at request time and what the rollups left out."""
+
+    #: Thresholds in force (``EXTORQ_API_ASSET_STALE_SECONDS``,
+    #: ``EXTORQ_API_ASSET_RETIRE_SECONDS``).
+    stale_after_seconds: int
+    retire_after_seconds: int
+    active: int
+    stale: int
+    retired: int
+    #: Retired asset ids (sorted). Unless ``include_retired`` is true they are excluded from
+    #: ``asset_coverage``, ``open_findings``, ``collection_health`` and ``service_coverage``.
+    #: Open alerts are never excluded: silencing an asset must not hide its detections.
+    retired_asset_ids: list[str]
+    include_retired: bool
 
 
 class OverviewResponse(ApiModel):
@@ -980,6 +1038,8 @@ class OverviewResponse(ApiModel):
     recent_important_alerts: list[AlertListItem]
     #: Service coverage across all assets (schema 1.1).
     service_coverage: ServicesSummary
+    #: Asset lifecycle and the retired assets left out of the rollups above.
+    lifecycle: AssetLifecycleSummary
 
 
 class ServiceHealth(ApiModel):

@@ -230,7 +230,7 @@ by the bootstrap-generated users.d file and used only by migrations.
 | `extorq_detect` | service | SELECT telemetry, findings, health, alerts, contexts, services; INSERT alerts, alert_evidence, rule_runs, detection_rules, contexts, relationships, pipeline_health |
 | `extorq_rules_ro` | readonly=1, 60 s, 100k rows | SELECT events, assets, inventory, findings, scan/simulation runs, services |
 | `extorq_ai` | service | SELECT alerts, contexts, relationships, ai_assessments; INSERT ai_assessments, pipeline_health (**no write on alerts**) |
-| `extorq_api_ro` | readonly=2, 30 s, 100k rows, quota | SELECT `extorq.*` |
+| `extorq_api_ro` | readonly=2, 30 s, 100k rows, quota 6000 queries/min (0007) | SELECT `extorq.*` |
 | `extorq_api_writer` | service | INSERT analyst_state, analyst_actions, ai_assessments, contexts, relationships (**no write on alerts**) |
 | `extorq_grafana` | readonly=2, quota | SELECT analytics tables; on `events` every column except `raw` and `payload`; on `ingest_quarantine` every column except `payload_excerpt` |
 
@@ -256,6 +256,7 @@ GRANTs, `CREATE OR REPLACE VIEW`). Migrations are baked into the backend image, 
 | `0004_services` | lead | schema 1.1: `services`, `service_instances`, their views, service columns on events/findings/alerts, grants |
 | `0005_findings_services` | C3 | `v_findings_current` + `service_id` (latest observation wins); SELECT on `v_scan_runs_current` for detect/rules_ro/grafana |
 | `0006_refresh_views` | lead | re-creates `v_alerts` so it exposes `alerts.service_ids` |
+| `0007_api_quota` | A (API-DATA) | `extorq_api_quota` (extorq_api_ro): 1200 -> 6000 queries per minute; errors, result rows, read rows and execution time restated unchanged (ALTER QUOTA replaces every limit of an interval) |
 
-Applied on the live stack: 0001-0006 (`make demo-check` compares the applied list with
-the files).
+Applied on the live stack: 0001-0007 (0007 on 2026-11-22 06:55 UTC; `make demo-check`
+compares the applied list with the files).

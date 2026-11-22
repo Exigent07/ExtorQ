@@ -24,15 +24,28 @@ Each cycle (one ``ctx.emit`` = one atomic outbox + snapshot commit):
 6. Posture scan -> ScanRun + PostureFindings (``extorq-posture-k8s``).
 
 Service, instance and inventory records are re-sent in full every
-``refresh_seconds`` so that a lost or quarantined record heals and ``last_seen``
-stays meaningful.
+``refresh_seconds`` (and on the first cycle after the collector starts) so that a lost
+or quarantined record heals and ``last_seen`` / ``observed_at`` stay meaningful.
+
+Instance refresh and the gateway's dedup (D1-IC-8): the gateway deduplicates
+ServiceInstances on identity + content WITHOUT ``observed_at`` for 7 days
+(``contracts.ingest.record_identity``), so a re-sent but otherwise unchanged instance
+would be dropped as a duplicate and its stored ``observed_at`` would never advance (and
+an instance whose state flaps back to an earlier content would keep the intermediate
+state). Every emitted instance record therefore carries ``attributes.snapshot_id``, the
+inventory snapshot (collection cycle) that sent it: each emission is a distinct record,
+while the instance identity (``instance_id``) and the snapshot diff (which excludes
+``observed_at`` and the marker) stay stable.
+
+The inventory token is read from its file for every API request (a re-mint needs no
+restart); a token that expires within ``token_warn_seconds`` marks the cycle degraded.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -84,10 +97,12 @@ from extorq_collectors.kubernetes.model import (
 from extorq_collectors.kubernetes.posture import DEFAULT_EXCLUDED_NAMESPACES, run_posture_scan
 from extorq_collectors.sdk import Collector, CollectorContext, asset_upsert
 
-COLLECTOR_VERSION = "1.0.0"
+COLLECTOR_VERSION = "1.1.0"
 FIRST_SEEN_KV = "k8s.service_first_seen"
 REFRESH_KV = "k8s.last_full_refresh"
 EVENTS_OK_KV = "k8s.events_last_success"
+#: Instance attribute naming the inventory snapshot (cycle) that emitted the record.
+SNAPSHOT_ATTRIBUTE = "snapshot_id"
 
 
 class KubernetesSettings(BaseModel):
@@ -101,6 +116,8 @@ class KubernetesSettings(BaseModel):
     refresh_seconds: int = Field(default=900, ge=60, le=86400)
     event_ttl_seconds: int = Field(default=3600, ge=300, le=86400)
     max_events_per_cycle: int = Field(default=2000, ge=10, le=20000)
+    #: A token expiring sooner than this marks the cycle degraded (0 disables the warning).
+    token_warn_seconds: int = Field(default=7200, ge=0, le=7 * 86400)
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> KubernetesSettings:
@@ -126,6 +143,7 @@ class CycleState:
     version: dict[str, Any] | None = None
     relists: int = 0
     retries: int = 0
+    token_reloads: int = 0
 
 
 class KubernetesInventoryCollector(Collector):
@@ -139,6 +157,9 @@ class KubernetesInventoryCollector(Collector):
         #: Test seams: an httpx.MockTransport and an explicit kubeconfig path.
         self._transport = transport
         self._kubeconfig_path = kubeconfig_path
+        #: The first cycle of every process is a full refresh (heals whatever was lost
+        #: while the collector was down, e.g. across a redeploy).
+        self._refreshed_since_start = False
 
     # ── lifecycle ─────────────────────────────────────────────────────
 
@@ -181,6 +202,7 @@ class KubernetesInventoryCollector(Collector):
                 state.events_error = clean(str(exc), 300) or "error"
             state.relists = client.stats.relists
             state.retries = client.stats.retries
+            state.token_reloads = client.stats.token_reloads
         if not state.lists:
             reasons = "; ".join(f"{k}: {v}" for k, v in list(state.failed.items())[:4])
             raise KubernetesCollectorError(f"no resource kind could be listed ({reasons})")
@@ -306,7 +328,7 @@ class KubernetesInventoryCollector(Collector):
         # 2. service hierarchy
         if hierarchy_ok:
             records.extend(self._services(ctx, hierarchy, now, refresh_due, details))
-            records.extend(self._instances(ctx, hierarchy, now, refresh_due, details))
+            records.extend(self._instances(ctx, hierarchy, now, refresh_due, snapshot_id, details))
             ctx.state.set(
                 FIRST_SEEN_KV,
                 {sid: first_seen_map[sid] for sid in hierarchy.services if sid in first_seen_map},
@@ -348,7 +370,9 @@ class KubernetesInventoryCollector(Collector):
         ctx.emit(records, {"k8s.last_cycle": now.isoformat()})
         if refresh_due:
             ctx.state.set(REFRESH_KV, now.isoformat())
+            self._refreshed_since_start = True
         expiry = token_expiry(conn.token_file)
+        token_left = int((expiry - now).total_seconds()) if expiry else None
         details.update(
             {
                 "kinds_listed": len(fetched.lists),
@@ -359,7 +383,9 @@ class KubernetesInventoryCollector(Collector):
                 "objects_skipped": skipped,
                 "records_emitted": len(records),
                 "full_refresh": refresh_due,
-                "token_expires_in_seconds": int((expiry - now).total_seconds()) if expiry else None,
+                "token_expires_in_seconds": token_left,
+                "token_expires_at": expiry.isoformat() if expiry else None,
+                "token_reloads": fetched.token_reloads or None,
                 "k8s_version": clean(as_dict(fetched.version).get("gitVersion"), 64),
                 "notes": hierarchy.notes[:8],
                 # The OTel path reports no CollectorHealth of its own: expose the agent's state.
@@ -375,15 +401,19 @@ class KubernetesInventoryCollector(Collector):
         )
         ctx.health_details = {k: v for k, v in details.items() if v is not None}
         ctx.checkpoint_summary = f"last_cycle={now.isoformat(timespec='seconds')}"
-        if expiry is not None and expiry - now < timedelta(hours=2):
-            ctx.log.warning(
-                "k8s_inventory_token_expiring", seconds_left=int((expiry - now).total_seconds())
+        if token_left is not None and token_left < cfg.token_warn_seconds:
+            # Visible before it fails: a 401 would fail every cycle until a re-mint.
+            ctx.log.warning("k8s_inventory_token_expiring", seconds_left=token_left)
+            ctx.mark_degraded(
+                f"inventory token expires in {max(token_left, 0) // 60} min: "
+                "re-mint with infra/kind/kind.sh token (picked up without a restart)"
             )
 
     # ── helpers ───────────────────────────────────────────────────────
 
-    @staticmethod
-    def _refresh_due(ctx: CollectorContext, cfg: KubernetesSettings, now: datetime) -> bool:
+    def _refresh_due(self, ctx: CollectorContext, cfg: KubernetesSettings, now: datetime) -> bool:
+        if not self._refreshed_since_start:
+            return True
         last = ctx.state.get(REFRESH_KV)
         if not isinstance(last, str):
             return True
@@ -468,26 +498,41 @@ class KubernetesInventoryCollector(Collector):
         hierarchy: Hierarchy,
         now: datetime,
         refresh_due: bool,
+        snapshot_id: str,
         details: dict[str, Any],
     ) -> list[BaseModel]:
+        """Pod/container instances: changed ones every cycle, all on a refresh, tombstones.
+
+        The snapshot items exclude ``observed_at`` (and never contain the snapshot marker),
+        so only genuine changes count as changes; every emitted record carries
+        ``attributes.snapshot_id`` so that the gateway's content-based dedup lets each
+        emission through (module docstring, D1-IC-8).
+        """
         out: list[BaseModel] = []
         items = {
             iid: inst.model_dump(mode="json", exclude={"observed_at"})
             for iid, inst in hierarchy.instances.items()
         }
         diff = ctx.diff_snapshot("instances", items)
+        refreshed = 0
         for iid, inst in hierarchy.instances.items():
             if iid in diff.added or iid in diff.changed or refresh_due:
-                out.append(inst)
+                record = _stamped(inst.model_dump(mode="json"), snapshot_id)
+                if record is not None:
+                    out.append(record)
+                    refreshed += 1
+        tombstones = 0
         for _iid, stored in diff.removed.items():
-            try:
-                out.append(
-                    ServiceInstance.model_validate({**stored, "observed_at": now, "present": False})
-                )
-            except ValidationError:
-                continue
+            record = _stamped(
+                {**stored, "observed_at": now.isoformat(), "present": False}, snapshot_id
+            )
+            if record is not None:
+                out.append(record)
+                tombstones += 1
         details["instances"] = len(hierarchy.instances)
         details["instances_changed"] = len(diff.added) + len(diff.changed) + len(diff.removed)
+        details["instances_sent"] = refreshed
+        details["instances_removed"] = tombstones
         return out
 
     @staticmethod
@@ -644,6 +689,19 @@ def _count(values: Any) -> dict[str, int]:
     for value in values:
         counts[value] = counts.get(value, 0) + 1
     return counts
+
+
+def _stamped(data: Mapping[str, Any], snapshot_id: str) -> ServiceInstance | None:
+    """A ServiceInstance from ``data`` tagged with the snapshot (cycle) that emits it.
+
+    ``None`` when the data no longer validates (e.g. a stored snapshot item written by an
+    older version): such an item is skipped rather than failing the whole cycle.
+    """
+    attributes = {**as_dict(data.get("attributes")), SNAPSHOT_ATTRIBUTE: snapshot_id}
+    try:
+        return ServiceInstance.model_validate({**data, "attributes": attributes})
+    except ValidationError:
+        return None
 
 
 def _service_event(

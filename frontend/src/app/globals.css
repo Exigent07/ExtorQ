@@ -2,21 +2,23 @@
 @import "tw-animate-css";
 
 /*
- * ExtorQ Security Console design tokens.
+ * ExtorQ Security Console theme (dark only). Full specification: frontend/DESIGN.md.
  *
- * Style: "data terminal" on graphite. Dark only. Panels sit one step darker than the
- * ground; separation is a 1px line; colour is reserved for data (severity, health) and
- * the only selection mark is a 1px ink line. Contrast of every text tier was measured
- * against ground, surface and raised fills (>= 4.5:1; see frontend/AGENTS.md).
+ * - Neutral near-black canvas (zinc-950 family), a sidebar half a step lifted, cards one
+ *   step lifted with a 1px hairline and a faint top highlight. Radius 12px cards, 8px controls.
+ * - ONE brand accent (indigo-violet, --brand) for primary actions, the active nav item, focus
+ *   rings and chart series 1. Everything else is neutral; colour carries meaning only
+ *   (severity, health, coverage).
+ * - Text tiers measured against canvas, sidebar, card, raised and popover fills (all >= 4.5:1):
+ *   foreground 17-19:1, secondary 8-9:1, muted 5.2-5.9:1.
  *
- * Components use the semantic shadcn names (background, card, muted-foreground, ...)
- * or the ExtorQ utilities below (bg-surface, text-sev-high, border-rule, ...).
- * Never hard-code a hex value in a component.
+ * Components use the shadcn semantic names (bg-card, text-muted-foreground, ...) or the ExtorQ
+ * utilities below (text-sev-high, bg-health-ok, ...). Never hard-code a colour in a component.
  */
 
 @custom-variant dark (&:is(.dark *));
 
-/* ── Variants used by the generated shadcn/ui components (ejected from shadcn 4.23) ── */
+/* ── Variants used by the generated shadcn/ui components (radix-nova, shadcn 4.23) ── */
 @custom-variant data-open {
   &:where([data-state="open"]),
   &:where([data-open]:not([data-open="false"])) {
@@ -81,86 +83,97 @@
 :root {
   color-scheme: dark;
 
-  /* Surfaces */
-  --xq-ground: #171719;
-  --xq-surface: #131217;
-  --xq-raised: #212023;
-  --xq-overlay: #1c1b1f;
-  /* Lines: panel edge, row rule, control outline */
-  --xq-border: #26252a;
-  --xq-rule: #1e1d22;
-  --xq-control: #3a3a3e;
-  /* Text tiers: 16.9 / 9.0 / 5.8 : 1 on the panel surface */
-  --xq-text: #f4f4f5;
-  --xq-text-2: #b4b4b8;
-  --xq-muted: #8d8f95;
-  /* The one selection mark (data-terminal): a 1px ink line */
-  --xq-line: #f4f4f5;
+  /* Surfaces (elevation by lightness) */
+  --xq-canvas: #09090b;
+  --xq-sidebar: #0c0c0f;
+  --xq-card: #111113;
+  --xq-raised: #18181b;
+  --xq-popover: #151518;
+  --xq-hover: rgb(255 255 255 / 0.04);
+  --xq-active: rgb(255 255 255 / 0.07);
 
-  /* Severity: ink on its own dark tint (pills), or as a 6px mark */
-  --xq-sev-critical: #f0607a;
-  --xq-sev-critical-bg: #2c1a20;
-  --xq-sev-high: #ef8f4a;
-  --xq-sev-high-bg: #2b1f16;
-  --xq-sev-medium: #dcae4f;
-  --xq-sev-medium-bg: #29231a;
-  --xq-sev-low: #6ea8dc;
-  --xq-sev-low-bg: #18222e;
-  --xq-sev-info: #a0a2a8;
-  --xq-sev-info-bg: #212023;
+  /* Hairlines */
+  --xq-hairline: rgb(255 255 255 / 0.07);
+  --xq-hairline-soft: rgb(255 255 255 / 0.05);
+  --xq-hairline-strong: rgb(255 255 255 / 0.11);
+  --xq-highlight: rgb(255 255 255 / 0.04);
 
-  /* Health / state */
-  --xq-ok: #4fb38f;
-  --xq-ok-bg: #18261f;
-  --xq-warn: #dcae4f;
-  --xq-warn-bg: #29231a;
-  --xq-bad: #f0607a;
-  --xq-bad-bg: #2c1a20;
-  --xq-off: #8d8f95;
-  --xq-off-bg: #212023;
+  /* Text tiers */
+  --xq-fg: #fafafa;
+  --xq-fg-2: #b1b1b9;
+  --xq-fg-muted: #8b8b94;
+  --xq-fg-faint: #6b6b74; /* decoration only (icons, separators): never for words */
+
+  /* Brand accent: marks, focus, chart series 1 (6.0:1 on canvas) */
+  --xq-brand: oklch(0.66 0.19 280);
+  --xq-brand-strong: oklch(0.555 0.21 280); /* button fill: white label 5.1:1 */
+  --xq-brand-hover: oklch(0.585 0.2 280); /* white label 4.5:1 */
+  --xq-brand-soft: oklch(0.66 0.19 280 / 0.12);
+  --xq-brand-ring: oklch(0.66 0.19 280 / 0.55);
+
+  /* Severity: 400-shade ink, 12% tint, 24% ring */
+  --xq-sev-critical: oklch(0.704 0.191 22.216);
+  --xq-sev-high: oklch(0.75 0.183 55.934);
+  --xq-sev-medium: oklch(0.828 0.189 84.429);
+  --xq-sev-low: oklch(0.707 0.165 254.624);
+  --xq-sev-info: oklch(0.705 0.015 286.067);
+
+  /* Health */
+  --xq-ok: oklch(0.765 0.177 163.223);
+  --xq-warn: oklch(0.828 0.189 84.429);
+  --xq-bad: oklch(0.704 0.191 22.216);
+  --xq-off: oklch(0.552 0.016 285.938);
+
+  /* Service coverage (stacked visuals) */
+  --xq-cov-monitored: var(--xq-ok);
+  --xq-cov-degraded: var(--xq-warn);
+  --xq-cov-unmonitored: oklch(0.75 0.183 55.934);
+  --xq-cov-planned: oklch(0.552 0.016 285.938);
+  --xq-cov-unsupported: oklch(0.37 0.013 285.805);
 
   /* Charts */
-  --xq-grid: #2a292e;
+  --xq-grid: rgb(255 255 255 / 0.06);
+  --xq-axis: #8b8b94;
 
   /* Layout */
-  --xq-rail: 56px;
-  --xq-gap: 24px;
-  --xq-pad: 32px;
-  --xq-row: 42px;
+  --xq-gutter: 2rem;
+  --xq-topbar: 3.5rem;
+  --xq-row: 2.75rem;
+  --xq-rail: 3rem;
 
-  /* shadcn/ui semantic mapping */
-  --radius: 0.375rem;
-  --background: var(--xq-ground);
-  --foreground: var(--xq-text);
-  --card: var(--xq-surface);
-  --card-foreground: var(--xq-text);
-  --popover: var(--xq-overlay);
-  --popover-foreground: var(--xq-text);
-  --primary: var(--xq-text);
-  --primary-foreground: var(--xq-surface);
+  /* ── shadcn/ui semantic mapping ── */
+  --radius: 0.5rem;
+  --background: var(--xq-canvas);
+  --foreground: var(--xq-fg);
+  --card: var(--xq-card);
+  --card-foreground: var(--xq-fg);
+  --popover: var(--xq-popover);
+  --popover-foreground: var(--xq-fg);
+  --primary: var(--xq-brand-strong);
+  --primary-foreground: #ffffff;
   --secondary: var(--xq-raised);
-  --secondary-foreground: var(--xq-text);
+  --secondary-foreground: var(--xq-fg);
   --muted: var(--xq-raised);
-  --muted-foreground: var(--xq-muted);
-  --accent: var(--xq-raised);
-  --accent-foreground: var(--xq-text);
+  --muted-foreground: var(--xq-fg-muted);
+  --accent: var(--xq-active);
+  --accent-foreground: var(--xq-fg);
   --destructive: var(--xq-bad);
-  --border: var(--xq-border);
-  --input: var(--xq-control);
-  --ring: #a8a8ae;
-  --chart-1: var(--xq-text);
-  --chart-2: var(--xq-text-2);
-  --chart-3: var(--xq-muted);
-  --chart-4: var(--xq-control);
-  --chart-5: var(--xq-raised);
-  --sidebar: var(--xq-ground);
-  --sidebar-foreground: var(--xq-text);
-  --sidebar-primary: var(--xq-text);
-  --sidebar-primary-foreground: var(--xq-surface);
-  --sidebar-accent: var(--xq-raised);
-  --sidebar-accent-foreground: var(--xq-text);
-  --sidebar-border: var(--xq-border);
-  --sidebar-ring: var(--ring);
+  --border: var(--xq-hairline);
+  --input: var(--xq-hairline-strong);
+  --ring: var(--xq-brand);
+  --chart-1: var(--xq-brand);
+  --chart-2: oklch(0.78 0.11 280);
+  --chart-3: oklch(0.52 0.17 280);
+  --chart-4: oklch(0.705 0.015 286.067);
+  --chart-5: oklch(0.442 0.017 285.786);
+  --sidebar: var(--xq-sidebar);
+  --sidebar-foreground: var(--xq-fg-2);
+  --sidebar-primary: var(--xq-brand);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--xq-active);
+  --sidebar-accent-foreground: var(--xq-fg);
+  --sidebar-border: var(--xq-hairline-soft);
+  --sidebar-ring: var(--xq-brand);
 }
 
 /* ── Tailwind theme ─────────────────────────────────────────────────────────── */
@@ -169,53 +182,63 @@
   --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", monospace;
   --font-heading: var(--font-sans);
 
-  /* Type scale (dense): 11 / 12 / 13 body / 14 / 16 card titles / 20 sections / 26 title */
-  --text-2xs: 0.6875rem;
-  --text-2xs--line-height: 1rem;
+  /* Type scale 12 / 13 / 14 / 16 / 20 / 24 / 30. Nothing smaller than 12px. */
   --text-xs: 0.75rem;
   --text-xs--line-height: 1rem;
   --text-sm: 0.8125rem;
   --text-sm--line-height: 1.25rem;
   --text-base: 0.875rem;
-  --text-base--line-height: 1.375rem;
+  --text-base--line-height: 1.25rem;
   --text-lg: 1rem;
   --text-lg--line-height: 1.5rem;
   --text-xl: 1.25rem;
   --text-xl--line-height: 1.75rem;
-  --text-2xl: 1.625rem;
+  --text-2xl: 1.5rem;
   --text-2xl--line-height: 2rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
 
-  --color-ground: var(--xq-ground);
-  --color-surface: var(--xq-surface);
+  /* Elevation */
+  --shadow-card: inset 0 1px 0 0 var(--xq-highlight), 0 1px 2px 0 rgb(0 0 0 / 0.35);
+  --shadow-float: 0 0 0 1px rgb(255 255 255 / 0.08), 0 12px 32px -8px rgb(0 0 0 / 0.7), 0 4px 12px -4px rgb(0 0 0 / 0.5);
+
+  /* Motion */
+  --ease-snappy: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ExtorQ semantic colours */
+  --color-brand: var(--xq-brand);
+  --color-brand-strong: var(--xq-brand-strong);
+  --color-brand-hover: var(--xq-brand-hover);
+  --color-brand-soft: var(--xq-brand-soft);
+  --color-canvas: var(--xq-canvas);
   --color-raised: var(--xq-raised);
-  --color-overlay: var(--xq-overlay);
-  --color-rule: var(--xq-rule);
-  --color-control: var(--xq-control);
-  --color-ink: var(--xq-text);
-  --color-ink-2: var(--xq-text-2);
-  --color-line: var(--xq-line);
+  --color-hover: var(--xq-hover);
+  --color-active: var(--xq-active);
+  --color-hairline: var(--xq-hairline);
+  --color-hairline-soft: var(--xq-hairline-soft);
+  --color-hairline-strong: var(--xq-hairline-strong);
+  --color-fg-2: var(--xq-fg-2);
+  --color-fg-faint: var(--xq-fg-faint);
   --color-grid: var(--xq-grid);
 
   --color-sev-critical: var(--xq-sev-critical);
-  --color-sev-critical-bg: var(--xq-sev-critical-bg);
   --color-sev-high: var(--xq-sev-high);
-  --color-sev-high-bg: var(--xq-sev-high-bg);
   --color-sev-medium: var(--xq-sev-medium);
-  --color-sev-medium-bg: var(--xq-sev-medium-bg);
   --color-sev-low: var(--xq-sev-low);
-  --color-sev-low-bg: var(--xq-sev-low-bg);
   --color-sev-info: var(--xq-sev-info);
-  --color-sev-info-bg: var(--xq-sev-info-bg);
 
-  --color-ok: var(--xq-ok);
-  --color-ok-bg: var(--xq-ok-bg);
-  --color-warn: var(--xq-warn);
-  --color-warn-bg: var(--xq-warn-bg);
-  --color-bad: var(--xq-bad);
-  --color-bad-bg: var(--xq-bad-bg);
-  --color-off: var(--xq-off);
-  --color-off-bg: var(--xq-off-bg);
+  --color-health-ok: var(--xq-ok);
+  --color-health-warn: var(--xq-warn);
+  --color-health-bad: var(--xq-bad);
+  --color-health-off: var(--xq-off);
 
+  --color-cov-monitored: var(--xq-cov-monitored);
+  --color-cov-degraded: var(--xq-cov-degraded);
+  --color-cov-unmonitored: var(--xq-cov-unmonitored);
+  --color-cov-planned: var(--xq-cov-planned);
+  --color-cov-unsupported: var(--xq-cov-unsupported);
+
+  /* shadcn semantic colours */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -248,10 +271,12 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --radius-sm: calc(var(--radius) * 0.66);
-  --radius-md: var(--radius);
+  /* Radii: 8px controls (rounded-lg), 12px cards (rounded-xl) */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.33);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
 
   @keyframes accordion-down {
     from {
@@ -279,33 +304,51 @@
   html {
     @apply bg-background font-sans;
     -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
   }
   body {
-    @apply bg-background text-sm text-foreground antialiased;
+    @apply bg-background text-base text-foreground antialiased;
     min-height: 100dvh;
+    font-feature-settings: "ss01" 0;
   }
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
   ::selection {
-    background: var(--xq-control);
-    color: var(--xq-text);
+    background: var(--xq-brand-soft);
+    color: var(--xq-fg);
   }
-  /* Figures stack: tabular digits everywhere a number can update or align. */
+  /* Figures: tabular digits wherever a number can update or align. */
   table,
   .num {
     font-variant-numeric: tabular-nums;
   }
+  /* Radix ScrollArea also injects this rule (with the CSP nonce); kept here so the native
+     scrollbar stays hidden even if a viewport renders before the nonce is known. */
+  [data-radix-scroll-area-viewport] {
+    scrollbar-width: none;
+  }
+  [data-radix-scroll-area-viewport]::-webkit-scrollbar {
+    display: none;
+  }
 }
 
-/* Evidence rows targeted from an AI statement chip or the timeline: the one selection mark. */
 @layer components {
+  /* Evidence rows targeted from an AI statement chip or the timeline. */
   .evidence-row:target,
   .evidence-row:focus-visible {
     background: var(--xq-raised);
-    box-shadow: inset 2px 0 0 var(--xq-line);
+    box-shadow: inset 2px 0 0 var(--xq-brand);
     outline: none;
+  }
+
+  /* Login backdrop: the one decorative gradient in the console (a faint brand glow). */
+  .login-backdrop {
+    background:
+      radial-gradient(60rem 32rem at 50% -8rem, oklch(0.66 0.19 280 / 0.13), transparent 70%),
+      radial-gradient(40rem 24rem at 50% 110%, oklch(0.66 0.19 280 / 0.05), transparent 70%),
+      var(--xq-canvas);
   }
 }
 

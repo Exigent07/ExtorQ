@@ -1,7 +1,9 @@
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 
+import { NonceProvider } from "@/components/console/nonce";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 import "./globals.css";
@@ -20,15 +22,19 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#171719",
+  themeColor: "#09090b",
   colorScheme: "dark",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // Set by src/proxy.ts for this request; library <style> elements must carry it (CSP).
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="en" className={`dark ${GeistSans.variable} ${GeistMono.variable}`}>
       <body>
-        <TooltipProvider>{children}</TooltipProvider>
+        <NonceProvider nonce={nonce}>
+          <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
+        </NonceProvider>
       </body>
     </html>
   );

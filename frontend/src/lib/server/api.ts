@@ -44,20 +44,33 @@ function invalidId<T>(what: string): ApiResult<T> {
   };
 }
 
-export function getOverview(session: Session) {
+/**
+ * Retired assets (and their collectors) are left out of lists and rollups by the API unless
+ * `include_retired=true`; they are never deleted. Views say how many were left out.
+ */
+export interface LifecycleOptions {
+  includeRetired?: boolean;
+}
+
+function retiredQuery(options: LifecycleOptions): "true" | undefined {
+  return options.includeRetired ? "true" : undefined;
+}
+
+export function getOverview(session: Session, options: LifecycleOptions = {}) {
   return apiRequest(session, zOverviewResponse, {
     method: "GET",
     path: "/api/v1/overview",
     route: "/api/v1/overview",
+    query: { include_retired: retiredQuery(options) },
   });
 }
 
-export function listAssets(session: Session) {
+export function listAssets(session: Session, options: LifecycleOptions = {}) {
   return apiRequest(session, zAssetListResponse, {
     method: "GET",
     path: "/api/v1/assets",
     route: "/api/v1/assets",
-    query: { limit: 200 },
+    query: { limit: 200, include_retired: retiredQuery(options) },
   });
 }
 
@@ -193,11 +206,12 @@ export function getEvent(session: Session, eventId: string) {
   });
 }
 
-export function getHealth(session: Session) {
+export function getHealth(session: Session, options: LifecycleOptions = {}) {
   return apiRequest(session, zHealthResponse, {
     method: "GET",
     path: "/api/v1/health",
     route: "/api/v1/health",
+    query: { include_retired: retiredQuery(options) },
   });
 }
 

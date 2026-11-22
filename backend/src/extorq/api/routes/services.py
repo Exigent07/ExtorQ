@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, Path, Query, Request, Response
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
 from starlette.routing import Match
@@ -34,6 +34,7 @@ from starlette.types import Scope
 from extorq.api import schemas as s
 from extorq.api import service
 from extorq.api.auth import CurrentPrincipal
+from extorq.api.cache import cached
 from extorq.api.errors import ApiError, NotFound
 from extorq.api.logs import get_logger
 from extorq.api.repository import (
@@ -176,6 +177,11 @@ def hosted_services(
     ``asset_id`` and whose stored id matches its natural key, so a producer of another asset
     cannot attach instances to a service it does not own (F-19).
     """
+    if "/" not in asset_id:
+        # Ancestors are "/"-prefixes of an asset id (``is_ancestor_asset``): an id without
+        # "/" (a host, a cluster, an account) has none, and every instance on it belongs to
+        # one of its own services (listed in ``items``). No query needed.
+        return [], False
     rows = repo.instances_on_asset(asset_id, HOSTED_INSTANCES_LIMIT + 1)
     truncated = len(rows) > HOSTED_INSTANCES_LIMIT
     by_service: dict[str, list[Row]] = {}
@@ -184,16 +190,16 @@ def hosted_services(
     if not by_service:
         return [], truncated
     owners: dict[str, Row] = {}
+    own: set[str] = set()
     for row in repo.services_by_id(sorted(by_service), 4 * len(by_service) + 10):
         sid = str(row["service_id"])
-        if (
-            sid in by_service
-            and sid not in owners
-            and service.is_ancestor_asset(str(row["asset_id"]), asset_id)
-            and identity_matches(row)
-        ):
+        if sid not in by_service or not identity_matches(row):
+            continue
+        if str(row["asset_id"]) == asset_id:
+            own.add(sid)  # the asset's own service: not hosted, not ownerless
+        elif sid not in owners and service.is_ancestor_asset(str(row["asset_id"]), asset_id):
             owners[sid] = row
-    skipped = len(by_service) - len(owners)
+    skipped = len(set(by_service) - set(owners) - own)
     if skipped:
         log.warning("hosted_instances_without_owner", asset_id=asset_id, services=skipped)
     hosted: list[s.HostedService] = []
@@ -267,6 +273,8 @@ IncludeRemovedQuery = Annotated[
 def list_asset_services(
     asset_id: AssetIdPath,
     principal: CurrentPrincipal,
+    request: Request,
+    response: Response,
     repo: Repo,
     settings: Settings,
     clock: Clock,
@@ -279,8 +287,6 @@ def list_asset_services(
     coverage: CoverageQuery = None,
     include_removed: IncludeRemovedQuery = False,
 ) -> s.AssetServicesResponse:
-    now = now_ms(clock)
-    asset_row = repo.get_asset(asset_id)
     filters = ServiceFilters(
         asset_id=asset_id,
         service_kind=kind.value if kind else "",
@@ -288,6 +294,36 @@ def list_asset_services(
         adapter_support=adapter_support.value if adapter_support else "",
         monitoring_status=monitoring_status.value if monitoring_status else "",
     )
+    return cached(
+        request,
+        response,
+        ("asset_services", filters, limit, offset, coverage, include_removed),
+        lambda: _asset_services(
+            repo,
+            settings,
+            now_ms(clock),
+            filters,
+            limit=limit,
+            offset=offset,
+            coverage=coverage,
+            include_removed=include_removed,
+        ),
+    )
+
+
+def _asset_services(
+    repo: Repository,
+    settings: ApiSettings,
+    now: datetime,
+    filters: ServiceFilters,
+    *,
+    limit: int,
+    offset: int,
+    coverage: CoverageFilter | None,
+    include_removed: bool,
+) -> s.AssetServicesResponse:
+    asset_id = filters.asset_id
+    asset_row = repo.get_asset(asset_id)
     evaluator = service_evaluator(repo, settings, now)
     scope = evaluate_scope(repo, evaluator, filters)
     hosted, hosted_truncated = hosted_services(repo, evaluator, asset_id)
@@ -316,6 +352,8 @@ def list_asset_services(
 )
 def list_services(
     principal: CurrentPrincipal,
+    request: Request,
+    response: Response,
     repo: Repo,
     settings: Settings,
     clock: Clock,
@@ -329,7 +367,6 @@ def list_services(
     coverage: CoverageQuery = None,
     include_removed: IncludeRemovedQuery = False,
 ) -> s.ServiceListResponse:
-    now = now_ms(clock)
     filters = ServiceFilters(
         asset_id=asset_id or "",
         service_kind=kind.value if kind else "",
@@ -337,6 +374,34 @@ def list_services(
         adapter_support=adapter_support.value if adapter_support else "",
         monitoring_status=monitoring_status.value if monitoring_status else "",
     )
+    return cached(
+        request,
+        response,
+        ("services", filters, limit, offset, coverage, include_removed),
+        lambda: _services(
+            repo,
+            settings,
+            now_ms(clock),
+            filters,
+            limit=limit,
+            offset=offset,
+            coverage=coverage,
+            include_removed=include_removed,
+        ),
+    )
+
+
+def _services(
+    repo: Repository,
+    settings: ApiSettings,
+    now: datetime,
+    filters: ServiceFilters,
+    *,
+    limit: int,
+    offset: int,
+    coverage: CoverageFilter | None,
+    include_removed: bool,
+) -> s.ServiceListResponse:
     scope = evaluate_scope(repo, service_evaluator(repo, settings, now), filters)
     page, info = _page(
         scope.items, include_removed=include_removed, coverage=coverage, limit=limit, offset=offset
@@ -358,13 +423,30 @@ def list_services(
 def get_service(
     service_id: ServiceIdPath,
     principal: CurrentPrincipal,
+    request: Request,
+    response: Response,
     repo: Repo,
     settings: Settings,
     clock: Clock,
     since: Since = None,
     until: Until = None,
 ) -> s.ServiceDetailResponse:
-    now = now_ms(clock)
+    return cached(
+        request,
+        response,
+        ("service", service_id, since, until),
+        lambda: _service_detail(repo, settings, now_ms(clock), service_id, since, until),
+    )
+
+
+def _service_detail(
+    repo: Repository,
+    settings: ApiSettings,
+    now: datetime,
+    service_id: str,
+    since: datetime | None,
+    until: datetime | None,
+) -> s.ServiceDetailResponse:
     row = repo.get_service(service_id)
     if row is None:
         raise NotFound("service not found")

@@ -10,11 +10,14 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Path, Query, Request
 
+from extorq.api import schemas as s
+from extorq.api import service
 from extorq.api.auth import Principal
 from extorq.api.errors import BadRequest, ServiceUnavailable
 from extorq.api.integrations import Integrations
+from extorq.api.lifecycle import Estate, last_event_map
 from extorq.api.logs import get_logger
-from extorq.api.repository import Repository
+from extorq.api.repository import Repository, Row
 from extorq.api.service import SummaryGate
 from extorq.api.settings import ApiSettings
 from extorq.contracts.identity import canonical_json
@@ -86,6 +89,44 @@ ServiceIdQuery = Annotated[
     str | None,
     Query(pattern=HEX_ID_PATTERN, description="Filter by service id (32 hex, schema 1.1)."),
 ]
+IncludeRetired = Annotated[
+    bool,
+    Query(
+        description="Include RETIRED assets (no collector reports for them and not observed "
+        "within the retirement window, 24 h by default) and their collectors in lists and "
+        "rollups. Default: left out (never deleted)."
+    ),
+]
+
+
+def build_estate(
+    repo: Repository,
+    settings: ApiSettings,
+    now: datetime,
+    *,
+    collectors: list[s.CollectorStatus] | None = None,
+    assets: list[Row] | None = None,
+    event_rows: list[Row] | None = None,
+) -> Estate:
+    """Lifecycle of every asset and collector for this request (reads what is not given).
+
+    Inputs: every asset row, every collector's latest report (pass the list already read
+    for the request) and the newest event per asset id.
+    """
+    if collectors is None:
+        collectors = [service.collector_status(row, now) for row in repo.collectors("")]
+    if assets is None:
+        assets = repo.all_assets()
+    if event_rows is None:
+        event_rows = repo.asset_last_events([])
+    return Estate(
+        assets,
+        collectors,
+        last_event_map(event_rows),
+        now,
+        stale_seconds=settings.asset_stale_seconds,
+        retire_seconds=settings.asset_retire_seconds,
+    )
 
 
 def now_ms(clock: Callable[[], datetime]) -> datetime:

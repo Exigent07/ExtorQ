@@ -1,45 +1,39 @@
 import { cn } from "cn";
-import { FlaskConical } from "lucide-react";
 
+import { ConfidenceBadge, SimulationBadge } from "@/components/console/badges";
+import { Hint } from "@/components/console/hint";
 import { analystStatusLabel, isClosedStatus } from "@/lib/format";
 
 /** Marks alerts whose evidence carries an ExtorQ simulation marker (still genuine telemetry). */
 export function SimulationTag({ runIds }: { runIds: string[] }) {
-  if (runIds.length === 0) return null;
-  return (
-    <span
-      title={`Evidence carries the simulation marker extorq-sim-${runIds.join(", extorq-sim-")}. The telemetry is genuine; the activity was a controlled lab scenario.`}
-      className="inline-flex h-5 flex-none items-center gap-1 rounded-sm border border-control px-1.5 text-xs whitespace-nowrap text-ink-2"
-    >
-      <FlaskConical className="size-3" aria-hidden="true" />
-      Simulation
-    </span>
-  );
+  return <SimulationBadge runIds={runIds} />;
 }
 
-/** Analyst workflow state in words; open states in ink, closed ones in grey. */
+const STATUS_DOT: Record<string, string> = {
+  new: "bg-foreground",
+  acknowledged: "bg-fg-2",
+  investigating: "bg-sev-medium",
+};
+
+/**
+ * Analyst workflow state: open states in ink with a small mark (new = white, investigating =
+ * amber), closed ones in grey. Not a severity and not a health status.
+ */
 export function AnalystStatusText({ status, recorded }: { status: string; recorded?: boolean }) {
   const closed = isClosedStatus(status);
-  return (
-    <span
-      className={cn("whitespace-nowrap", closed ? "text-muted-foreground" : "text-ink-2")}
-      title={recorded === false ? "No analyst has acted on this alert yet" : undefined}
-    >
+  const body = (
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap", closed ? "text-muted-foreground" : "text-fg-2")}>
+      <span
+        aria-hidden="true"
+        className={cn("size-1.5 flex-none rounded-full", closed ? "bg-transparent ring-1 ring-fg-faint ring-inset" : STATUS_DOT[status] ?? "bg-fg-2")}
+      />
       {analystStatusLabel(status)}
     </span>
   );
+  return recorded === false ? <Hint content="No analyst has acted on this alert yet.">{body}</Hint> : body;
 }
 
-const CONFIDENCE_HINT: Record<string, string> = {
-  high: "Independent sources agree (deterministic evidence completeness, not a maliciousness score)",
-  medium: "Evidence from the primary source only",
-  low: "Partial evidence; an expected source was missing",
-};
-
+/** Evidence confidence (deterministic completeness, not a verdict). */
 export function ConfidenceText({ confidence }: { confidence: string }) {
-  return (
-    <span className="whitespace-nowrap text-ink-2" title={CONFIDENCE_HINT[confidence] ?? undefined}>
-      {confidence.charAt(0).toUpperCase() + confidence.slice(1)}
-    </span>
-  );
+  return <ConfidenceBadge confidence={confidence} />;
 }

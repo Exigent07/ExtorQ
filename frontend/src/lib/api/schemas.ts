@@ -43,6 +43,16 @@ export const COVERAGE_STATUSES = ["ok", "degraded", "stale", "missing"] as const
 export const zCoverageStatus = z.enum(COVERAGE_STATUSES);
 export type CoverageStatus = z.infer<typeof zCoverageStatus>;
 
+/**
+ * Inventory lifecycle (API 2026-11-22): `stale` = not observed within the stale window,
+ * `retired` = no collector reports for it and not observed within the retirement window (24 h
+ * by default). Retired items are never deleted; lists and rollups leave them out unless asked.
+ * Validated as a string so a new state renders as itself.
+ */
+export const LIFECYCLE_STATES = ["active", "stale", "retired"] as const;
+export type LifecycleState = (typeof LIFECYCLE_STATES)[number];
+const zLifecycleState = z.string().min(1).max(32).default("active");
+
 export const ASSET_TYPES = [
   "macos_host",
   "linux_host",
@@ -152,6 +162,9 @@ export const zCollectorStatus = z.object({
   stale_reason: z.string().nullish(),
   seconds_since_success: z.number().nullish(),
   details: zJsonObject.optional(),
+  lifecycle_state: zLifecycleState,
+  /** The SDK heartbeat self-test: never counted as asset coverage. */
+  self_test: z.boolean().default(false),
 });
 export type CollectorStatus = z.infer<typeof zCollectorStatus>;
 
@@ -163,6 +176,8 @@ export const zAssetClassCoverage = z.object({
   assets_degraded: z.number().int(),
   assets_stale: z.number().int(),
   assets_without_collector: z.number().int(),
+  /** Retired assets of the class: excluded from every other count and from `status`. */
+  assets_retired: z.number().int().default(0),
   status: zCoverageStatus,
   last_event_at: zTime.nullish(),
 });
@@ -748,12 +763,19 @@ export const zAssetListItem = z.object({
   coverage_status: zCoverageStatus,
   last_event_at: zTime.nullish(),
   open_alerts: z.number().int(),
+  lifecycle_state: zLifecycleState,
+  /** Newer of last_seen and the newest event (API-computed). */
+  last_observed_at: zTime.nullish(),
+  /** API-derived explanation for stale / retired (plain text; rendered as text only). */
+  lifecycle_reason: z.string().nullish(),
 });
 export type AssetListItem = z.infer<typeof zAssetListItem>;
 
 export const zAssetListResponse = z.object({
   items: z.array(zAssetListItem),
   page: zPageInfo,
+  /** Retired assets the default request left out (include_retired=false). */
+  retired_excluded: z.number().int().default(0),
 });
 export type AssetListResponse = z.infer<typeof zAssetListResponse>;
 
@@ -935,6 +957,8 @@ export const zHealthResponse = z.object({
     })
     .nullish(),
   notes: z.array(z.string()),
+  /** Collectors of retired assets left out of `collectors` (include_retired=false). */
+  collectors_retired: z.number().int().default(0),
 });
 export type HealthResponse = z.infer<typeof zHealthResponse>;
 
@@ -970,6 +994,7 @@ export const zCollectionHealthSummary = z.object({
   no_collector_reports: z.boolean(),
   no_pipeline_reports: z.boolean(),
   no_rule_runs: z.boolean(),
+  collectors_retired: z.number().int().default(0),
 });
 export type CollectionHealthSummary = z.infer<typeof zCollectionHealthSummary>;
 
@@ -983,6 +1008,18 @@ export const zOverviewResponse = z.object({
   recent_important_alerts: z.array(zAlertListItem),
   /** Service coverage across all assets (1.1); absent from pre-1.1 APIs. */
   service_coverage: zServicesSummary.nullish(),
+  /** Inventory lifecycle at request time and what the rollups left out (absent before 2026-11-22). */
+  lifecycle: z
+    .object({
+      stale_after_seconds: z.number().int(),
+      retire_after_seconds: z.number().int(),
+      active: z.number().int(),
+      stale: z.number().int(),
+      retired: z.number().int(),
+      retired_asset_ids: z.array(z.string()),
+      include_retired: z.boolean(),
+    })
+    .nullish(),
 });
 export type OverviewResponse = z.infer<typeof zOverviewResponse>;
 

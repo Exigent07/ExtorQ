@@ -7,7 +7,8 @@
 #   infra/kind/kind.sh down         delete the extorq-lab cluster (and only that cluster)
 #   infra/kind/kind.sh status       cluster, node, workload and audit-log status
 #   infra/kind/kind.sh load-images  build lab-portal and load images into the node
-#   infra/kind/kind.sh token        mint a short-lived inventory token + kubeconfig (0600)
+#   infra/kind/kind.sh token        mint a time-limited inventory token + kubeconfig (0600);
+#                                   default 48h, EXTORQ_K8S_TOKEN_DURATION=<n>h|<n>m (10m..168h)
 #   infra/kind/kind.sh netcheck     verify pods can reach the ingest gateway (TLS + CA)
 #   infra/kind/kind.sh kubeconfig   print the PATH of the admin kubeconfig (never contents)
 #   infra/kind/kind.sh audit-check  check the audit policy guarantees against the real audit log
@@ -30,6 +31,11 @@ readonly POSTURE_LAB_IMAGE="alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f2349
 readonly LAB_PORTAL_BASE_IMAGE="python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b"
 readonly AUDIT_LOG="/var/log/kubernetes/audit/kube-apiserver-audit.log"
 readonly OTEL_PRODUCER_ID="k8s-otel-extorq-lab"
+# Inventory token lifetime (trade-off in infra/kind/AGENTS.md): 48 h lets one mint cover a
+# working day plus a demo the next day; the bounds keep it a short-lived credential.
+readonly TOKEN_DURATION_DEFAULT="48h"
+readonly TOKEN_DURATION_MIN_SECONDS=600      # TokenRequest minimum (10 min)
+readonly TOKEN_DURATION_MAX_SECONDS=604800   # 168 h
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd -P)"
@@ -49,6 +55,42 @@ readonly GATEWAY_URL="${EXTORQ_K8S_GATEWAY_URL:-https://host.docker.internal:844
 
 log() { printf '[kind.sh] %s\n' "$*" >&2; }
 die() { printf '[kind.sh] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# token_duration_seconds <n>h|<n>m: print the lifetime in seconds, or fail when the value is
+# malformed or outside TOKEN_DURATION_MIN_SECONDS..TOKEN_DURATION_MAX_SECONDS.
+token_duration_seconds() {
+  local duration="$1" value seconds
+  [[ "${duration}" =~ ^([0-9]{1,5})([hm])$ ]] || return 1
+  value=$((10#${BASH_REMATCH[1]}))
+  if [[ "${BASH_REMATCH[2]}" == "h" ]]; then
+    seconds=$((value * 3600))
+  else
+    seconds=$((value * 60))
+  fi
+  ((seconds >= TOKEN_DURATION_MIN_SECONDS && seconds <= TOKEN_DURATION_MAX_SECONDS)) || return 1
+  printf '%s\n' "${seconds}"
+}
+
+# token_expiry <token file>: print "<exp as UTC ISO-8601> <seconds left>" from the token's
+# own exp claim. The token itself is never printed; any failure prints nothing and fails.
+token_expiry() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 -I - "$1" 2>/dev/null <<'PY'
+import base64, datetime, json, sys, time
+try:
+    with open(sys.argv[1], "rb") as handle:
+        token = handle.read(16384).decode("ascii").strip()
+    payload = token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    exp = claims["exp"]
+    if not isinstance(exp, int) or isinstance(exp, bool):
+        raise ValueError
+    stamp = datetime.datetime.fromtimestamp(exp, datetime.timezone.utc)
+    print(stamp.strftime("%Y-%m-%dT%H:%M:%SZ"), int(exp - time.time()))
+except Exception:
+    sys.exit(1)
+PY
+}
 
 kc() { kubectl --kubeconfig "${ADMIN_KUBECONFIG}" --context "${CONTEXT}" "$@"; }
 
@@ -360,7 +402,17 @@ cmd_status() {
   echo "audit log (${AUDIT_LOG}):"
   docker exec "${NODE_CONTAINER}" sh -c "ls -l /var/log/kubernetes/audit/ && wc -l ${AUDIT_LOG}"
   if [[ -s "${INVENTORY_TOKEN}" ]]; then
-    echo "inventory token: present (${INVENTORY_TOKEN#"${REPO_ROOT}"/}, mtime $(stat -f '%Sm' "${INVENTORY_TOKEN}"))"
+    local expiry left
+    if expiry="$(token_expiry "${INVENTORY_TOKEN}")"; then
+      left="${expiry##* }"
+      if ((left > 0)); then
+        echo "inventory token: valid until ${expiry%% *} ($((left / 3600)) h $((left % 3600 / 60)) min left; ${INVENTORY_TOKEN#"${REPO_ROOT}"/})"
+      else
+        echo "inventory token: EXPIRED at ${expiry%% *} (run: infra/kind/kind.sh token)"
+      fi
+    else
+      echo "inventory token: present, expiry unreadable (${INVENTORY_TOKEN#"${REPO_ROOT}"/}, mtime $(stat -f '%Sm' "${INVENTORY_TOKEN}"))"
+    fi
   else
     echo "inventory token: absent (run: infra/kind/kind.sh token)"
   fi
@@ -372,16 +424,19 @@ cmd_status() {
 }
 
 cmd_token() {
+  # Validate before touching anything: a bad value must not replace a working token.
+  local duration="${EXTORQ_K8S_TOKEN_DURATION:-${TOKEN_DURATION_DEFAULT}}" seconds
+  seconds="$(token_duration_seconds "${duration}")" \
+    || die "invalid EXTORQ_K8S_TOKEN_DURATION (expected <n>h or <n>m between 10m and 168h, e.g. 48h)"
   require_tools
   ensure_dirs
   ensure_admin_kubeconfig
-  local duration="${EXTORQ_K8S_TOKEN_DURATION:-24h}"
-  [[ "${duration}" =~ ^[0-9]{1,3}[hm]$ ]] || die "invalid EXTORQ_K8S_TOKEN_DURATION (expected e.g. 24h)"
   local tmp server ca_data
   tmp="$(mktemp "${VAR_KUBE}/.inventory-token.XXXXXX")"
   chmod 600 "${tmp}"
-  # TokenRequest API: audience-bound, time-limited, never stored in a Secret object.
-  if ! kc -n extorq-system create token extorq-inventory --duration "${duration}" | tr -d '\n' > "${tmp}"; then
+  # TokenRequest API: audience-bound, time-limited, bound to the ServiceAccount's UID
+  # (deleting the ServiceAccount revokes it), never stored in a Secret object.
+  if ! kc -n extorq-system create token extorq-inventory --duration "${seconds}s" | tr -d '\n' > "${tmp}"; then
     rm -f "${tmp}"
     die "TokenRequest for extorq-system/extorq-inventory failed"
   fi
@@ -416,6 +471,17 @@ current-context: extorq-inventory@${CLUSTER_NAME}
 EOF
   mv -f "${tmp}" "${INVENTORY_KUBECONFIG}"
   log "inventory token (${duration}) -> ${INVENTORY_TOKEN#"${REPO_ROOT}"/}; kubeconfig -> ${INVENTORY_KUBECONFIG#"${REPO_ROOT}"/}"
+  local expiry left
+  if expiry="$(token_expiry "${INVENTORY_TOKEN}")"; then
+    left="${expiry##* }"
+    log "inventory token valid until ${expiry%% *}; the running collector picks it up on its next request (no restart)"
+    # The API server may shorten a requested lifetime (--service-account-max-token-expiration).
+    if ((left + 300 < seconds)); then
+      log "WARNING: the API server issued a shorter lifetime than requested (${left}s < ${seconds}s)"
+    fi
+  else
+    log "WARNING: could not read the expiry of the new token (python3 missing or not a JWT)"
+  fi
 }
 
 cmd_netcheck() {
@@ -460,11 +526,14 @@ main() {
     kubeconfig) echo "${ADMIN_KUBECONFIG}" ;;
     audit-check) cmd_audit_check ;;
     *)
-      sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       [[ -n "${cmd}" ]] && die "unknown command: ${cmd}"
       exit 2
       ;;
   esac
 }
 
-main "$@"
+# Sourcing the script (tests of its pure helpers) defines functions only.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

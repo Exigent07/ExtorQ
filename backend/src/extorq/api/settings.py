@@ -8,8 +8,10 @@ Environment variables (prefix ``EXTORQ_API_``):
 * ``EXTORQ_API_SERVICE_TOKEN``: the token itself (discouraged; use the file).
 * ``EXTORQ_API_ENABLE_DOCS``: serve ``/api/v1/openapi.json`` and ``/api/v1/docs`` (default off).
 * ``EXTORQ_API_MAX_BODY_BYTES``, ``EXTORQ_API_PIPELINE_STALE_SECONDS``,
-  ``EXTORQ_API_SUMMARY_REQUESTS_PER_MINUTE``, ``EXTORQ_API_SERVICE_STALE_SECONDS``:
-  operational bounds (see field docs).
+  ``EXTORQ_API_SUMMARY_REQUESTS_PER_MINUTE``, ``EXTORQ_API_SERVICE_STALE_SECONDS``,
+  ``EXTORQ_API_ASSET_STALE_SECONDS``, ``EXTORQ_API_ASSET_RETIRE_SECONDS``,
+  ``EXTORQ_API_CACHE_TTL_SECONDS``, ``EXTORQ_API_CACHE_MAX_ENTRIES``: operational bounds
+  (see field docs).
 
 ClickHouse credentials are not read here: :func:`extorq.storage.clickhouse.get_client`
 (owned by the platform layer) resolves the ``api_ro`` / ``api_writer`` identities and
@@ -55,6 +57,19 @@ class ApiSettings(BaseSettings):
     #: reported as stale, and a service reported ``monitored`` is then shown as
     #: ``degraded`` (coverage cannot be confirmed). ``EXTORQ_API_SERVICE_STALE_SECONDS``.
     service_stale_seconds: int = Field(default=3600, ge=60, le=7 * 86400)
+    #: Asset lifecycle ``stale``: not observed (asset record refresh or event) for longer than
+    #: this, or 3 x the shortest interval of its reporting collectors when that is longer.
+    #: ``EXTORQ_API_ASSET_STALE_SECONDS``.
+    asset_stale_seconds: int = Field(default=3600, ge=60, le=7 * 86400)
+    #: Asset lifecycle ``retired``: no collector covering the asset reported within this
+    #: window (or 3 x its interval when longer) and the asset was not observed within it.
+    #: ``EXTORQ_API_ASSET_RETIRE_SECONDS`` (default 24 h).
+    asset_retire_seconds: int = Field(default=86400, ge=3600, le=90 * 86400)
+    #: Seconds an aggregate response (overview, health, assets, services, rules) is served
+    #: from the in-process cache; 0 disables caching. ``EXTORQ_API_CACHE_TTL_SECONDS``.
+    cache_ttl_seconds: float = Field(default=15.0, ge=0.0, le=60.0)
+    #: Upper bound of cached responses (oldest evicted first). ``EXTORQ_API_CACHE_MAX_ENTRIES``.
+    cache_max_entries: int = Field(default=128, ge=1, le=4096)
 
 
 def resolve_token_source(settings: ApiSettings) -> tuple[str, Path | None]:

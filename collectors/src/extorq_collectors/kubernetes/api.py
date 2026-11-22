@@ -13,8 +13,12 @@
 * Paginated LIST (``limit`` + ``continue``). An expired continue token (HTTP 410
   Gone) restarts the list from the beginning (bounded attempts); the number of
   restarts is reported so the collector can expose it in health.
-* The bearer token is re-read from ``tokenFile`` for every list, so a re-minted
-  token is picked up without a restart. It never appears in reprs, logs or errors.
+* The bearer token is re-read from ``tokenFile`` for every request, so a token re-minted
+  by ``kind.sh token`` is picked up without a restart. A 401 can still race a re-mint
+  (the request carried the old token): the file is then read again and the request is
+  retried ONCE when it holds a different token. A 401 with an unchanged token fails fast
+  and says whether the token expired (its ``exp`` claim) or was rejected before expiry.
+  The token never appears in reprs, logs or errors.
 """
 
 from __future__ import annotations
@@ -184,19 +188,40 @@ def read_token(path: Path) -> str:
     return token
 
 
-def token_expiry(path: Path) -> datetime | None:
-    """``exp`` claim of the (JWT) service-account token, for health only. No verification."""
+def jwt_expiry(token: str) -> datetime | None:
+    """``exp`` claim of a (JWT) service-account token. No verification: health/messages only."""
     try:
-        token = read_token(path)
         payload = token.split(".")[1]
         padded = payload + "=" * (-len(payload) % 4)
         claims = json.loads(base64.urlsafe_b64decode(padded))
         exp = claims.get("exp") if isinstance(claims, dict) else None
         if isinstance(exp, int) and not isinstance(exp, bool) and exp > 0:
             return datetime.fromtimestamp(exp, UTC)
-    except (KubeConfigError, IndexError, ValueError, binascii.Error, OverflowError, OSError):
+    except (IndexError, ValueError, binascii.Error, OverflowError, OSError):
         return None
     return None
+
+
+def token_expiry(path: Path) -> datetime | None:
+    """``exp`` claim of the token in ``path`` (``None`` when unreadable or not a JWT)."""
+    try:
+        return jwt_expiry(read_token(path))
+    except (KubeConfigError, OSError):
+        return None
+
+
+def unauthorized_reason(token: str, now: datetime | None = None) -> str:
+    """Why a token was answered with 401, from its own ``exp`` claim (never the token)."""
+    expiry = jwt_expiry(token)
+    if expiry is None:
+        return "token rejected; expiry unknown"
+    stamp = expiry.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if expiry <= (now or datetime.now(UTC)):
+        return f"token expired at {stamp}"
+    return (
+        f"token rejected before its expiry {stamp}: revoked, ServiceAccount recreated "
+        "or cluster rebuilt"
+    )
 
 
 @dataclass
@@ -212,6 +237,8 @@ class ClientStats:
     requests: int = 0
     retries: int = 0
     relists: int = 0
+    #: 401s answered by re-reading a token file that had been re-minted meanwhile.
+    token_reloads: int = 0
     errors: dict[str, int] = field(default_factory=dict)
 
 
@@ -276,6 +303,18 @@ class KubeClient:
         if not path.startswith("/") or ".." in path:
             raise ValueError("path must be an absolute API path")
         token = read_token(self.connection.token_file)
+        try:
+            return self._get(path, params, token)
+        except KubeUnauthorized:
+            # Re-minted while this request was in flight? Retry once with the new token;
+            # an unchanged token means it really expired or was revoked: fail fast.
+            fresh = read_token(self.connection.token_file)
+            if fresh == token:
+                raise
+            self.stats.token_reloads += 1
+            return self._get(path, params, fresh)
+
+    def _get(self, path: str, params: dict[str, str] | None, token: str) -> dict[str, Any]:
         last_error = "no attempt"
         for attempt in range(1, self.max_attempts + 1):
             self.stats.requests += 1
@@ -305,8 +344,8 @@ class KubeClient:
                 reason = _status_reason(response)
                 if status == 401:
                     raise KubeUnauthorized(
-                        f"401 Unauthorized for {path} (token expired or revoked: "
-                        "run infra/kind/kind.sh token)",
+                        f"401 Unauthorized for {path} ({unauthorized_reason(token)}: "
+                        "run infra/kind/kind.sh token; no restart needed)",
                         status_code=status,
                     )
                 if status == 403:

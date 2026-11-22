@@ -188,11 +188,34 @@ nodes, services, deployments, daemonsets, statefulsets, replicasets, jobs, cronj
 rolebindings, clusterroles, clusterrolebindings, networkpolicies. **No secrets, no
 configmaps, no pods/exec, pods/log or nodes/proxy, no write verb** (checked with
 `kubectl auth can-i --list`). Token: `infra/kind/kind.sh token` uses the TokenRequest API
-(`kubectl create token`, default 24 h, audience-bound, never stored in a Secret object) and
-writes `var/kube/extorq-inventory.token` + a kubeconfig referencing it by `tokenFile`
-(both 0600). The client refuses client-certificate, inline-token and exec kubeconfigs,
-plain HTTP, non-loopback servers and `insecure-skip-tls-verify`; it only sends GET.
-Health reports `token_expires_in_seconds`; an expired token fails the cycle with a hint.
+(`kubectl create token`, default **48 h**, `EXTORQ_K8S_TOKEN_DURATION=<n>h|<n>m` within
+10 min..168 h, audience-bound, bound to the ServiceAccount's UID, never stored in a Secret
+object) and writes `var/kube/extorq-inventory.token` + a kubeconfig referencing it by
+`tokenFile` (both 0600); it prints the real expiry from the token's `exp` claim (never the
+token) and warns if the API server issued a shorter lifetime. `kind.sh status` shows the
+expiry and the time left. The client refuses client-certificate, inline-token and exec
+kubeconfigs, plain HTTP, non-loopback servers and `insecure-skip-tls-verify`; it only
+sends GET.
+
+Token lifetime and renewal:
+* The token file is read for every API request, so a re-mint is used by the running
+  collector at its next request: **no runner restart**. A 401 that races a re-mint (the
+  request carried the old token) is retried once after reading the file again; a 401
+  with an unchanged token fails the cycle at once with `token expired at <exp>` or
+  `token rejected before its expiry <exp>` (revoked, ServiceAccount recreated or cluster
+  rebuilt) and the hint `run infra/kind/kind.sh token`.
+* Health details: `token_expires_in_seconds`, `token_expires_at`, `token_reloads` (401s
+  healed by a re-mint). Less than `token_warn_seconds` (default 7200 s) left marks the
+  cycle `degraded` with the reason, so the console shows the expiry before it fails.
+* Why 48 h (trade-off): a host-native collector cannot refresh its own token the way
+  in-cluster consumers refresh projected tokens, unless it were allowed to mint tokens
+  (`serviceaccounts/token create`), a privilege it must not hold. Shorter lifetimes would
+  let a long lab session silently lose inventory, posture and K8S-002 state evidence until
+  someone re-mints; one 48 h mint covers a working day plus a demo the next day. Exposure if
+  the 0600 file leaked: read-only get/list/watch on the 16 non-secret kinds, on an API server
+  bound to 127.0.0.1, for at most the remaining lifetime. Revoke early by deleting the
+  ServiceAccount (`kubectl -n extorq-system delete serviceaccount extorq-inventory` with the
+  admin kubeconfig), then `kind.sh deploy` and `kind.sh token`.
 
 Each cycle (one atomic `ctx.emit`):
 
@@ -209,7 +232,10 @@ Each cycle (one atomic `ctx.emit`):
    time for updates, observation time for deletions. Names containing
    `extorq-sim-<run_id>` (object, owner or binding subjects) set `event.simulation`.
 3. Service hierarchy (below) -> Service / ServiceInstance records (changed ones each cycle,
-   all every `refresh_seconds` = 900 s, tombstones on removal) and `service.*` events.
+   all every `refresh_seconds` = 900 s and on the first cycle after the collector starts,
+   tombstones on removal) and `service.*` events. Every emitted instance record carries
+   `attributes.snapshot_id` (the cycle's snapshot id, as on InventoryItems); see "Instance
+   freshness" in section 6.
 4. core/v1 Events -> `k8s.event.observed` (deduplicated by uid + occurrence count; Warning ->
    `severity_hint` low). The API server deletes Events after its `--event-ttl` (default
    1 h): if the previous successful poll is older than `event_ttl_seconds`, an
@@ -273,6 +299,24 @@ never-schedulable check pod in `extorq-apps` (stored `asset_id = k8s:extorq-lab`
 `state = pending`, then a `present = 0` tombstone after deletion) and 0 quarantined
 records of the k8s producers (details: `docs/team/status/B2.md`).
 
+Instance freshness (D1-IC-8, fixed 2026-11-22): the gateway deduplicates ServiceInstances
+on identity + state + presence + content **excluding `observed_at`**, remembered for 7 days
+(`record_identity` in `backend/src/extorq/contracts/ingest.py`, `docs/data-model.md`). The
+collector's periodic full refresh therefore never reached ClickHouse for unchanged
+instances: every Pod/container row kept the `observed_at` of its last change (2026-11-21
+15:07:50Z on the node) and the API/console rightly reported them stale after
+`EXTORQ_API_SERVICE_STALE_SECONDS` (1 h). The same rule dropped an instance whose state
+returned to an earlier content (readiness true -> false -> true): ClickHouse kept the
+intermediate state. Every emitted instance record now carries `attributes.snapshot_id`
+(`k8s-<UTC timestamp>` of the emitting cycle), so each emission is a distinct record for
+the dedup while `instance_id`, the snapshot diff (which excludes `observed_at` and the
+marker) and all event ids stay unchanged. Result: running Pods/containers are re-stored
+with a fresh `observed_at` at least every `refresh_seconds` (900 s) and on the first cycle
+after a collector start; removed ones get exactly one `present = 0` tombstone (same
+`instance_id`, `observed_at` = time of absence), which hides them from
+`v_service_instances_current`. Unit tests drive these cycles through the gateway's own
+`prepare_batch` and spool dedup (`tests/unit/kubernetes/test_k8s_inventory.py`).
+
 Coverage: workloads have an implemented adapter (`webapp-json` for lab-portal, `k8s-audit`
 for kube-apiserver, `k8s-container-log` otherwise) and are `monitored` when the log agent is
 Ready on every node running an instance, `degraded` when it is not, `unmonitored` without
@@ -289,7 +333,7 @@ kube-apiserver service.
 | Identity | Where | Can do |
 |---|---|---|
 | `kind-extorq-lab` admin (client cert, group `kubeadm:cluster-admins`) | `var/kube/extorq-lab-admin.kubeconfig` (0600) | cluster-admin; used only by `kind.sh` and the simulations, never by collectors |
-| SA `extorq-system/extorq-inventory` | TokenRequest token in `var/kube/` (0600, 24 h) | get/list/watch on the 16 kinds above; no secrets/configmaps/exec/logs |
+| SA `extorq-system/extorq-inventory` | TokenRequest token in `var/kube/` (0600, 48 h default, 10 min..168 h) | get/list/watch on the 16 kinds above; no secrets/configmaps/exec/logs |
 | SA `extorq-system/extorq-otel-collector` | in-cluster token (automounted) | get/list/watch pods, namespaces, nodes, replicasets |
 | SA `extorq-apps/lab-portal` | no token mounted | nothing |
 | SA `extorq-posture-lab/default` | token mounted (deliberate finding) | only the default discovery permissions |
@@ -337,6 +381,10 @@ kube-apiserver service.
 * Posture is declarative (object specs), not runtime; image vulnerabilities are C3's Trivy
   scans, not this collector.
 * Pod-level metrics, resource usage and traces are out of scope.
+* The inventory token is time-limited (48 h by default) and renewal is operator-driven by
+  design (`kind.sh token`; the collector holds no token-minting privilege). The collector
+  reports `degraded` from 2 h before expiry; after expiry every cycle fails with 401 (and
+  K8S-002 loses its state evidence) until a re-mint, which needs no restart.
 
 ## 10. Verification commands
 

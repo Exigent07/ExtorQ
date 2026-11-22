@@ -2,104 +2,165 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, Response
 
 from extorq.api import schemas as s
 from extorq.api import service
 from extorq.api.auth import CurrentPrincipal
+from extorq.api.cache import cached
 from extorq.api.errors import NotFound
-from extorq.api.repository import AlertFilters, FindingFilters, ServiceFilters
+from extorq.api.logs import get_logger
+from extorq.api.repository import AlertFilters, FindingFilters, Repository, ServiceFilters
 from extorq.api.routes.common import (
     AssetIdPath,
     Clock,
+    IncludeRetired,
     Limit,
     Offset,
     Repo,
     Settings,
     Since,
     Until,
+    build_estate,
     now_ms,
 )
 from extorq.api.routes.services import evaluate_scope, service_evaluator
+from extorq.api.settings import ApiSettings
 from extorq.contracts import AssetType, Environment
+
+log = get_logger("extorq.api.assets")
 
 router = APIRouter(tags=["assets"])
 
 ASSET_FINDINGS_LIMIT = 50
 ASSET_RECENT_ALERTS_LIMIT = 20
+#: ``Repository.all_assets`` reads at most this many asset records.
+ASSETS_SCAN_CAP = 5000
 
 
-@router.get("/assets", response_model=s.AssetListResponse, summary="List monitored assets")
+@router.get(
+    "/assets",
+    response_model=s.AssetListResponse,
+    summary="List monitored assets (retired assets only with include_retired=true)",
+)
 def list_assets(
     principal: CurrentPrincipal,
+    request: Request,
+    response: Response,
     repo: Repo,
+    settings: Settings,
     clock: Clock,
     limit: Limit = 50,
     offset: Offset = 0,
     asset_type: Annotated[AssetType | None, Query()] = None,
     environment: Annotated[Environment | None, Query()] = None,
+    include_retired: IncludeRetired = False,
 ) -> s.AssetListResponse:
-    now = now_ms(clock)
-    rows, total = repo.list_assets(
-        asset_type.value if asset_type else "",
-        environment.value if environment else "",
-        limit,
-        offset,
+    key = ("assets", limit, offset, asset_type, environment, include_retired)
+    return cached(
+        request,
+        response,
+        key,
+        lambda: _list_assets(
+            repo,
+            settings,
+            now_ms(clock),
+            limit=limit,
+            offset=offset,
+            asset_type=asset_type.value if asset_type else "",
+            environment=environment.value if environment else "",
+            include_retired=include_retired,
+        ),
     )
-    ids = [str(row["asset_id"]) for row in rows]
-    all_collectors = [service.collector_status(row, now) for row in repo.collectors("")]
-    last_events = (
-        {str(r["asset_id"]): r.get("last_event_at") for r in repo.asset_last_events(ids)}
-        if ids
+
+
+def _list_assets(
+    repo: Repository,
+    settings: ApiSettings,
+    now: datetime,
+    *,
+    limit: int,
+    offset: int,
+    asset_type: str,
+    environment: str,
+    include_retired: bool,
+) -> s.AssetListResponse:
+    rows = repo.all_assets()
+    if len(rows) >= ASSETS_SCAN_CAP:
+        log.warning("asset_scan_cap_reached", cap=ASSETS_SCAN_CAP)
+    estate = build_estate(repo, settings, now, assets=rows)
+    matching = [
+        row
+        for row in rows
+        if (not asset_type or str(row["asset_type"]) == asset_type)
+        and (not environment or str(row["environment"]) == environment)
+    ]
+    visible = (
+        matching
+        if include_retired
+        else [row for row in matching if not estate.is_retired(str(row["asset_id"]))]
+    )
+    page_rows = visible[offset : offset + limit]
+    open_alerts = (
+        {str(r["asset_id"]): int(r["open_alerts"]) for r in repo.open_alerts_by_asset()}
+        if page_rows
         else {}
     )
-    open_alerts = {str(r["asset_id"]): int(r["open_alerts"]) for r in repo.open_alerts_by_asset()}
-    items = [
-        service.asset_item(
-            row,
-            service.collectors_for_asset(asset_id, all_collectors),
-            last_events.get(asset_id),
-            open_alerts.get(asset_id, 0),
-        )
-        for row, asset_id in zip(rows, ids, strict=True)
-    ]
+    items = [estate.asset_item(row, open_alerts.get(str(row["asset_id"]), 0)) for row in page_rows]
     return s.AssetListResponse(
         items=items,
-        page=service.page_info(limit=limit, offset=offset, returned=len(items), total=total),
+        page=service.page_info(limit=limit, offset=offset, returned=len(items), total=len(visible)),
+        retired_excluded=len(matching) - len(visible),
     )
 
 
 @router.get(
     "/assets/{asset_id:path}",
     response_model=s.AssetDetailResponse,
-    summary="Asset detail: inventory, telemetry coverage, event counts, findings, alerts",
+    summary="Asset detail: inventory, coverage, lifecycle, event counts, findings, alerts",
 )
 def get_asset(
     asset_id: AssetIdPath,
     principal: CurrentPrincipal,
+    request: Request,
+    response: Response,
     repo: Repo,
     settings: Settings,
     clock: Clock,
     since: Since = None,
     until: Until = None,
 ) -> s.AssetDetailResponse:
-    now = now_ms(clock)
+    return cached(
+        request,
+        response,
+        ("asset", asset_id, since, until),
+        lambda: _asset_detail(repo, settings, now_ms(clock), asset_id, since, until),
+    )
+
+
+def _asset_detail(
+    repo: Repository,
+    settings: ApiSettings,
+    now: datetime,
+    asset_id: str,
+    since: datetime | None,
+    until: datetime | None,
+) -> s.AssetDetailResponse:
     row = repo.get_asset(asset_id)
     if row is None:
         raise NotFound("asset not found")
     # One evaluator (ALL collectors) for the asset's coverage and its services' coverage:
     # own collectors plus those of ancestor assets (a node is covered by its cluster's).
+    # The estate (lifecycle) is built from the same collector reports.
     evaluator = service_evaluator(repo, settings, now)
-    collectors = evaluator.asset_collectors(asset_id)
-    last_events = repo.asset_last_events([asset_id])
-    last_event_at = last_events[0].get("last_event_at") if last_events else None
+    estate = build_estate(repo, settings, now, collectors=evaluator.collectors)
     open_counts = service.severity_counts(
         repo.open_alert_severity_counts(asset_id), "severity", "alerts"
     )
-    base = service.asset_item(row, collectors, last_event_at, open_counts.total)
+    base = estate.asset_item(row, open_counts.total)
     asset = s.AssetRecord(
         **base.model_dump(), attributes=service.parse_json_object(row.get("attributes"))
     )
@@ -145,7 +206,8 @@ def get_asset(
     services_scope = evaluate_scope(repo, evaluator, ServiceFilters(asset_id=asset_id))
     return s.AssetDetailResponse(
         asset=asset,
-        collectors=collectors,
+        # Telemetry collectors covering the asset (self-tests left out), with lifecycle.
+        collectors=estate.coverage_collectors(asset_id),
         inventory=inventory,
         event_counts=event_counts,
         event_counts_range=event_range,

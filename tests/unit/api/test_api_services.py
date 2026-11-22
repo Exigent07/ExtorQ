@@ -6,6 +6,7 @@ All data is SYNTHETIC (see api_fakes.py).
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 from urllib.parse import quote
 
 import pytest
@@ -757,6 +758,31 @@ def test_hosted_instances_cannot_attach_to_a_foreign_or_forged_service(
     ]
     body = client.get(f"/api/v1/assets/{quote(NODE, safe='')}/services", headers=viewer).json()
     assert body["hosted"] == []
+
+
+def test_hosted_is_not_queried_for_assets_without_ancestors(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository
+) -> None:
+    """Ancestors are "/"-prefixes of an asset id: a host, a cluster or an account has none,
+    so ``hosted`` is empty without a storage query (and its own instances are never
+    reported as instances without an owner)."""
+    ids = _seed_mixed(repo)
+    linux_ssh = next(r for r in repo.services if r["service_id"] == ids["monitored"])
+    repo.instances = [instance_row(linux_ssh, "pid:1")]
+    looked_up: list[str] = []
+    real = repo.instances_on_asset
+
+    def spy(asset_id: str, limit: int) -> list[dict[str, Any]]:
+        looked_up.append(asset_id)
+        return real(asset_id, limit)
+
+    repo.instances_on_asset = spy  # type: ignore[method-assign]
+    for asset_id in ("linux:lab-vm-01", CLUSTER):
+        body = client.get(f"/api/v1/assets/{quote(asset_id, safe='')}/services", headers=viewer)
+        assert body.status_code == 200 and body.json()["hosted"] == []
+    assert looked_up == []
+    client.get(f"/api/v1/assets/{quote(NODE, safe='')}/services", headers=viewer)
+    assert looked_up == [NODE]
 
 
 @pytest.mark.parametrize(

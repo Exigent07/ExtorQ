@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import ValidationError
 
 from extorq.api import schemas as s
 from extorq.api import service
 from extorq.api.auth import AnalystPrincipal, CurrentPrincipal
+from extorq.api.cache import invalidate
 from extorq.api.errors import ApiError, Conflict, NotFound, ServiceUnavailable
 from extorq.api.logs import get_logger
 from extorq.api.repository import AlertFilters, Row
@@ -276,6 +277,7 @@ def list_alert_assessments(
 def request_alert_summary(
     alert_id: AlertIdPath,
     principal: AnalystPrincipal,
+    request: Request,
     repo: Repo,
     integrations: Integr,
     gate: Gate,
@@ -300,6 +302,8 @@ def request_alert_summary(
         raise ServiceUnavailable("AI summary request failed") from exc
     finally:
         gate.release(alert_id)
+    # A stored assessment changes the AI provider counts of GET /health.
+    invalidate(request)
     if assessment.status == AIStatus.DISABLED:
         # E's refusal reason names the flag/variable only (never a value).
         reason = (assessment.error or "provider disabled")[:200]
@@ -322,6 +326,7 @@ def set_alert_state(
     alert_id: AlertIdPath,
     body: s.AlertStateUpdate,
     principal: AnalystPrincipal,
+    request: Request,
     repo: Repo,
     clock: Clock,
 ) -> s.AlertStateResponse:
@@ -379,6 +384,9 @@ def set_alert_state(
         except ServiceUnavailable:
             log.error("audit_of_failure_failed", alert_id=alert_id)
         raise ServiceUnavailable("analyst state could not be stored") from exc
+    # Open-alert counts and statuses in cached aggregates (overview, assets, rules,
+    # services) changed: drop them so the next read is computed from storage.
+    invalidate(request)
     return s.AlertStateResponse(
         alert_id=alert_id,
         state=s.AnalystStateView(

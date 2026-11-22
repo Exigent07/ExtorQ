@@ -1,147 +1,160 @@
 import { cn } from "cn";
+import { CornerDownRight } from "lucide-react";
 import Link from "next/link";
 
-import { Panel } from "@/components/console/panel";
 import { EmptyState } from "@/components/console/states";
-import { CoverageStatusDot } from "@/components/console/status-badge";
-import { RelativeTime } from "@/components/console/time";
+import { LifecycleBadge, StatusDot } from "@/components/console/status-badge";
 import { UntrustedText } from "@/components/console/untrusted-text";
-import type { AssetListItem } from "@/lib/api/schemas";
-import { collectorsSummary } from "@/lib/assets";
-import { assetTypeLabel, formatCount } from "@/lib/format";
+import type { ApiResult } from "@/lib/api/result";
+import type { AssetDetailResponse, AssetListItem } from "@/lib/api/schemas";
+import { formatCount } from "@/lib/format";
 import { assetHref } from "@/lib/security/ids";
 
-/** The four monitored asset classes, in the order of the ExtorQ mark's arcs. */
-export const ASSET_CLASSES: { key: string; title: string; types: string[]; empty: string }[] = [
-  { key: "macos", title: "macOS hosts", types: ["macos_host"], empty: "No macOS host has reported an inventory yet." },
-  { key: "linux", title: "Linux VMs", types: ["linux_host"], empty: "No Linux host has reported an inventory yet." },
-  {
-    key: "kubernetes",
-    title: "Kubernetes",
-    types: ["kubernetes_cluster", "kubernetes_node", "kubernetes_namespace", "kubernetes_workload"],
-    empty: "No Kubernetes cluster or node has reported an inventory yet.",
-  },
-  {
-    key: "github",
-    title: "GitHub",
-    types: ["github_repository", "github_account"],
-    empty: "No GitHub repository has reported an inventory yet.",
-  },
-];
+import { AssetCard } from "./asset-card";
+import { AssetIconTile, CLASS_ICON } from "./asset-icon";
+import { type AssetClass, assetHealth, classStatus } from "./model";
 
-export function classOf(assetType: string): string {
-  return ASSET_CLASSES.find((c) => c.types.includes(assetType))?.key ?? "other";
-}
-
-interface Row {
-  asset: AssetListItem;
-  depth: number;
-}
-
-/** Clusters first, each followed by its nodes (and other children); orphans keep their place. */
-function hierarchy(assets: AssetListItem[]): Row[] {
-  const ids = new Set(assets.map((a) => a.asset_id));
-  const children = new Map<string, AssetListItem[]>();
-  const roots: AssetListItem[] = [];
-  for (const asset of assets) {
-    const parent = asset.parent_asset_id;
-    if (parent && parent !== asset.asset_id && ids.has(parent)) {
-      const list = children.get(parent) ?? [];
-      list.push(asset);
-      children.set(parent, list);
-    } else {
-      roots.push(asset);
-    }
-  }
-  const byName = (a: AssetListItem, b: AssetListItem) => a.asset_id.localeCompare(b.asset_id);
-  const rows: Row[] = [];
-  const visit = (asset: AssetListItem, depth: number) => {
-    rows.push({ asset, depth });
-    if (depth > 3) return;
-    for (const child of (children.get(asset.asset_id) ?? []).sort(byName)) visit(child, depth + 1);
-  };
-  for (const root of roots.sort(byName)) visit(root, 0);
-  return rows;
-}
-
-function collectorsText(asset: AssetListItem): string {
-  return collectorsSummary(asset);
-}
-
-/** One asset as a two-line row: name and coverage, then id, collectors, recency and alerts. */
-function AssetRow({ row, now }: { row: Row; now: string }) {
-  const { asset, depth } = row;
-  const name = asset.display_name ?? asset.name;
+/**
+ * Owner accounts of a class (GitHub accounts): context for the repositories, never monitored
+ * themselves (the API marks the type as not expected to have a collector). Listed with their
+ * collector state stated plainly, so nothing is hidden and nothing reads as a coverage failure.
+ */
+function OwnerAccountsCard({ accounts, repositories }: { accounts: AssetListItem[]; repositories: AssetListItem[] }) {
+  const rowLink =
+    "flex min-h-9 items-center justify-between gap-3 px-3.5 py-1.5 transition-colors duration-150 outline-none hover:bg-hover focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset";
   return (
-    <li className={cn("py-2.5", depth > 0 && "border-l border-border pl-4")} style={depth > 0 ? { marginLeft: `${(depth - 1) * 16}px` } : undefined}>
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <Link href={assetHref(asset.asset_id)} className="font-medium text-ink underline-offset-2 hover:underline">
-              <UntrustedText value={name} limit={64} />
-            </Link>
-            <span className="text-xs text-muted-foreground">{assetTypeLabel(asset.asset_type)}</span>
-          </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-            <span className="font-mono text-ink-2">
-              <UntrustedText value={asset.asset_id} limit={72} />
-            </span>
-            <span aria-hidden="true">·</span>
-            <span className={asset.collectors_stale > 0 ? "text-warn" : undefined}>{collectorsText(asset)}</span>
-            <span aria-hidden="true">·</span>
-            <span>
-              last event <RelativeTime value={asset.last_event_at} now={now} className="text-xs" />
-            </span>
-          </div>
+    <article className="flex h-full min-w-0 flex-col rounded-xl bg-card shadow-card ring-1 ring-hairline">
+      <header className="flex items-start gap-3 px-5 pt-5 pb-4">
+        <AssetIconTile assetType="github_account" />
+        <div className="min-w-0 flex-1">
+          <h3 className="text-base leading-5 font-semibold tracking-tight text-foreground">Owner accounts</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {formatCount(accounts.length)} GitHub account{accounts.length === 1 ? "" : "s"} · context, not monitored
+          </p>
         </div>
-        <div className="flex flex-none flex-col items-end gap-1 text-xs">
-          <CoverageStatusDot status={asset.coverage_status} />
-          <span className={asset.open_alerts > 0 ? "text-ink" : "text-muted-foreground"}>
-            <span className="font-mono">{formatCount(asset.open_alerts)}</span> open alert{asset.open_alerts === 1 ? "" : "s"}
-          </span>
-        </div>
-      </div>
-    </li>
+      </header>
+      <ul className="mx-5 divide-y divide-hairline-soft overflow-hidden rounded-lg ring-1 ring-hairline-soft ring-inset">
+        {accounts.map((account) => {
+          const owned = repositories.filter((r) => r.parent_asset_id === account.asset_id);
+          return (
+            <li key={account.asset_id} className="py-1">
+              <Link href={assetHref(account.asset_id)} className={rowLink}>
+                <span className="min-w-0 truncate text-sm font-medium text-fg-2">
+                  <UntrustedText value={account.display_name ?? account.name} oneLine plain />
+                </span>
+                <span className="flex flex-none items-center gap-2">
+                  <LifecycleBadge state={account.lifecycle_state} plain />
+                  <StatusDot
+                    tone={account.collectors_total > 0 ? (account.coverage_status === "ok" ? "ok" : "warn") : "off"}
+                    label={account.collectors_total > 0 ? `${formatCount(account.collectors_total)} collectors` : "No collector"}
+                    className="text-xs text-muted-foreground"
+                  />
+                </span>
+              </Link>
+              {owned.length > 0 ? (
+                <ul aria-label="Repositories of this account">
+                  {owned.map((repo) => {
+                    const health = assetHealth(repo);
+                    return (
+                      <li key={repo.asset_id}>
+                        <Link href={assetHref(repo.asset_id)} className={rowLink}>
+                          <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                            <CornerDownRight className="size-3.5 flex-none text-fg-faint" aria-hidden="true" />
+                            <span className="min-w-0 truncate font-mono">
+                              <UntrustedText value={repo.display_name ?? repo.name} oneLine plain />
+                            </span>
+                          </span>
+                          <span className="flex flex-none items-center gap-2">
+                            <LifecycleBadge state={repo.lifecycle_state} plain />
+                            <StatusDot tone={health.tone} label={health.label} className="text-xs text-muted-foreground" />
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      <footer className="mt-auto px-5 pt-4 pb-5 text-xs leading-relaxed text-muted-foreground">
+        Accounts own the repositories. ExtorQ monitors repositories, not accounts, so no collector is expected for an
+        account.
+      </footer>
+    </article>
   );
 }
 
-export function AssetClassPanel({
-  title,
-  titleId,
+/**
+ * One asset class: a heading with the class status (API rule, from the rows) and how many of its
+ * assets report, then its asset cards. A class with one card takes one column of the page grid;
+ * larger classes take the full row with cards side by side.
+ */
+export function AssetClassGroup({
+  cls,
   assets,
-  empty,
+  context,
+  details,
   now,
 }: {
-  title: string;
-  titleId: string;
+  cls: AssetClass;
+  /** Monitored assets of the class, in display order. */
   assets: AssetListItem[];
-  empty: string;
+  /** Context assets of the class (owner accounts). */
+  context: AssetListItem[];
+  details: Map<string, ApiResult<AssetDetailResponse>>;
   now: string;
 }) {
-  const rows = hierarchy(assets);
-  const attention = assets.filter((a) => a.coverage_status !== "ok").length;
+  const Icon = CLASS_ICON[cls.key];
+  const status = classStatus(assets);
+  const tiles = assets.length + (context.length > 0 ? 1 : 0);
+  const wide = tiles > 1;
+  const titleId = `class-${cls.key}`;
+  // Short names (e.g. "extorq-lab") for the relationship line of child assets.
+  const names = new Map(assets.map((a) => [a.asset_id, a.name]));
+
   return (
-    <Panel
-      title={title}
-      titleId={titleId}
-      meta={
-        assets.length > 0 ? (
-          <span>
-            {formatCount(assets.length)} asset{assets.length === 1 ? "" : "s"}
-            {attention > 0 ? ` · ${formatCount(attention)} need attention` : ""}
-          </span>
-        ) : null
-      }
-    >
-      {rows.length === 0 ? (
-        <EmptyState>{empty}</EmptyState>
+    <section aria-labelledby={titleId} className={cn("grid min-w-0 content-start gap-3", wide && "lg:col-span-2")}>
+      <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 id={titleId} className="flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground">
+          <Icon className="size-4 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
+          {cls.title}
+        </h2>
+        {assets.length > 0 ? (
+          <>
+            <StatusDot tone={status.tone} label={status.label} className="text-xs" />
+            <span className="text-xs text-muted-foreground tabular-nums">{status.summary}</span>
+          </>
+        ) : null}
+      </div>
+      {tiles === 0 ? (
+        <EmptyState compact={false} className="min-h-40 bg-card/40">
+          {cls.empty}
+        </EmptyState>
       ) : (
-        <ul className="divide-y divide-rule">
-          {rows.map((row) => (
-            <AssetRow key={row.asset.asset_id} row={row} now={now} />
-          ))}
-        </ul>
+        <div className={cn("grid gap-4", wide && "lg:grid-cols-2")}>
+          {assets.map((asset) => {
+            const parentName = asset.parent_asset_id ? names.get(asset.parent_asset_id) : undefined;
+            const context =
+              asset.asset_type === "kubernetes_node" && asset.parent_asset_id ? (
+                <>
+                  Node of <UntrustedText value={parentName ?? asset.parent_asset_id} plain limit={40} />
+                </>
+              ) : undefined;
+            return (
+              <AssetCard
+                key={asset.asset_id}
+                asset={asset}
+                detail={details.get(asset.asset_id) ?? null}
+                now={now}
+                context={context}
+              />
+            );
+          })}
+          {context.length > 0 ? <OwnerAccountsCard accounts={context} repositories={assets} /> : null}
+        </div>
       )}
-    </Panel>
+    </section>
   );
 }

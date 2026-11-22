@@ -167,13 +167,9 @@ class Repository(Protocol):
     def ping(self) -> None: ...
 
     # assets / coverage
-    def list_assets(
-        self, asset_type: str, environment: str, limit: int, offset: int
-    ) -> tuple[list[Row], int]: ...
     def all_assets(self) -> list[Row]: ...
     def get_asset(self, asset_id: str) -> Row | None: ...
     def asset_last_events(self, asset_ids: Sequence[str]) -> list[Row]: ...
-    def last_event_by_asset_type(self) -> list[Row]: ...
     def collectors(self, asset_id: str) -> list[Row]: ...
     def asset_children(self, asset_id: str) -> list[Row]: ...
     def inventory_summary(self, asset_id: str) -> list[Row]: ...
@@ -186,7 +182,9 @@ class Repository(Protocol):
     def list_findings(
         self, filters: FindingFilters, limit: int, offset: int
     ) -> tuple[list[Row], int, bool]: ...
-    def finding_severity_counts(self, asset_id: str) -> tuple[list[Row], bool]: ...
+    def finding_severity_counts(
+        self, asset_id: str, exclude_assets: Sequence[str] = ()
+    ) -> tuple[list[Row], bool]: ...
 
     # services (schema 1.1)
     def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]: ...
@@ -256,23 +254,9 @@ class Repository(Protocol):
 
 PING_SQL = "SELECT 1"
 
-ASSETS_LIST_SQL = """
-SELECT asset_id, asset_type, name, display_name, parent_asset_id, environment, criticality,
-       owner, labels, first_seen, last_seen, observed_by
-FROM extorq.assets FINAL
-WHERE (empty({asset_type:String}) OR asset_type = {asset_type:String})
-  AND (empty({environment:String}) OR environment = {environment:String})
-ORDER BY asset_type, asset_id
-LIMIT {limit:UInt32} OFFSET {offset:UInt32}
-"""
-
-ASSETS_COUNT_SQL = """
-SELECT count() AS total
-FROM extorq.assets FINAL
-WHERE (empty({asset_type:String}) OR asset_type = {asset_type:String})
-  AND (empty({environment:String}) OR environment = {environment:String})
-"""
-
+# Every asset (lab scale: a handful). GET /assets filters and pages these rows in Python
+# because the default excludes RETIRED assets, a state derived at request time from
+# collector health and observation times (``extorq.api.lifecycle``).
 ASSETS_ALL_SQL = """
 SELECT asset_id, asset_type, name, display_name, parent_asset_id, environment, criticality,
        owner, labels, first_seen, last_seen, observed_by
@@ -289,19 +273,15 @@ WHERE asset_id = {asset_id:String}
 LIMIT 1
 """
 
+# Newest event per asset id (also ids without an asset record), with the event's asset
+# type: lifecycle "last observed" input and the overview's last event per asset class.
 ASSET_LAST_EVENTS_SQL = """
-SELECT asset_id, max(event_time) AS last_event_at, max(ingested_time) AS last_ingested_at
+SELECT asset_id, any(asset_type) AS asset_type, max(event_time) AS last_event_at,
+       max(ingested_time) AS last_ingested_at
 FROM extorq.events
 WHERE (empty({asset_ids:Array(String)}) OR has({asset_ids:Array(String)}, asset_id))
 GROUP BY asset_id
 LIMIT 5000
-"""
-
-LAST_EVENT_BY_ASSET_TYPE_SQL = """
-SELECT asset_type, max(event_time) AS last_event_at
-FROM extorq.events
-GROUP BY asset_type
-LIMIT 100
 """
 
 COLLECTORS_SQL = """
@@ -387,10 +367,12 @@ WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
   AND (empty({service_id:String}) OR service_id = {service_id:String})
 """
 
+# ``exclude_assets``: retired assets left out of the overview's findings KPI.
 FINDINGS_LC_SEVERITY_SQL = """
 SELECT severity, state, uniqExact(finding_id) AS findings
 FROM extorq.v_findings_current
 WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+  AND NOT has({exclude_assets:Array(String)}, asset_id)
 GROUP BY severity, state
 """
 
@@ -462,6 +444,7 @@ FROM
     SELECT finding_id, argMax(severity, observed_at) AS f_severity
     FROM extorq.finding_observations
     WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+      AND NOT has({exclude_assets:Array(String)}, asset_id)
     GROUP BY finding_id
 )
 GROUP BY severity
@@ -1003,12 +986,9 @@ ANALYST_STATE_TYPES: tuple[str, ...] = (
 #: Every SELECT statement of this module (used by the static-SQL safety test).
 ALL_SELECT_SQL: tuple[str, ...] = (
     PING_SQL,
-    ASSETS_LIST_SQL,
-    ASSETS_COUNT_SQL,
     ASSETS_ALL_SQL,
     ASSET_GET_SQL,
     ASSET_LAST_EVENTS_SQL,
-    LAST_EVENT_BY_ASSET_TYPE_SQL,
     COLLECTORS_SQL,
     ASSET_CHILDREN_SQL,
     INVENTORY_SUMMARY_SQL,
@@ -1139,14 +1119,6 @@ class ClickHouseRepository:
 
     # -- assets / coverage --
 
-    def list_assets(
-        self, asset_type: str, environment: str, limit: int, offset: int
-    ) -> tuple[list[Row], int]:
-        params = {"asset_type": asset_type, "environment": environment}
-        rows = self._query(ASSETS_LIST_SQL, {**params, "limit": limit, "offset": offset})
-        total = self._scalar(ASSETS_COUNT_SQL, params, "total")
-        return rows, total
-
     def all_assets(self) -> list[Row]:
         return self._query(ASSETS_ALL_SQL)
 
@@ -1156,9 +1128,6 @@ class ClickHouseRepository:
 
     def asset_last_events(self, asset_ids: Sequence[str]) -> list[Row]:
         return self._query(ASSET_LAST_EVENTS_SQL, {"asset_ids": list(asset_ids)})
-
-    def last_event_by_asset_type(self) -> list[Row]:
-        return self._query(LAST_EVENT_BY_ASSET_TYPE_SQL)
 
     def collectors(self, asset_id: str) -> list[Row]:
         return self._query(COLLECTORS_SQL, {"asset_id": asset_id})
@@ -1218,14 +1187,20 @@ class ClickHouseRepository:
         total = self._scalar(FINDINGS_OBS_COUNT_SQL, params, "total")
         return [_strip_prefix(row, "f_") for row in rows], total, False
 
-    def finding_severity_counts(self, asset_id: str) -> tuple[list[Row], bool]:
-        """Lifecycle mode: rows (severity, state, findings); fallback: (severity, findings)."""
+    def finding_severity_counts(
+        self, asset_id: str, exclude_assets: Sequence[str] = ()
+    ) -> tuple[list[Row], bool]:
+        """Lifecycle mode: rows (severity, state, findings); fallback: (severity, findings).
+
+        ``exclude_assets`` leaves those assets' findings out (retired assets in the overview).
+        """
+        params = {"asset_id": asset_id, "exclude_assets": list(exclude_assets)}
         if self.findings_lifecycle_available():
             try:
-                return self._query(FINDINGS_LC_SEVERITY_SQL, {"asset_id": asset_id}), True
+                return self._query(FINDINGS_LC_SEVERITY_SQL, params), True
             except Exception as exc:  # noqa: BLE001 - documented fallback, flagged in response
                 self._lifecycle_failed(exc)
-        return self._query(FINDINGS_OBS_SEVERITY_SQL, {"asset_id": asset_id}), False
+        return self._query(FINDINGS_OBS_SEVERITY_SQL, params), False
 
     # -- services --
 

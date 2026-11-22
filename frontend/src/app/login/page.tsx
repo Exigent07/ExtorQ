@@ -1,39 +1,57 @@
+import { Boxes, FolderGit2, Laptop, Server } from "lucide-react";
 import type { Metadata } from "next";
 
-import { BrandMark } from "@/components/console/brand-mark";
+import { BrandTile } from "@/components/console/brand-mark";
 import { safeNextPath } from "@/lib/security/redirect";
 
 import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Sign in" };
 
+const CLASSES = [
+  { icon: Laptop, label: "macOS host" },
+  { icon: Server, label: "Ubuntu VM" },
+  { icon: Boxes, label: "kind cluster" },
+  { icon: FolderGit2, label: "GitHub repo" },
+];
+
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const params = await searchParams;
   const rawNext = Array.isArray(params.next) ? params.next[0] : params.next;
   const next = safeNextPath(rawNext);
   return (
-    <main className="flex min-h-dvh items-center justify-center px-4 py-10">
-      <div className="w-full max-w-[400px]">
-        <div className="mb-8 flex items-center gap-3 text-ink">
-          <BrandMark className="size-8" />
-          <div>
-            <p className="text-lg font-semibold leading-tight">ExtorQ</p>
-            <p className="text-xs text-muted-foreground">Security console · lab environment</p>
-          </div>
+    <main className="login-backdrop relative flex min-h-dvh flex-col items-center justify-center px-4 py-16">
+      <div className="w-full max-w-[380px]">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <BrandTile className="size-11 rounded-xl [&>svg]:size-[64%]" />
+          <h1 className="mt-6 text-2xl font-semibold tracking-tight text-foreground">Sign in to ExtorQ</h1>
+          <p className="mt-2 text-base text-muted-foreground">Security console for the lab environment</p>
         </div>
+
         <section
-          aria-labelledby="signin-title"
-          className="rounded-md border border-border bg-surface px-6 pt-6 pb-7"
+          aria-label="Sign in"
+          className="rounded-xl bg-card p-6 shadow-card ring-1 ring-hairline"
         >
-          <h1 id="signin-title" className="mb-1 text-xl font-semibold text-ink">
-            Sign in
-          </h1>
-          <p className="mb-6 text-sm text-muted-foreground">
-            Use your local analyst or viewer account. Sessions last 8 hours.
-          </p>
           <LoginForm next={next} />
         </section>
+
+        <p className="mt-6 text-center text-sm leading-relaxed text-muted-foreground">
+          Local analyst and viewer accounts. Sessions last 8 hours;
+          <br className="hidden sm:block" /> failed attempts are rate limited and logged.
+        </p>
       </div>
+
+      <ul
+        aria-label="Monitored asset classes"
+        className="absolute inset-x-0 bottom-6 hidden items-center justify-center gap-5 text-xs text-muted-foreground sm:flex"
+      >
+        {CLASSES.map(({ icon: Icon, label }) => (
+          <li key={label} className="flex items-center gap-1.5">
+            <Icon className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+            {label}
+          </li>
+        ))}
+      </ul>
     </main>
   );
 }

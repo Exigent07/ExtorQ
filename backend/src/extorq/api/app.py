@@ -10,6 +10,7 @@ from fastapi.routing import APIRoute
 
 from extorq.api import schemas as s
 from extorq.api.auth import TokenVerifier
+from extorq.api.cache import ResponseCache
 from extorq.api.errors import install_error_handlers
 from extorq.api.integrations import Integrations, PlatformIntegrations
 from extorq.api.logs import get_logger
@@ -34,6 +35,16 @@ Read API over ExtorQ's ClickHouse store plus two audited analyst mutations.
 
 **Data honesty.** Values come from stored telemetry; unknown values are `null`; empty
 sources yield empty lists plus explicit flags. All strings are untrusted: render as text.
+
+**Lifecycle.** Assets and collectors carry `lifecycle_state` (`active` | `stale` |
+`retired`). Retired assets (no collector reports for them and not observed within the
+retirement window, 24 h by default) are never deleted, but the asset list, the overview
+rollups and the health collector list leave them out unless `include_retired=true`.
+
+**Caching.** Aggregate GET responses (overview, health, assets, services, rules) are reused
+for up to `EXTORQ_API_CACHE_TTL_SECONDS` (default 15 s); `X-ExtorQ-Cache: hit|miss|off` and
+`X-ExtorQ-Cache-Age` say so, and `generated_at` is the computation time. Analyst mutations
+clear the cache.
 """
 
 
@@ -47,6 +58,7 @@ def create_app(
     repository: Repository | None = None,
     integrations: Integrations | None = None,
     clock: Callable[[], datetime] | None = None,
+    response_cache: ResponseCache | None = None,
 ) -> FastAPI:
     """Build the API. Arguments exist for tests; production uses the defaults."""
     settings = settings or ApiSettings()
@@ -65,6 +77,11 @@ def create_app(
     app.state.clock = clock or utc_now
     app.state.token_verifier = TokenVerifier(settings)
     app.state.summary_gate = SummaryGate(settings.summary_requests_per_minute)
+    app.state.response_cache = (
+        response_cache
+        if response_cache is not None
+        else ResponseCache(settings.cache_ttl_seconds, settings.cache_max_entries)
+    )
 
     install_error_handlers(app)
     app.include_router(api_router, prefix=API_PREFIX)
@@ -79,5 +96,7 @@ def create_app(
         "api_configured",
         docs_enabled=settings.enable_docs,
         token_configured=app.state.token_verifier.configured,
+        cache_ttl_seconds=settings.cache_ttl_seconds,
+        asset_retire_seconds=settings.asset_retire_seconds,
     )
     return app

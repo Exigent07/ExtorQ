@@ -45,7 +45,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List monitored assets */
+        /** List monitored assets (retired assets only with include_retired=true) */
         get: operations["list_assets"];
         put?: never;
         post?: never;
@@ -62,7 +62,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Asset detail: inventory, telemetry coverage, event counts, findings, alerts */
+        /** Asset detail: inventory, coverage, lifecycle, event counts, findings, alerts */
         get: operations["get_asset"];
         put?: never;
         post?: never;
@@ -721,6 +721,11 @@ export interface components {
             status: "ok" | "degraded" | "stale" | "missing";
             /** Last Event At */
             last_event_at?: string | null;
+            /**
+             * Assets Retired
+             * @default 0
+             */
+            assets_retired: number;
         };
         /** AssetDetailResponse */
         AssetDetailResponse: {
@@ -740,6 +745,26 @@ export interface components {
             services_summary: components["schemas"]["ServicesSummary"];
             /** Child Assets */
             child_assets?: components["schemas"]["AssetBrief"][];
+        };
+        /**
+         * AssetLifecycleSummary
+         * @description Lifecycle of the inventory at request time and what the rollups left out.
+         */
+        AssetLifecycleSummary: {
+            /** Stale After Seconds */
+            stale_after_seconds: number;
+            /** Retire After Seconds */
+            retire_after_seconds: number;
+            /** Active */
+            active: number;
+            /** Stale */
+            stale: number;
+            /** Retired */
+            retired: number;
+            /** Retired Asset Ids */
+            retired_asset_ids: string[];
+            /** Include Retired */
+            include_retired: boolean;
         };
         /** AssetListItem */
         AssetListItem: {
@@ -792,12 +817,27 @@ export interface components {
             last_event_at?: string | null;
             /** Open Alerts */
             open_alerts: number;
+            /**
+             * Lifecycle State
+             * @default active
+             * @enum {string}
+             */
+            lifecycle_state: "active" | "stale" | "retired";
+            /** Last Observed At */
+            last_observed_at?: string | null;
+            /** Lifecycle Reason */
+            lifecycle_reason?: string | null;
         };
         /** AssetListResponse */
         AssetListResponse: {
             /** Items */
             items: components["schemas"]["AssetListItem"][];
             page: components["schemas"]["PageInfo"];
+            /**
+             * Retired Excluded
+             * @default 0
+             */
+            retired_excluded: number;
         };
         /** AssetRecord */
         AssetRecord: {
@@ -850,6 +890,16 @@ export interface components {
             last_event_at?: string | null;
             /** Open Alerts */
             open_alerts: number;
+            /**
+             * Lifecycle State
+             * @default active
+             * @enum {string}
+             */
+            lifecycle_state: "active" | "stale" | "retired";
+            /** Last Observed At */
+            last_observed_at?: string | null;
+            /** Lifecycle Reason */
+            lifecycle_reason?: string | null;
             /** Attributes */
             attributes?: {
                 [key: string]: unknown;
@@ -932,6 +982,11 @@ export interface components {
             no_pipeline_reports: boolean;
             /** No Rule Runs */
             no_rule_runs: boolean;
+            /**
+             * Collectors Retired
+             * @default 0
+             */
+            collectors_retired: number;
         };
         /**
          * CollectionMethod
@@ -985,6 +1040,17 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             };
+            /**
+             * Lifecycle State
+             * @default active
+             * @enum {string}
+             */
+            lifecycle_state: "active" | "stale" | "retired";
+            /**
+             * Self Test
+             * @default false
+             */
+            self_test: boolean;
         };
         /** ContextResponse */
         ContextResponse: {
@@ -1595,6 +1661,11 @@ export interface components {
             ingest?: components["schemas"]["IngestSecuritySummary"] | null;
             /** Notes */
             notes: string[];
+            /**
+             * Collectors Retired
+             * @default 0
+             */
+            collectors_retired: number;
         };
         /**
          * HealthStatus
@@ -1868,6 +1939,7 @@ export interface components {
             /** Recent Important Alerts */
             recent_important_alerts: components["schemas"]["AlertListItem"][];
             service_coverage: components["schemas"]["ServicesSummary"];
+            lifecycle: components["schemas"]["AssetLifecycleSummary"];
         };
         /** PageInfo */
         PageInfo: {
@@ -3080,7 +3152,10 @@ export interface operations {
     };
     get_overview: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted). */
+                include_retired?: boolean;
+            };
             header?: {
                 /** @description Signed-in console user, set by the Next.js server. */
                 "X-ExtorQ-User"?: string | null;
@@ -3157,6 +3232,8 @@ export interface operations {
                 offset?: number;
                 asset_type?: components["schemas"]["AssetType"] | null;
                 environment?: components["schemas"]["Environment"] | null;
+                /** @description Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted). */
+                include_retired?: boolean;
             };
             header?: {
                 /** @description Signed-in console user, set by the Next.js server. */
@@ -4249,7 +4326,10 @@ export interface operations {
     };
     get_health: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted). */
+                include_retired?: boolean;
+            };
             header?: {
                 /** @description Signed-in console user, set by the Next.js server. */
                 "X-ExtorQ-User"?: string | null;

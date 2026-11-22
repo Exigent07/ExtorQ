@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "ExtorQ Analyst API",
-    "description": "\nRead API over ExtorQ's ClickHouse store plus two audited analyst mutations.\n\n**Authentication.** Every `/api/v1` call needs `Authorization: Bearer <api service token>`\n(held only by the console's Next.js server), `X-ExtorQ-User` and `X-ExtorQ-Role`\n(`analyst` | `viewer`). Viewers cannot mutate (403). Mutations write an\n`analyst_actions` audit row before the change.\n\n**Data honesty.** Values come from stored telemetry; unknown values are `null`; empty\nsources yield empty lists plus explicit flags. All strings are untrusted: render as text.\n",
+    "description": "\nRead API over ExtorQ's ClickHouse store plus two audited analyst mutations.\n\n**Authentication.** Every `/api/v1` call needs `Authorization: Bearer <api service token>`\n(held only by the console's Next.js server), `X-ExtorQ-User` and `X-ExtorQ-Role`\n(`analyst` | `viewer`). Viewers cannot mutate (403). Mutations write an\n`analyst_actions` audit row before the change.\n\n**Data honesty.** Values come from stored telemetry; unknown values are `null`; empty\nsources yield empty lists plus explicit flags. All strings are untrusted: render as text.\n\n**Lifecycle.** Assets and collectors carry `lifecycle_state` (`active` | `stale` |\n`retired`). Retired assets (no collector reports for them and not observed within the\nretirement window, 24 h by default) are never deleted, but the asset list, the overview\nrollups and the health collector list leave them out unless `include_retired=true`.\n\n**Caching.** Aggregate GET responses (overview, health, assets, services, rules) are reused\nfor up to `EXTORQ_API_CACHE_TTL_SECONDS` (default 15 s); `X-ExtorQ-Cache: hit|miss|off` and\n`X-ExtorQ-Cache-Age` say so, and `generated_at` is the computation time. Analyst mutations\nclear the cache.\n",
     "version": "0.1.0"
   },
   "paths": {
@@ -293,6 +293,18 @@
         ],
         "parameters": [
           {
+            "name": "include_retired",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted).",
+              "default": false,
+              "title": "Include Retired"
+            },
+            "description": "Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted)."
+          },
+          {
             "name": "X-ExtorQ-User",
             "in": "header",
             "required": false,
@@ -400,7 +412,7 @@
         "tags": [
           "assets"
         ],
-        "summary": "List monitored assets",
+        "summary": "List monitored assets (retired assets only with include_retired=true)",
         "operationId": "list_assets",
         "security": [
           {
@@ -467,6 +479,18 @@
               ],
               "title": "Environment"
             }
+          },
+          {
+            "name": "include_retired",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted).",
+              "default": false,
+              "title": "Include Retired"
+            },
+            "description": "Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted)."
           },
           {
             "name": "X-ExtorQ-User",
@@ -576,7 +600,7 @@
         "tags": [
           "assets"
         ],
-        "summary": "Asset detail: inventory, telemetry coverage, event counts, findings, alerts",
+        "summary": "Asset detail: inventory, coverage, lifecycle, event counts, findings, alerts",
         "operationId": "get_asset",
         "security": [
           {
@@ -2922,6 +2946,18 @@
         ],
         "parameters": [
           {
+            "name": "include_retired",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted).",
+              "default": false,
+              "title": "Include Retired"
+            },
+            "description": "Include RETIRED assets (no collector reports for them and not observed within the retirement window, 24 h by default) and their collectors in lists and rollups. Default: left out (never deleted)."
+          },
+          {
             "name": "X-ExtorQ-User",
             "in": "header",
             "required": false,
@@ -5088,6 +5124,11 @@
               }
             ],
             "title": "Last Event At"
+          },
+          "assets_retired": {
+            "type": "integer",
+            "title": "Assets Retired",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -5175,6 +5216,54 @@
           "services_summary"
         ],
         "title": "AssetDetailResponse"
+      },
+      "AssetLifecycleSummary": {
+        "properties": {
+          "stale_after_seconds": {
+            "type": "integer",
+            "title": "Stale After Seconds"
+          },
+          "retire_after_seconds": {
+            "type": "integer",
+            "title": "Retire After Seconds"
+          },
+          "active": {
+            "type": "integer",
+            "title": "Active"
+          },
+          "stale": {
+            "type": "integer",
+            "title": "Stale"
+          },
+          "retired": {
+            "type": "integer",
+            "title": "Retired"
+          },
+          "retired_asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retired Asset Ids"
+          },
+          "include_retired": {
+            "type": "boolean",
+            "title": "Include Retired"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stale_after_seconds",
+          "retire_after_seconds",
+          "active",
+          "stale",
+          "retired",
+          "retired_asset_ids",
+          "include_retired"
+        ],
+        "title": "AssetLifecycleSummary",
+        "description": "Lifecycle of the inventory at request time and what the rollups left out."
       },
       "AssetListItem": {
         "properties": {
@@ -5289,6 +5378,39 @@
           "open_alerts": {
             "type": "integer",
             "title": "Open Alerts"
+          },
+          "lifecycle_state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "stale",
+              "retired"
+            ],
+            "title": "Lifecycle State",
+            "default": "active"
+          },
+          "last_observed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed At"
+          },
+          "lifecycle_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle Reason"
           }
         },
         "additionalProperties": false,
@@ -5321,6 +5443,11 @@
           },
           "page": {
             "$ref": "#/components/schemas/PageInfo"
+          },
+          "retired_excluded": {
+            "type": "integer",
+            "title": "Retired Excluded",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -5444,6 +5571,39 @@
           "open_alerts": {
             "type": "integer",
             "title": "Open Alerts"
+          },
+          "lifecycle_state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "stale",
+              "retired"
+            ],
+            "title": "Lifecycle State",
+            "default": "active"
+          },
+          "last_observed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed At"
+          },
+          "lifecycle_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle Reason"
           },
           "attributes": {
             "anyOf": [
@@ -5660,6 +5820,11 @@
           "no_rule_runs": {
             "type": "boolean",
             "title": "No Rule Runs"
+          },
+          "collectors_retired": {
+            "type": "integer",
+            "title": "Collectors Retired",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -5826,6 +5991,21 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Details"
+          },
+          "lifecycle_state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "stale",
+              "retired"
+            ],
+            "title": "Lifecycle State",
+            "default": "active"
+          },
+          "self_test": {
+            "type": "boolean",
+            "title": "Self Test",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -8196,6 +8376,11 @@
             },
             "type": "array",
             "title": "Notes"
+          },
+          "collectors_retired": {
+            "type": "integer",
+            "title": "Collectors Retired",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -9236,6 +9421,9 @@
           },
           "service_coverage": {
             "$ref": "#/components/schemas/ServicesSummary"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/AssetLifecycleSummary"
           }
         },
         "additionalProperties": false,
@@ -9248,7 +9436,8 @@
           "alerts_over_time",
           "collection_health",
           "recent_important_alerts",
-          "service_coverage"
+          "service_coverage",
+          "lifecycle"
         ],
         "title": "OverviewResponse"
       },

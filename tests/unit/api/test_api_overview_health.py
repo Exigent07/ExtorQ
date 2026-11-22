@@ -18,6 +18,7 @@ from api_fakes import (
 from fastapi.testclient import TestClient
 
 from extorq.api import service
+from extorq.api.lifecycle import Estate
 
 
 def test_collector_staleness_rules() -> None:
@@ -48,7 +49,9 @@ def test_coverage_status_per_asset_and_class() -> None:
     assert service.coverage_status([failing]) == "degraded"
 
     assets = [asset_row(), asset_row("macos:workstation-01", asset_type="macos_host")]
-    coverage = service.asset_class_coverage(assets, [ok], {"linux_host": NOW})
+    estate = Estate(assets, [ok], {}, NOW, stale_seconds=3600, retire_seconds=86400)
+    events = [{"asset_id": "linux:lab-vm-01", "asset_type": "linux_host", "last_event_at": NOW}]
+    coverage = estate.class_coverage(assets, events, include_retired=False)
     by_type = {c.asset_type: c for c in coverage}
     assert [c.asset_type for c in coverage][:4] == [
         "macos_host",

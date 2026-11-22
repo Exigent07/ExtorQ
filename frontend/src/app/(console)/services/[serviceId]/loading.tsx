@@ -1,5 +1,5 @@
-import { PageSkeleton } from "@/components/console/skeletons";
+import { DetailPageSkeleton } from "@/components/views/assets/asset-skeletons";
 
 export default function Loading() {
-  return <PageSkeleton label="the service" strip panels={4} columns={2} />;
+  return <DetailPageSkeleton label="the service" figures={5} />;
 }

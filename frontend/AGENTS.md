@@ -18,7 +18,8 @@ states are explicit, and nothing is invented to fill a block.
 | Next.js | 16.4.6, App Router, `output: "standalone"`, `src/proxy.ts` | Turbopack build |
 | React / TypeScript | 19.3.1 / 5.9.3 strict (`noUncheckedIndexedAccess`) | |
 | Tailwind CSS | **4.3.3** | 4.3.4+ depends on ESM-only `magic-string@1`, which Node 20.11 cannot `require()` (the build fails). Upgrade only with Node ≥ 20.19 locally. |
-| shadcn/ui | components generated into `src/components/ui` (Radix base) | edited copies: `chart.tsx` has no raw-HTML style injection, `table.tsx` has no `"use client"` |
+| shadcn/ui | CLI **4.23.0**, style **radix-nova** (Radix base), generated into `src/components/ui` | edited copies (re-apply after `shadcn add --overwrite`, see DESIGN.md §4): `chart.tsx` has no raw-HTML style injection, `table.tsx` has no `"use client"`, `scroll-area.tsx` passes the CSP nonce, `sidebar.tsx` `SidebarInset` is a `<div>`, `use-mobile.ts` uses `useSyncExternalStore`; floating surfaces use `shadow-float`, overlays have no backdrop blur. Run the CLI in a scratch copy of the project so it cannot change pinned dependencies, then copy the files back. |
+| cmdk / get-nonce | 1.1.1 / 1.0.1 | Command palette; `get-nonce` hands the CSP nonce to Radix's modal scroll lock |
 | zod / jose / TanStack Table / Recharts / lucide-react | 4.6.7 / 6.2.17 / 8.21.3 / 3.8.0 / 1.72.0 | |
 | openapi-typescript | 7.13.0 | `pnpm gen:api` → `src/lib/api/openapi.d.ts` |
 
@@ -38,6 +39,9 @@ EXTORQ_SMOKE_VIEWER_PASSWORD_FILE=../var/secrets/viewer_password \
 EXTORQ_SHOTS_PASSWORD_FILE=../var/secrets/analyst_password \
   node --experimental-websocket scripts/screenshots.mjs --base http://127.0.0.1:3000 \
   --out docs/screenshots name=/path ...                    # headless Chrome PNGs (docs/screenshots)
+  # flags: --first-screen (1440x900 viewport only), --anon (signed out, e.g. /login),
+  #        --press Meta+k (open the palette), --click "<css selector>", --scale 2;
+  #        EXTORQ_SHOTS_WIDTH / EXTORQ_SHOTS_HEIGHT for other viewports (390x844 phone)
 docker build -t extorq/frontend:0.1.0 .                     # compose builds the same context
 ```
 
@@ -63,6 +67,7 @@ Configuration (server-side environment only; there are no `NEXT_PUBLIC_*` variab
 | `EXTORQ_ANALYST_USERNAME` / `EXTORQ_VIEWER_USERNAME` | default `analyst` / `viewer` |
 | `EXTORQ_HTTPS` | `auto` (default) / `true` / `false`: `Secure` + `__Host-` cookie and HSTS |
 | `EXTORQ_API_TIMEOUT_MS` / `EXTORQ_SUMMARY_TIMEOUT_MS` | 8000 / 90000 |
+| `EXTORQ_GRAFANA_URL` | browser URL of Grafana for the sidebar link (default `http://127.0.0.1:3001/`; http(s) without credentials, anything else falls back to the default) |
 
 ## Layout
 
@@ -79,14 +84,21 @@ src/app/(console)/              authenticated views (layout re-checks the sessio
   investigations/[alertId]/     investigation
   health/                       system health
   actions.ts                    server actions (logout, state change, AI summary, drill-downs)
-src/components/console/         shell and primitives (panel, tables, badges, UntrustedText, skeletons)
+src/components/console/         app shell (sidebar, breadcrumbs, command palette, freshness) and shared
+                                components (SectionCard, KpiCard, DataTable, DetailSheet, Timeline, badges,
+                                states, skeletons, UntrustedText): catalogue in DESIGN.md §4
 src/components/views/<view>/    view-specific components
-src/components/ui/              generated shadcn/ui components
+src/components/ui/              generated shadcn/ui components (radix-nova)
+src/hooks/                      generated shadcn hooks (use-mobile)
 src/lib/api/                    zod schemas, generated OpenAPI types, compile-time contract check
 src/lib/auth/                   roles, password check, throttle, session tokens (pure, unit-tested)
 src/lib/security/               display sanitiser, CSP, id validation, redirect guard
 src/lib/server/                 server-only: config, secrets, API client, session, log
 src/lib/services.ts             service coverage / exposure / attribution presentation rules
+src/lib/navigation.ts           sidebar groups and the URL-derived breadcrumb trail (ids validated)
+src/lib/overview.ts             Overview KPIs, class coverage rows, activity series, chart ticks (unit-tested)
+src/lib/palette.ts              command-palette data shapes; built in src/lib/server/shell.ts
+DESIGN.md                       design system: tokens, components, page anatomy, states, data viz, a11y
 scripts/smoke.mjs, run-tests.mjs
 ```
 
@@ -110,9 +122,12 @@ scripts/smoke.mjs, run-tests.mjs
    change alert state or request AI summaries: the form is not rendered, the server action
    refuses, and the API returns 403. The smoke test replays the analyst form as the viewer.
 5. **All telemetry is attacker-controlled.** Render strings through `UntrustedText` (plain text,
-   visible markers for bidi/zero-width/tag/control characters, truncation with an expand
-   control). Never render telemetry as HTML, never `dangerouslySetInnerHTML` (lint error),
-   never turn a URL from telemetry into a link. Links are built only from validated ids.
+   visible markers for bidi/zero-width/tag/control characters; long values cut with the full
+   value in a popover, `oneLine` ellipsis with a hover card, `plain` inside links, `RawBlock`
+   in a DetailSheet for raw excerpts: never "Show all N characters" walls). Never render
+   telemetry as HTML, never `dangerouslySetInnerHTML` (lint error), never turn a URL from
+   telemetry into a link, never put telemetry in a `Hint`/`title`. Links are built only from
+   validated ids.
 6. **Unknown stays unknown.** Missing values render as a grey dash, real zeros as `0`. Counts
    shown in a view come from the API or from the rows on screen, never typed in. Stale data
    carries a stale badge; capped lists say they are capped.
@@ -122,21 +137,28 @@ scripts/smoke.mjs, run-tests.mjs
    `unsafe-eval` in production, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`,
    `form-action 'self'`), `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, COOP/CORP,
    Permissions-Policy, HSTS over HTTPS. Style *attributes* are allowed (React style props).
+   Library `<style>` elements carry the nonce: the root layout reads `x-nonce` into
+   `NonceProvider`, which feeds Radix ScrollArea (`useNonce`) and `get-nonce` (modal scroll lock).
+   The command palette and every shell list come from server components as props.
 9. **AI is advisory.** Jev and Gemini panels are labelled advisory; Gemini evidence ids are chips
    that jump to `#evidence-<event_id>` only when verified, and unverified ids are flagged and
    never styled as verified. A summary is requested only by an analyst click (it spends budget).
 
-## Design tokens (see `src/app/globals.css`)
+## Design system (see `DESIGN.md` and `src/app/globals.css`)
 
-Dark graphite, "data terminal": panels one step darker than the ground (`--xq-ground` #171719,
-`--xq-surface` #131217), separation by 1px lines (`--xq-border`, row rules `--xq-rule`), three
-text tiers (`--xq-text`, `--xq-text-2`, `--xq-muted`, each ≥ 4.5:1), the only selection mark a
-1px ink line (`--xq-line`). Colour is reserved for data: severity (`--xq-sev-*` with dark tints)
-and health (`--xq-ok|warn|bad|off`). Geist Sans for text, Geist Mono for ids and figures; type
-scale 11/12/13/14/16/20/26 px. Components use the Tailwind utilities mapped from the tokens
-(`bg-surface`, `text-ink-2`, `text-sev-high`, `border-rule`, …), never raw hex values.
-States: loading = flat bars at real size (no shimmer), empty = dashed frame + one sentence,
-error = inside the failed block with a retry. No gradients, glows or decorative motion.
+Premium dark security-operations console (Linear / Vercel / Wiz / Datadog dark class): canvas
+`#09090b`, sidebar a half step lifted, cards `#111113` with a 1px white-7% hairline and a faint
+top highlight, 12px card / 8px control radius, 32px gutters. One brand accent (indigo-violet
+`oklch(0.66 0.19 280)`) for the primary action, active nav, focus rings and chart series 1; colour
+otherwise only carries meaning: severity pills (red/orange/amber/blue/zinc 400 on 10% tint),
+health dots (emerald/amber/red/zinc), service coverage. Geist Sans for UI, Geist Mono for ids
+and UTC times, tabular figures; scale 12/13/14/16/20/24/30 (nothing smaller than 12px). States:
+loading = flat skeletons at real size (no shimmer), empty = dashed frame + one sentence, error
+= inside the failed block with a retry. Gradients only inside charts and the login glow; motion
+150-200 ms on hover/focus/open only. Legacy utility names of the first console (`bg-surface`,
+`text-ink-2`, `border-rule`, ...) remain mapped onto the new palette; new code uses the names in
+DESIGN.md. Shell: shadcn Sidebar (Monitor / Detect / Operate / Analytics), top bar with
+breadcrumbs, Cmd/Ctrl-K palette, LAB pill and data-freshness indicator (Cmd/Ctrl+B collapses).
 
 ## Adding a view
 
@@ -145,8 +167,11 @@ error = inside the failed block with a retry. No gradients, glows or decorative 
 2. Add a typed endpoint function in `src/lib/server/api.ts` (validate ids first).
 3. Create `src/app/(console)/<route>/page.tsx` (server component): `requireSession()`, fetch in
    parallel, render `ErrorState` per failed block, `EmptyState` for honest empties, and a
-   `loading.tsx` with `PageSkeleton`. Put the page's one-line finding in `PageHeader`.
-4. Render strings with `UntrustedText`; use `SortableTable` (TanStack) for client-side sorting.
+   `loading.tsx` with the skeleton presets. Put the page's one-line finding in `PageHeader`
+   (`subtitle`) and pass `freshness={result.receivedAt}`. Lay cards out per DESIGN.md §3
+   (`SectionCard`, `KpiCard`, 12-column grid, rows that end level).
+4. Render strings with `UntrustedText`; use `DataTable` (TanStack: sorting, faceted filters,
+   column visibility, pagination, row click) for lists and `DetailSheet` for row details.
 5. Add the route's markers to `scripts/smoke.mjs`, a unit test for any new pure logic, then run
    lint, typecheck, test, build and the smoke test.
 

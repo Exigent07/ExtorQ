@@ -1,5 +1,5 @@
-import { PageSkeleton } from "@/components/console/skeletons";
+import { DetailPageSkeleton } from "@/components/views/assets/asset-skeletons";
 
 export default function Loading() {
-  return <PageSkeleton label="the asset" strip panels={3} />;
+  return <DetailPageSkeleton label="the asset" kpis />;
 }

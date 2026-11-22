@@ -6,13 +6,13 @@ export const FINDING_STATE: Record<string, { label: string; detail: string; clas
   open: {
     label: "Open",
     detail: "Observed in the latest successful scan of its scope.",
-    className: "text-ink",
+    className: "text-foreground",
   },
   unverified: {
     label: "Unverified",
     detail:
       "Observed, but the latest scan attempt of its scope was partial or failed (or only partial scans saw it), so its current state cannot be confirmed.",
-    className: "text-warn",
+    className: "text-health-warn",
   },
   resolved: {
     label: "Resolved",

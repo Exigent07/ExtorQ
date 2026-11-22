@@ -12,6 +12,8 @@ const nextConfig: NextConfig = {
   // `next dev` would otherwise append a generated block to the hand-written AGENTS.md
   // whenever it detects an AI coding agent; the console's guide stays authored here.
   agentRules: false,
+  // The dev-mode route indicator would overlap the sidebar footer in screenshots.
+  devIndicators: false,
   poweredByHeader: false,
   reactStrictMode: true,
   productionBrowserSourceMaps: false,

@@ -1,18 +1,18 @@
 "use client";
 
 import { Sparkles } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { requestSummaryAction } from "@/app/(console)/actions";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
-import { aiStatusText } from "./ai-labels";
+import { refusalDetail, SUMMARY_OUTCOME } from "./ai-labels";
 
 /**
  * On-demand Gemini overview. Analysts only (the server action and the API both re-check the
- * role). Spends AI budget, so it is never triggered automatically; failures are shown
- * inline and leave the deterministic investigation untouched.
+ * role). It spends AI budget, so it is never triggered automatically. The server action
+ * revalidates the page on success, so a new overview appears without another request.
  */
 export function SummaryRequestButton({
   alertId,
@@ -23,7 +23,6 @@ export function SummaryRequestButton({
   canRequest: boolean;
   hasSummary: boolean;
 }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ tone: "info" | "error"; text: string } | null>(null);
 
@@ -37,33 +36,32 @@ export function SummaryRequestButton({
       const result = await requestSummaryAction(alertId);
       if (!result.ok) {
         setMessage({ tone: "error", text: result.message });
-        return;
+      } else if (result.status !== "ok") {
+        const detail = result.status === "budget_exceeded" ? refusalDetail(result.error) : null;
+        setMessage({
+          tone: "error",
+          text: detail ?? SUMMARY_OUTCOME[result.status] ?? `No overview was produced (${result.status}).`,
+        });
+      } else {
+        setMessage({ tone: "info", text: "Overview generated. Its evidence ids were checked against this alert." });
       }
-      if (result.status !== "ok") {
-        setMessage({ tone: "error", text: `${aiStatusText(result.status)}. No overview was produced.` });
-      }
-      router.refresh();
     });
   }
 
   return (
-    <div className="flex flex-col items-start gap-2">
-      <button
-        type="button"
-        onClick={request}
-        disabled={pending}
-        aria-describedby={`summary-note-${alertId}`}
-        className="inline-flex h-8 items-center gap-2 rounded-full border border-control px-4 text-sm text-ink transition-colors hover:bg-raised disabled:opacity-60"
-      >
-        {pending ? <Spinner className="size-3.5" /> : <Sparkles className="size-3.5" aria-hidden="true" />}
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <Button type="button" variant="outline" onClick={request} disabled={pending} aria-describedby={`summary-note-${alertId}`} className="h-8">
+        {pending ? <Spinner className="size-3.5" /> : <Sparkles aria-hidden="true" />}
         {pending ? "Generating overview" : hasSummary ? "Generate a new overview" : "Generate overview"}
-      </button>
-      <p id={`summary-note-${alertId}`} aria-live="polite" className="text-xs text-muted-foreground">
-        {pending
-          ? "Waiting for Gemini; this can take up to a minute and a half."
-          : message
-            ? <span className={message.tone === "error" ? "text-bad" : undefined}>{message.text}</span>
-            : "Uses the daily AI budget. The overview is advisory and cites evidence ids that are checked against this alert."}
+      </Button>
+      <p id={`summary-note-${alertId}`} aria-live="polite" className="min-w-0 flex-1 text-xs text-muted-foreground">
+        {pending ? (
+          "Waiting for Gemini; this can take up to a minute and a half."
+        ) : message ? (
+          <span className={message.tone === "error" ? "text-health-warn" : "text-fg-2"}>{message.text}</span>
+        ) : (
+          "Spends the daily AI budget (one request per alert per cooldown). Advisory; cited evidence ids are checked against this alert."
+        )}
       </p>
     </div>
   );

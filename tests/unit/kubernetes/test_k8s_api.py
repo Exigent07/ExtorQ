@@ -25,8 +25,10 @@ from extorq_collectors.kubernetes.api import (
     KubeGone,
     KubeUnauthorized,
     KubeUnavailable,
+    jwt_expiry,
     read_token,
     token_expiry,
+    unauthorized_reason,
 )
 
 SYNTHETIC_CA = (
@@ -269,3 +271,85 @@ def test_token_file_is_reread_for_rotation(tmp_path: Path) -> None:
     (tmp_path / "inventory.token").write_text("synthetic-rotated-token")
     client.list("/api/v1/pods")
     assert tokens == [f"Bearer {SYNTHETIC_TOKEN}", "Bearer synthetic-rotated-token"]
+
+
+# ── token rotation and 401 handling (all tokens SYNTHETIC) ────────────
+
+
+def synthetic_jwt(exp: int, marker: str = "a") -> str:
+    """An unsigned JWT-shaped string with an ``exp`` claim (not a credential)."""
+
+    def b64(data: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    return f"{b64({'alg': 'none'})}.{b64({'exp': exp, 'sub': marker})}.synthetic-signature"
+
+
+def test_401_retries_once_with_a_token_re_minted_meanwhile(tmp_path: Path) -> None:
+    """kind.sh token replaced the file while the request with the old token was in flight."""
+    old = synthetic_jwt(1_700_000_000, "old")  # expired
+    new = synthetic_jwt(4_000_000_000, "new")
+    token_file = tmp_path / "inventory.token"
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["authorization"])
+        if request.headers["authorization"] == f"Bearer {new}":
+            return httpx.Response(200, json={"items": [], "metadata": {}})
+        token_file.write_text(new + "\n")  # the re-mint lands during the rejected request
+        return httpx.Response(401, json={"kind": "Status", "reason": "Unauthorized"})
+
+    client, sleeps = client_for(tmp_path, handler)
+    token_file.write_text(old)
+    assert client.list("/api/v1/pods").items == []
+    assert seen == [f"Bearer {old}", f"Bearer {new}"]
+    assert client.stats.token_reloads == 1 and sleeps == []
+
+
+def test_401_with_an_unchanged_token_fails_fast_and_says_it_expired(tmp_path: Path) -> None:
+    expired = synthetic_jwt(1_700_000_000)  # 2023-11-14T22:13:20Z
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.headers["authorization"])
+        return httpx.Response(401, json={"kind": "Status", "reason": "Unauthorized"})
+
+    client, sleeps = client_for(tmp_path, handler)
+    (tmp_path / "inventory.token").write_text(expired)
+    with pytest.raises(KubeUnauthorized) as info:
+        client.get("/version")
+    message = str(info.value)
+    assert "token expired at 2023-11-14T22:13:20Z" in message
+    assert "kind.sh token" in message and "no restart needed" in message
+    assert expired not in message and "synthetic-signature" not in message
+    assert len(calls) == 1 and sleeps == [] and client.stats.token_reloads == 0
+
+
+def test_401_after_the_reload_is_final(tmp_path: Path) -> None:
+    """Both the old and the re-minted token rejected: exactly one retry, then 401."""
+    token_file = tmp_path / "inventory.token"
+    tokens = iter([synthetic_jwt(4_000_000_000, "second"), synthetic_jwt(4_000_000_000, "third")])
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        token_file.write_text(next(tokens))  # rotates on every request
+        return httpx.Response(401, json={"kind": "Status", "reason": "Unauthorized"})
+
+    client, _ = client_for(tmp_path, handler)
+    token_file.write_text(synthetic_jwt(4_000_000_000, "first"))
+    with pytest.raises(KubeUnauthorized, match="rejected before its expiry"):
+        client.get("/version")
+    assert calls["n"] == 2 and client.stats.token_reloads == 1
+
+
+def test_unauthorized_reason_uses_the_exp_claim_only() -> None:
+    now = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
+    expired = synthetic_jwt(int(datetime(2026, 11, 22, 11, 0, tzinfo=UTC).timestamp()))
+    valid = synthetic_jwt(int(datetime(2026, 11, 24, 7, 0, tzinfo=UTC).timestamp()))
+    assert unauthorized_reason(expired, now) == "token expired at 2026-11-22T11:00:00Z"
+    assert unauthorized_reason(valid, now).startswith(
+        "token rejected before its expiry 2026-11-24T07:00:00Z"
+    )
+    assert unauthorized_reason("not-a-jwt", now) == "token rejected; expiry unknown"
+    assert jwt_expiry("a.%%%.b") is None

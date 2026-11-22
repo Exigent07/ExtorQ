@@ -17,8 +17,8 @@ export interface LinkTab {
  */
 export function LinkTabs({ tabs, active, label }: { tabs: LinkTab[]; active: string; label: string }) {
   return (
-    <nav aria-label={label} className="mb-6 border-b border-border">
-      <ul className="no-scrollbar -mb-px flex gap-6 overflow-x-auto">
+    <nav aria-label={label} className="mb-6 border-b border-hairline">
+      <ul className="no-scrollbar -mb-px flex gap-1 overflow-x-auto">
         {tabs.map((tab) => {
           const current = tab.key === active;
           return (
@@ -27,13 +27,18 @@ export function LinkTabs({ tabs, active, label }: { tabs: LinkTab[]; active: str
                 href={tab.href}
                 aria-current={current ? "page" : undefined}
                 className={cn(
-                  "inline-flex h-10 items-center gap-2 border-b-2 text-sm whitespace-nowrap transition-colors",
-                  current ? "border-line text-ink" : "border-transparent text-muted-foreground hover:text-ink",
+                  "relative inline-flex h-10 items-center gap-2 px-3 text-sm whitespace-nowrap transition-colors duration-150",
+                  "after:absolute after:inset-x-3 after:-bottom-px after:h-0.5 after:rounded-full",
+                  current
+                    ? "font-medium text-foreground after:bg-brand"
+                    : "text-muted-foreground after:bg-transparent hover:text-foreground",
                 )}
               >
                 {tab.label}
                 {tab.count !== undefined && tab.count !== null ? (
-                  <span className="font-mono text-xs text-muted-foreground">{formatCount(tab.count)}</span>
+                  <span className="rounded-md bg-white/[0.05] px-1.5 text-xs text-muted-foreground tabular-nums">
+                    {formatCount(tab.count)}
+                  </span>
                 ) : null}
               </Link>
             </li>

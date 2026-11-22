@@ -39,6 +39,8 @@ from extorq.contracts.simulation import SimulationRun
 MAX_BATCH_RECORDS = 1000
 MAX_BODY_BYTES = 4 * 1024 * 1024
 MAX_RECORD_BYTES = 64 * 1024
+#: Periodic instance refreshes pass dedup at most once per bucket (see record_identity).
+INSTANCE_REFRESH_BUCKET_SECONDS = 600
 
 
 class RecordKind(StrEnum):
@@ -173,12 +175,18 @@ def record_identity(record: IngestRecord) -> str:
             "rec.service.v1", data.service_id, canonical_json(data.model_dump(mode="json"))
         )
     if isinstance(data, ServiceInstance):
+        # v2: include a refresh bucket of observed_at. v1 excluded observed_at entirely, so a
+        # periodic re-send of an unchanged live instance (and a state change back to an
+        # earlier value) was deduplicated for the 7-day dedup window and live instances
+        # looked stale. Identical re-sends within one bucket still collapse.
+        bucket = int(data.observed_at.timestamp()) // INSTANCE_REFRESH_BUCKET_SECONDS
         return stable_id(
-            "rec.instance.v1",
+            "rec.instance.v2",
             data.instance_id,
             data.state,
             data.present,
             canonical_json(data.model_dump(mode="json", exclude={"observed_at"})),
+            bucket,
         )
     if isinstance(data, Asset):
         # Full content (including last_seen): collectors send asset upserts at most

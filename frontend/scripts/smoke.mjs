@@ -367,14 +367,23 @@ async function main() {
 
   const overview = await page("overview", "/", cookie, [
     "Overview",
-    "Telemetry coverage",
+    "Open alerts",
+    "Assets reporting",
+    "Asset coverage",
+    "Alert activity",
     "Service coverage",
-    "Detection alerts over time",
-    "Security posture",
+    "Findings by severity",
     "Recent important alerts",
     "Collection health",
   ]);
-  if (overview) checkSecurityHeaders("overview", overview.headers);
+  if (overview) {
+    checkSecurityHeaders("overview", overview.headers);
+    const text = visibleText(overview.text);
+    // App shell: labelled nav groups, the Cmd/Ctrl-K palette trigger, the environment pill.
+    const shell = ["Monitor", "Detect", "Operate", "System health", "Grafana", "Search", "LAB"].filter((m) => !text.includes(m));
+    record(shell.length === 0, "console shell: sidebar groups, palette trigger, environment", shell.length ? `missing: ${shell.join(", ")}` : "");
+    record(!/Show all \d+ characters/.test(text), "no 'Show all N characters' walls on the overview");
+  }
 
   const assets = await page("assets", "/assets", cookie, ["Assets", "macOS hosts", "Linux VMs", "Kubernetes", "GitHub"]);
   if (assets) await assetDrilldown(assets.text, cookie);

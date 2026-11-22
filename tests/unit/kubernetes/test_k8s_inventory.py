@@ -12,8 +12,11 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import secrets
 import sqlite3
-from collections import Counter
+import uuid
+from collections import Counter, defaultdict
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -24,14 +27,17 @@ import pytest
 from extorq.contracts.catalog import validate_event_semantics
 from extorq.contracts.identity import finding_id
 from extorq.contracts.ingest import INGEST_RECORD_ADAPTER
+from extorq.ingest import processing, registry
 from extorq.ingest.otlp_k8s import (
     container_instance_id,
     k8s_service_service_id,
     pod_instance_id,
     workload_service_id,
 )
+from extorq.pipeline.spool import NewRecord, Spool
 from extorq_collectors.kubernetes.collector import (
     EVENTS_OK_KV,
+    REFRESH_KV,
     KubernetesCollectorError,
     KubernetesInventoryCollector,
 )
@@ -606,3 +612,230 @@ def test_derived_field_changes_are_not_reported_as_object_updates(harness: Any) 
         model.security_summary = original
     assert events_of(records, "k8s.resource.updated") == []
     assert any(r["kind"] == "inventory_item" for r in records)
+
+
+# ── instance refresh through the gateway's dedup (D1-IC-8) ────────────
+
+
+def k8s_producer() -> registry.ProducerEntry:
+    """The inventory producer as registered by scripts/bootstrap.py (synthetic token)."""
+    return registry.ProducerEntry(
+        producer_id="k8s-inventory-extorq-lab",
+        token_sha256=registry.token_digest(secrets.token_hex(16)),
+        allowed_kinds=[
+            "event",
+            "asset",
+            "inventory_item",
+            "finding",
+            "scan_run",
+            "collector_health",
+            "service",
+            "service_instance",
+        ],
+        allowed_source_types=["k8s.api_inventory", "k8s.events", "k8s.posture"],
+        allowed_asset_patterns=["k8s:extorq-lab*"],
+    )
+
+
+class GatewaySpool:
+    """The gateway's real record pipeline (prepare_batch) and spool dedup, on a temp file."""
+
+    def __init__(self, path: Path) -> None:
+        self.spool = Spool(path)
+        self.producer = k8s_producer()
+
+    def submit(self, records: list[dict[str, Any]]) -> dict[str, tuple[int, int]]:
+        """Deliver one cycle's records; return ``(accepted, duplicates)`` per record kind."""
+        batch = processing.prepare_batch(
+            records, self.producer, batch_id=uuid.uuid4().hex, now=datetime.now(UTC)
+        )
+        assert batch.denials == [] and [(q.kind, q.reason) for q in batch.quarantined] == []
+        grouped: dict[str, list[NewRecord]] = defaultdict(list)
+        for c in batch.candidates:
+            grouped[c.kind].append(
+                NewRecord(kind=c.kind, record_key=c.record_key, payload=c.payload)
+            )
+        out = {}
+        for kind, group in grouped.items():
+            outcome = self.spool.commit_batch(
+                producer_id=self.producer.producer_id,
+                batch_id=uuid.uuid4().hex,
+                content_sha256=uuid.uuid4().hex,
+                ingested_at=datetime.now(UTC).isoformat(),
+                records=group,
+                extra=[],
+                build_result=lambda accepted, duplicates: {
+                    "accepted": accepted,
+                    "duplicates": duplicates,
+                },
+            )
+            out[kind] = (outcome.result["accepted"], outcome.result["duplicates"])
+        return out
+
+
+@pytest.fixture
+def gateway(tmp_path: Path) -> Iterator[GatewaySpool]:
+    spool = GatewaySpool(tmp_path / "spool.db")
+    yield spool
+    spool.spool.close()
+
+
+def instances_of(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [r["data"] for r in records if r["kind"] == "service_instance"]
+
+
+def at(monkeypatch: pytest.MonkeyPatch, ctx: CollectorContext, when: datetime) -> None:
+    """Pin the collector clock (ctx.now) for the next cycle."""
+    monkeypatch.setattr(ctx, "now", lambda: when)
+
+
+T0 = datetime.now(UTC).replace(microsecond=0)
+
+
+def test_refresh_resends_live_instances_and_the_gateway_keeps_them(
+    harness: Any, gateway: GatewaySpool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D1-IC-8: refreshed instances reach storage with a newer observed_at."""
+    collector, ctx, _api, db = harness
+    at(monkeypatch, ctx, T0)
+    first = run_cycle(collector, ctx, db)
+    assert gateway.submit(first)["service_instance"] == (24, 0)
+    at(monkeypatch, ctx, T0 + timedelta(minutes=5))  # no refresh due, nothing changed
+    assert instances_of(run_cycle(collector, ctx, db)) == []
+    t2 = T0 + timedelta(minutes=16)  # refresh_seconds = 900
+    at(monkeypatch, ctx, t2)
+    refreshed = run_cycle(collector, ctx, db)
+    instances = instances_of(refreshed)
+    assert ctx.health_details["full_refresh"] is True
+    assert ctx.health_details["instances_sent"] == 24
+    assert sorted(i["instance_id"] for i in instances) == sorted(
+        i["instance_id"] for i in instances_of(first)
+    )  # identities stable
+    assert all(i["present"] and datetime.fromisoformat(i["observed_at"]) == t2 for i in instances)
+    assert {i["attributes"]["snapshot_id"] for i in instances} == {f"k8s-{t2:%Y%m%dT%H%M%SZ}"}
+    delivered = gateway.submit(refreshed)
+    assert delivered["service_instance"] == (24, 0)  # none dropped as a duplicate
+    assert delivered["service"] == (14, 0)
+
+
+def test_unmarked_instance_refreshes_reach_storage_after_refresh_bucket(
+    harness: Any, gateway: GatewaySpool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Since record identity v2 (lead, 2026-11-22) the gateway's instance dedup key includes a
+    10-minute refresh bucket of observed_at, so periodic re-sends of unchanged instances reach
+    storage even without the collector's snapshot marker (which remains harmless).
+    """
+    collector, ctx, _api, db = harness
+
+    def unmarked(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = copy.deepcopy(records)
+        for r in out:
+            if r["kind"] == "service_instance":
+                del r["data"]["attributes"]["snapshot_id"]
+        return out
+
+    at(monkeypatch, ctx, T0)
+    assert gateway.submit(unmarked(run_cycle(collector, ctx, db)))["service_instance"] == (24, 0)
+    at(monkeypatch, ctx, T0 + timedelta(minutes=16))
+    resent = unmarked(run_cycle(collector, ctx, db))
+    assert len(instances_of(resent)) == 24
+    assert gateway.submit(resent)["service_instance"] == (24, 0)  # D1-IC-8 fixed in the contract
+
+
+def test_removed_pod_gets_tombstones_while_live_pods_stay_fresh(
+    harness: Any, gateway: GatewaySpool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collector, ctx, api, db = harness
+    at(monkeypatch, ctx, T0)
+    gateway.submit(run_cycle(collector, ctx, db))
+    path = KIND_BY_NAME["Pod"].path
+    api.docs[path] = copy.deepcopy(api.docs[path])
+    weak = next(
+        p for p in api.docs[path]["items"] if p["metadata"]["name"].startswith("weak-log-reader-")
+    )
+    api.docs[path]["items"].remove(weak)  # derived from the real list: the pod is gone
+    t1 = T0 + timedelta(minutes=16)
+    at(monkeypatch, ctx, t1)
+    records = run_cycle(collector, ctx, db)
+    instances = instances_of(records)
+    gone = [i for i in instances if not i["present"]]
+    assert sorted(i["instance_kind"] for i in gone) == ["container", "pod"]
+    assert {i["pod_uid"] for i in gone} == {weak["metadata"]["uid"]}
+    live = [i for i in instances if i["present"]]
+    assert len(live) == 22 and weak["metadata"]["uid"] not in {i["pod_uid"] for i in live}
+    assert all(datetime.fromisoformat(i["observed_at"]) == t1 for i in instances)
+    assert all(i["attributes"]["snapshot_id"] == f"k8s-{t1:%Y%m%dT%H%M%SZ}" for i in instances)
+    assert ctx.health_details["instances_removed"] == 2
+    assert gateway.submit(records)["service_instance"] == (24, 0)
+    at(monkeypatch, ctx, t1 + timedelta(minutes=16))  # next refresh: no second tombstone
+    later = instances_of(run_cycle(collector, ctx, db))
+    assert len(later) == 22 and all(i["present"] for i in later)
+
+
+def test_instance_state_flapping_back_is_not_dropped_by_the_gateway(
+    harness: Any, gateway: GatewaySpool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ready true -> false -> true: the return to an earlier content must be stored."""
+    collector, ctx, api, db = harness
+    at(monkeypatch, ctx, T0)
+    gateway.submit(run_cycle(collector, ctx, db))
+    path = KIND_BY_NAME["Pod"].path
+    api.docs[path] = copy.deepcopy(api.docs[path])
+    pod = next(
+        p for p in api.docs[path]["items"] if p["metadata"]["name"].startswith("lab-portal-")
+    )
+    status = pod["status"]["containerStatuses"][0]
+    for minute, ready in ((1, False), (2, True)):
+        status["ready"] = ready  # derived from the real pod: readiness probe flaps
+        at(monkeypatch, ctx, T0 + timedelta(minutes=minute))
+        records = run_cycle(collector, ctx, db)
+        (container,) = instances_of(records)
+        assert container["container_id"] == LAB_PORTAL_CONTAINER
+        assert container["attributes"]["ready"] is ready
+        assert gateway.submit(records)["service_instance"] == (1, 0)
+
+
+def test_first_cycle_after_a_restart_is_a_full_refresh(
+    harness: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collector, ctx, _api, db = harness
+    at(monkeypatch, ctx, T0)
+    run_cycle(collector, ctx, db)
+    assert ctx.state.get(REFRESH_KV) == T0.isoformat()
+    restarted = KubernetesInventoryCollector(
+        transport=collector._transport, kubeconfig_path=collector._kubeconfig_path
+    )
+    at(monkeypatch, ctx, T0 + timedelta(minutes=2))  # last refresh only 2 min ago
+    assert len(instances_of(run_cycle(restarted, ctx, db))) == 24
+    assert ctx.health_details["full_refresh"] is True
+    at(monkeypatch, ctx, T0 + timedelta(minutes=3))
+    assert instances_of(run_cycle(restarted, ctx, db)) == []
+    assert ctx.health_details["full_refresh"] is False
+
+
+def synthetic_jwt(exp: datetime) -> str:
+    """An unsigned JWT-shaped string with an ``exp`` claim (SYNTHETIC, not a credential)."""
+
+    def b64(data: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    return f"{b64({'alg': 'none'})}.{b64({'exp': int(exp.timestamp())})}.synthetic-signature"
+
+
+def test_token_close_to_expiry_marks_the_cycle_degraded_until_re_minted(
+    harness: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collector, ctx, _api, db = harness
+    token = tmp_path / "inventory.token"  # the harness kubeconfig's tokenFile
+    at(monkeypatch, ctx, T0)
+    token.write_text(synthetic_jwt(T0 + timedelta(minutes=90)))
+    run_cycle(collector, ctx, db)
+    assert ctx.health_details["token_expires_in_seconds"] == 5400
+    (reason,) = ctx.degraded_reasons
+    assert "expires in 90 min" in reason and "kind.sh token" in reason
+    token.write_text(synthetic_jwt(T0 + timedelta(hours=48)))  # re-minted, same process
+    at(monkeypatch, ctx, T0 + timedelta(minutes=1))
+    run_cycle(collector, ctx, db)
+    assert ctx.degraded_reasons == ()
+    assert ctx.health_details["token_expires_in_seconds"] == 48 * 3600 - 60
+    assert ctx.health_details["token_expires_at"] == (T0 + timedelta(hours=48)).isoformat()

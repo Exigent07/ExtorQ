@@ -1,4 +1,5 @@
-// No client state: rendered on the server where possible (smaller RSC payload).
+// ExtorQ modification (keep when re-generating this file): no "use client". The table has
+// no client state, so it renders on the server where possible (smaller RSC payload).
 import * as React from "react"
 import { cn } from "cn"
 
@@ -21,7 +22,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b [&_tr]:border-border [&_tr]:hover:bg-transparent", className)}
+      className={cn("[&_tr]:border-b [&_tr]:border-hairline [&_tr]:hover:bg-transparent", className)}
       {...props}
     />
   )
@@ -42,7 +43,7 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
     <tfoot
       data-slot="table-footer"
       className={cn(
-        "border-t bg-muted/50 font-medium [&>tr]:last:border-b-0",
+        "border-t border-hairline font-medium [&>tr]:last:border-b-0",
         className
       )}
       {...props}
@@ -55,7 +56,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b border-rule transition-colors hover:bg-raised/40 data-[state=selected]:bg-raised",
+        "border-b border-hairline-soft transition-colors duration-150 hover:bg-hover has-aria-expanded:bg-hover data-[state=selected]:bg-active",
         className
       )}
       {...props}
@@ -68,7 +69,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-9 px-3 text-left align-middle text-xs font-normal whitespace-nowrap text-muted-foreground first:pl-0 last:pr-0 [&:has([role=checkbox])]:pr-0",
+        "h-9 px-3 text-left align-middle text-xs font-normal whitespace-nowrap text-muted-foreground first:pl-(--table-edge) last:pr-(--table-edge) [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
@@ -81,7 +82,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "h-[var(--xq-row)] px-3 py-2 align-middle whitespace-nowrap first:pl-0 last:pr-0 [&:has([role=checkbox])]:pr-0",
+        "px-3 py-2.5 align-middle whitespace-nowrap first:pl-(--table-edge) last:pr-(--table-edge) [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}

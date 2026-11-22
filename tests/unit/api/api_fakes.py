@@ -375,25 +375,15 @@ class FakeRepository:
             raise self.ping_error
 
     # assets / coverage
-    def list_assets(
-        self, asset_type: str, environment: str, limit: int, offset: int
-    ) -> tuple[list[Row], int]:
-        self.calls.append(("list_assets", (asset_type, environment, limit, offset)))
-        rows = [
-            a
-            for a in self.assets
-            if (not asset_type or a["asset_type"] == asset_type)
-            and (not environment or a["environment"] == environment)
-        ]
-        return rows[offset : offset + limit], len(rows)
-
     def all_assets(self) -> list[Row]:
-        return list(self.assets)
+        self.calls.append(("all_assets", None))
+        return sorted(self.assets, key=lambda a: (a["asset_type"], a["asset_id"]))
 
     def get_asset(self, asset_id: str) -> Row | None:
         return next((a for a in self.assets if a["asset_id"] == asset_id), None)
 
     def asset_last_events(self, asset_ids: Sequence[str]) -> list[Row]:
+        self.calls.append(("asset_last_events", tuple(asset_ids)))
         out: dict[str, Row] = {}
         for e in self.events.values():
             if asset_ids and e["asset_id"] not in asset_ids:
@@ -402,17 +392,11 @@ class FakeRepository:
             if cur is None or e["event_time"] > cur["last_event_at"]:
                 out[e["asset_id"]] = {
                     "asset_id": e["asset_id"],
+                    "asset_type": e["asset_type"],
                     "last_event_at": e["event_time"],
                     "last_ingested_at": e["ingested_time"],
                 }
         return list(out.values())
-
-    def last_event_by_asset_type(self) -> list[Row]:
-        out: dict[str, datetime] = {}
-        for e in self.events.values():
-            if e["asset_type"] not in out or e["event_time"] > out[e["asset_type"]]:
-                out[e["asset_type"]] = e["event_time"]
-        return [{"asset_type": k, "last_event_at": v} for k, v in out.items()]
 
     def collectors(self, asset_id: str) -> list[Row]:
         self.calls.append(("collectors", asset_id))
@@ -447,8 +431,18 @@ class FakeRepository:
         ]
         return rows[offset : offset + limit], len(rows), self.lifecycle
 
-    def finding_severity_counts(self, asset_id: str) -> tuple[list[Row], bool]:
-        return self.finding_counts, self.lifecycle
+    def finding_severity_counts(
+        self, asset_id: str, exclude_assets: Sequence[str] = ()
+    ) -> tuple[list[Row], bool]:
+        # Rows may carry an ``asset_id`` (tests of the exclusion); the SQL groups them away.
+        self.calls.append(("finding_severity_counts", (asset_id, tuple(exclude_assets))))
+        rows = [
+            r
+            for r in self.finding_counts
+            if (not asset_id or r.get("asset_id", asset_id) == asset_id)
+            and r.get("asset_id") not in exclude_assets
+        ]
+        return rows, self.lifecycle
 
     # services
     def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]:

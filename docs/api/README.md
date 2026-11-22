@@ -38,10 +38,12 @@ Every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosni
 capped (`EXTORQ_API_MAX_BODY_BYTES`, default 64 KiB, enforced while streaming). Error bodies
 are `{"detail": ..., "request_id": ...}`; database errors, SQL and stack traces are never
 returned (ClickHouse failures become 503 and are logged server-side with the request id).
-When the `extorq_api_ro` ClickHouse quota (1200 queries per minute, migration 0002) is
-exhausted the API answers **429** with `Retry-After: 30` instead: it is load, not an outage,
-and clients must not retry at once (the console retries only 502/503/504). Each request reads
-collector health once (one evaluator per request) to keep the query count low.
+When the `extorq_api_ro` ClickHouse quota (6000 queries per minute since migration 0007;
+1200 in 0002) is exhausted the API answers **429** with `Retry-After: 30` instead (also
+`GET /health`, which no longer reports "storage unreachable" for a quota error): it is load,
+not an outage, and clients must not retry at once (the console retries only 502/503/504).
+Each request reads collector health once (one evaluator per request) and aggregate responses
+are cached briefly (see [Response cache](#response-cache)) to keep the query count low.
 Validation errors never echo the submitted values.
 
 ## Storage identities and SQL
@@ -64,9 +66,9 @@ return `page` = `{limit, offset, returned, has_more, next_offset, total}`. Time 
 
 | Method + path | Purpose | Filters / notes |
 |---|---|---|
-| `GET /overview` | Asset coverage per asset class (incl. stale/missing), open alerts by severity, open findings (lifecycle view or explicit `lifecycle_available=false` fallback), alerts over 24 h, collection health summary, recent high/critical alerts, **service coverage** | — |
-| `GET /assets` | Assets with collector coverage (own + ancestor collectors, `collectors_inherited`), last event, open alerts | `asset_type`, `environment` |
-| `GET /assets/{asset_id}` | Asset record, collectors covering it (staleness; a node lists its cluster's collectors, each with its own `asset_id`), inventory summary, event counts per source type, findings, recent alerts, **`services_summary`**, **`child_assets`** (e.g. Kubernetes nodes of a cluster) | `since`/`until` for event counts (default 24 h, max 90 d) |
+| `GET /overview` | Asset coverage per asset class (incl. stale/missing, `assets_retired`), open alerts by severity, open findings (lifecycle view or explicit `lifecycle_available=false` fallback), alerts over 24 h, collection health summary (`collectors_retired`), recent high/critical alerts, **service coverage**, **`lifecycle`** (thresholds, counts, `retired_asset_ids`) | `include_retired` (default false: retired assets left out of every rollup except open alerts) |
+| `GET /assets` | Assets with collector coverage (own + ancestor collectors, `collectors_inherited`; self-tests never count), last event, open alerts, **`lifecycle_state`**, `last_observed_at`, `lifecycle_reason`; `retired_excluded` counts what the default left out | `asset_type`, `environment`, `include_retired` |
+| `GET /assets/{asset_id}` | Asset record (with lifecycle; also for retired assets), telemetry collectors covering it (staleness and `lifecycle_state`; a node lists its cluster's collectors, each with its own `asset_id`; self-tests are not listed), inventory summary, event counts per source type, findings, recent alerts, **`services_summary`**, **`child_assets`** (e.g. Kubernetes nodes of a cluster) | `since`/`until` for event counts (default 24 h, max 90 d) |
 | `GET /assets/{asset_id}/services` | Services of one asset + coverage summary; **`hosted`**: services of an ancestor asset with instances on this asset (a node's Pods/containers grouped by cluster workload; not counted in `summary`) | `kind`, `category`, `adapter_support`, `monitoring_status`, `coverage`, `include_removed` (filters apply to `items`) |
 | `GET /services` | Service inventory across assets | `asset_id` + the filters above |
 | `GET /services/{service_id}` | Service detail: endpoints (exposure + attribution), instances, telemetry per source, authentication activity, recent events, findings, alerts | `since`/`until` (default 24 h, max 31 d) |
@@ -80,7 +82,7 @@ return `page` = `{limit, offset, returned, has_more, next_offset, total}`. Time 
 | `POST /alerts/{alert_id}/state` | Analyst workflow state (analyst only) | body `{status, assignee?, note?, expected_updated_at?}`; 409 on concurrent change |
 | `GET /events` | Bounded event search (default 24 h, max 31 d) | `asset_id`, `event_type`, `event_type_prefix`, `source_type`, `category`, `outcome`, `actor`, `src_ip`, `simulation_run_id`, `service_id` |
 | `GET /events/{event_id}` | Stored SecurityEvent (schema 1.0/1.1), ingest metadata, alerts citing it | — |
-| `GET /health` | Collectors (stale = now - last_success_at > 3 x interval, or never succeeded), pipeline (`v_pipeline_latest`), rule health, AI provider health (recent `ai_assessments` statuses + configured/enabled flags, presence only), ingestion boundary (quarantine, audit decisions) | — |
+| `GET /health` | Collectors (stale = now - last_success_at > 3 x interval, or never succeeded; `lifecycle_state`, `self_test`), pipeline (`v_pipeline_latest`), rule health, AI provider health (recent `ai_assessments` statuses + configured/enabled flags, presence only), ingestion boundary (quarantine, audit decisions); `collectors_retired` + a note when retired collectors are not listed | `include_retired` (default false) |
 | `GET /timeseries/alerts`, `GET /timeseries/events` | Distinct alerts/events per bucket (sparse: missing buckets mean "no stored rows") | `bucket_seconds` (60..86400), `group_by`, filters |
 
 **Mutations are audited first.** `POST /alerts/{id}/state` and `POST /alerts/{id}/summary`
@@ -154,6 +156,63 @@ an older link (it is never carried forward). `GET /findings` (items and the `ser
 filter), `GET /assets/{id}` and `GET /services/{id}` all apply this one rule; without the
 lifecycle view the observation fallback reproduces it.
 
+## Asset and collector lifecycle
+
+Every asset carries `lifecycle_state` (`active` | `stale` | `retired`), `last_observed_at`
+(the newer of the asset record's `last_seen` and its newest event) and `lifecycle_reason`
+(API-derived text for `stale`/`retired`). It is evaluated at request time by one function
+(`extorq.api.lifecycle.Estate`) for every view, so an asset has the same state everywhere.
+
+* A collector is **reporting** while its latest health report is no older than the
+  retirement window (`EXTORQ_API_ASSET_RETIRE_SECONDS`, default 86400 s) or 3 x its interval
+  when that is longer (a daily scanner stays configured for 72 h). The collector runner
+  reports health every cycle for every enabled collector, failed cycles included; a collector
+  removed from or disabled in `config/collectors` (or a one-off test run) stops reporting.
+  The API cannot read the host's collector configuration (it runs in a container without
+  it), so "no reporting collector" is the observable form of "no enabled collector
+  configured".
+* **Self-tests** (collector type `heartbeat`, or only `extorq.*` pipeline sources: the SDK
+  heartbeat `sdk-heartbeat-example`, A-IC-1) collect no telemetry of their asset. They never
+  count toward an asset's coverage (`collectors_total`, `coverage_status`, the asset
+  detail's `collectors`) and never keep an asset configured; `CollectorStatus.self_test`
+  marks them in `GET /health`.
+* An asset is **retired** when no telemetry collector covering it (its own or an ancestor's)
+  is reporting **and** it was not observed within the retirement window. Example: C1's
+  mechanics-test repositories (`github:octocat/hello-world`, `github:actions/...`) and their
+  owner accounts, last seen 2026-11-21 14:47 UTC, whose one-off collector
+  `github-mechanics-test` last reported 15:01:41 UTC: retired from 2026-11-22 15:01:41 UTC.
+* Otherwise an asset is **stale** when not observed for longer than
+  `EXTORQ_API_ASSET_STALE_SECONDS` (default 3600 s) or 3 x the shortest interval of its
+  reporting collectors when that is longer; else **active**. A Kubernetes node is covered by
+  its cluster's collector, so it can become stale but never retired while that reports.
+* A collector is **retired** when it reports for a retired asset or is a self-test that
+  stopped reporting; otherwise `stale` (its `stale` flag) or `active`.
+
+Nothing is deleted. By default the asset list, the overview's asset coverage, findings KPI,
+collection health and service coverage, and the health collector list leave retired assets
+and collectors out, and say how many they left out (`retired_excluded`, `assets_retired`,
+`collectors_retired`, `lifecycle.retired_asset_ids`, a health note). `include_retired=true`
+includes them again; `GET /assets/{id}` always answers for a retired asset. **Open alerts are
+never filtered by lifecycle**: silencing an asset's collectors must not hide its detections.
+
+Limitations: a collector that disappears from configuration while another collector still
+reports for the same asset stays `stale` (not retired) until its health rows expire (30-day
+TTL); a node removed from a cluster stays `stale` while the cluster collector reports.
+
+## Response cache
+
+Aggregate GET responses are computed once and reused for `EXTORQ_API_CACHE_TTL_SECONDS`
+(default 15 s, 0 disables): `GET /overview`, `GET /health`, `GET /assets`,
+`GET /assets/{id}`, `GET /assets/{id}/services`, `GET /services`, `GET /services/{id}`,
+`GET /rules`, `GET /rules/{id}`. Keys are the route plus its validated parameters (the
+responses do not depend on the caller's role; authentication still runs on every request).
+Concurrent misses of one key compute once; errors are never cached; the cache holds at most
+`EXTORQ_API_CACHE_MAX_ENTRIES` responses. A successful `POST /alerts/{id}/state` or
+`POST /alerts/{id}/summary` clears it, and a computation that started before such a mutation
+is not stored. Responses say `X-ExtorQ-Cache: hit|miss|off` and, on hits,
+`X-ExtorQ-Cache-Age: <seconds>`; `generated_at` (overview, health) is the computation time.
+Alert, event, finding, context, assessment and time-series reads are never cached.
+
 ## Data honesty rules
 
 * Values come from stored telemetry; unknown values are `null`.
@@ -174,6 +233,10 @@ lifecycle view the observation fallback reproduces it.
 | `SUMMARY_REQUESTS_PER_MINUTE` | 6 | per-user AI summary limit |
 | `AI_HEALTH_WINDOW_HOURS` | 24 | AI health statistics window |
 | `SERVICE_STALE_SECONDS` | 3600 | service/instance record staleness |
+| `ASSET_STALE_SECONDS` | 3600 | asset lifecycle `stale` threshold (or 3 x the shortest reporting interval) |
+| `ASSET_RETIRE_SECONDS` | 86400 | retirement window (no reporting collector and not observed) |
+| `CACHE_TTL_SECONDS` | 15 | aggregate response cache TTL (0 disables) |
+| `CACHE_MAX_ENTRIES` | 128 | cached responses kept at most |
 
 ClickHouse connection settings and password files are owned by the platform
 (`extorq.storage.clickhouse.get_client`, `EXTORQ_CLICKHOUSE_*`).
@@ -182,6 +245,7 @@ ClickHouse connection settings and password files are owned by the platform
 
 | Command | What it proves |
 |---|---|
-| `uv run pytest tests/unit/api -q` | routes, auth/roles, derivations, coverage, routing, OpenAPI freshness, static SQL safety (fake repository, no infrastructure) |
-| `uv run pytest tests/integration/api/test_api_sql_clickhouse.py -m integration -q` | every SQL statement on a throwaway ClickHouse 26.8 with the real migrations 0001-0004 and the real 0002 roles/profiles; synthetic rows only; container removed afterwards |
+| `uv run pytest tests/unit/api -q` | routes, auth/roles, derivations, coverage, lifecycle, response cache, routing, OpenAPI freshness, static SQL safety (fake repository, no infrastructure) |
+| `uv run pytest tests/integration/api/test_api_sql_clickhouse.py -m integration -q` | every SQL statement on a throwaway ClickHouse 26.8 with the real migrations 0001-0006 and the real 0002 roles/profiles; synthetic rows only; container removed afterwards |
+| `uv run pytest tests/integration/api/test_api_lifecycle_clickhouse.py -m integration -q` | lifecycle SQL inputs and endpoints on real rows (a synthetic repository retired 3 days ago), cache hit on real SQL, and migration 0007 (quota 1200 -> 6000, other limits unchanged, idempotent) on a throwaway ClickHouse |
 | `uv run pytest tests/integration/api/test_api_live.py -m integration -q` | read-only checks against the live stack (requires `STACK READY`): every endpoint on real telemetry, consistency with direct SQL |

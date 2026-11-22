@@ -21,7 +21,6 @@ from extorq.api import schemas as s
 from extorq.api.errors import BadRequest, Conflict, TooManyRequests
 from extorq.api.logs import get_logger
 from extorq.api.repository import CLOSED_STATUSES, Row
-from extorq.api.settings import EXPECTED_ASSET_TYPES
 from extorq.contracts import ServiceEndpoint, ServiceKind
 
 log = get_logger("extorq.api.service")
@@ -155,11 +154,13 @@ def collector_status(row: Row, now: datetime) -> s.CollectorStatus:
         )
     else:
         stale, reason = False, None
+    collector_type = str(row.get("collector_type") or "")
+    source_types = [str(x) for x in row.get("source_types") or []]
     return s.CollectorStatus(
         collector_id=str(row["collector_id"]),
-        collector_type=str(row.get("collector_type") or ""),
+        collector_type=collector_type,
         asset_id=str(row.get("asset_id") or ""),
-        source_types=[str(x) for x in row.get("source_types") or []],
+        source_types=source_types,
         status=row["status"],
         last_reported_at=row["last_reported_at"],
         last_attempt_at=row.get("last_attempt_at"),
@@ -175,6 +176,25 @@ def collector_status(row: Row, now: datetime) -> s.CollectorStatus:
         stale_reason=reason,
         seconds_since_success=since_success,
         details=parse_json_object(row.get("details")) or {},
+        # Provisional: ``lifecycle.Estate`` marks retired collectors per request.
+        lifecycle_state="stale" if stale else "active",
+        self_test=is_self_test(collector_type, source_types),
+    )
+
+
+#: Collector type of the SDK heartbeat self-test (A-IC-1: "treat as self-test").
+SELF_TEST_COLLECTOR_TYPES: frozenset[str] = frozenset({"heartbeat"})
+#: Source types of ExtorQ's own pipeline (``extorq.pipeline``, ``extorq.simulation``):
+#: not telemetry of the asset a collector reports for.
+PIPELINE_SOURCE_PREFIX = "extorq."
+
+
+def is_self_test(collector_type: str, source_types: Sequence[str]) -> bool:
+    """A pipeline self-test collects no telemetry of its asset (never asset coverage)."""
+    if collector_type in SELF_TEST_COLLECTOR_TYPES:
+        return True
+    return bool(source_types) and all(
+        source.startswith(PIPELINE_SOURCE_PREFIX) for source in source_types
     )
 
 
@@ -188,50 +208,17 @@ def coverage_status(collectors: Sequence[s.CollectorStatus]) -> s.CoverageStatus
     return "ok"
 
 
-def asset_class_coverage(
-    assets: Sequence[Row],
-    collectors: Sequence[s.CollectorStatus],
-    last_event_by_type: dict[str, datetime | None],
-) -> list[s.AssetClassCoverage]:
-    by_type: dict[str, list[Row]] = defaultdict(list)
-    for asset in assets:
-        by_type[str(asset["asset_type"])].append(asset)
-    ordered = list(EXPECTED_ASSET_TYPES) + sorted(
-        t for t in by_type if t not in EXPECTED_ASSET_TYPES
-    )
-    result: list[s.AssetClassCoverage] = []
-    for asset_type in ordered:
-        members = by_type.get(asset_type, [])
-        statuses = [
-            coverage_status(collectors_for_asset(str(a["asset_id"]), collectors)) for a in members
-        ]
-        total = len(members)
-        ok = statuses.count("ok")
-        degraded = statuses.count("degraded")
-        stale = statuses.count("stale")
-        missing = statuses.count("missing")
-        if total == 0 or missing == total:
-            status: s.CoverageStatus = "missing"
-        elif ok == total:
-            status = "ok"
-        elif ok == 0 and degraded == 0:
-            status = "stale"
-        else:
-            status = "degraded"
-        result.append(
-            s.AssetClassCoverage(
-                asset_type=asset_type,
-                expected=asset_type in EXPECTED_ASSET_TYPES,
-                assets_total=total,
-                assets_ok=ok,
-                assets_degraded=degraded,
-                assets_stale=stale,
-                assets_without_collector=missing,
-                status=status,
-                last_event_at=last_event_by_type.get(asset_type),
-            )
-        )
-    return result
+def class_status(statuses: Sequence[s.CoverageStatus]) -> s.CoverageStatus:
+    """Roll per-asset coverage up to one class status (``lifecycle.Estate.class_coverage``)."""
+    total = len(statuses)
+    ok = statuses.count("ok")
+    if total == 0 or statuses.count("missing") == total:
+        return "missing"
+    if ok == total:
+        return "ok"
+    if ok == 0 and statuses.count("degraded") == 0:
+        return "stale"
+    return "degraded"
 
 
 # ── Alerts / events ───────────────────────────────────────────────────────────────
@@ -360,7 +347,13 @@ def asset_item(
     collectors: Sequence[s.CollectorStatus],
     last_event_at: datetime | None,
     open_alerts: int,
+    *,
+    lifecycle_state: s.LifecycleState = "active",
+    last_observed_at: datetime | None = None,
+    lifecycle_reason: str | None = None,
 ) -> s.AssetListItem:
+    """Asset list item. ``collectors`` are the telemetry collectors covering the asset
+    (``lifecycle.Estate.coverage_collectors``); lifecycle fields come from the estate."""
     return s.AssetListItem(
         asset_id=str(row["asset_id"]),
         asset_type=row["asset_type"],
@@ -380,6 +373,9 @@ def asset_item(
         coverage_status=coverage_status(collectors),
         last_event_at=last_event_at,
         open_alerts=open_alerts,
+        lifecycle_state=lifecycle_state,
+        last_observed_at=last_observed_at,
+        lifecycle_reason=lifecycle_reason,
     )
 
 
@@ -705,7 +701,10 @@ def collection_summary(
     pipeline: Sequence[s.PipelineComponentHealth],
     rules: Sequence[s.RuleHealthItem],
     registry_size: int,
+    *,
+    retired_collectors: int = 0,
 ) -> s.CollectionHealthSummary:
+    """Rollup over ``collectors`` as given (callers leave retired ones out by default)."""
     active_pipeline = [p for p in pipeline if not p.superseded]
     return s.CollectionHealthSummary(
         collectors_total=len(collectors),
@@ -722,6 +721,7 @@ def collection_summary(
         no_collector_reports=not collectors,
         no_pipeline_reports=not pipeline,
         no_rule_runs=all(r.last_run is None for r in rules),
+        collectors_retired=retired_collectors,
     )
 
 

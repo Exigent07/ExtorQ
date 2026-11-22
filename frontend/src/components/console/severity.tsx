@@ -1,5 +1,6 @@
 import { cn } from "cn";
 
+import { Badge } from "@/components/ui/badge";
 import type { Severity } from "@/lib/api/schemas";
 
 export const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
@@ -12,7 +13,16 @@ export const SEVERITY_LABEL: Record<Severity, string> = {
   info: "Info",
 };
 
-const MARK: Record<Severity, string> = {
+/** Soft tinted pill: 400-shade ink, 10% tint, 25% inset ring. */
+const PILL: Record<Severity, string> = {
+  critical: "bg-sev-critical/10 text-sev-critical ring-sev-critical/25",
+  high: "bg-sev-high/10 text-sev-high ring-sev-high/25",
+  medium: "bg-sev-medium/10 text-sev-medium ring-sev-medium/25",
+  low: "bg-sev-low/10 text-sev-low ring-sev-low/25",
+  info: "bg-sev-info/10 text-sev-info ring-sev-info/20",
+};
+
+const DOT: Record<Severity, string> = {
   critical: "bg-sev-critical",
   high: "bg-sev-high",
   medium: "bg-sev-medium",
@@ -20,40 +30,38 @@ const MARK: Record<Severity, string> = {
   info: "bg-sev-info",
 };
 
-const PILL: Record<Severity, string> = {
-  critical: "bg-sev-critical-bg text-sev-critical",
-  high: "bg-sev-high-bg text-sev-high",
-  medium: "bg-sev-medium-bg text-sev-medium",
-  low: "bg-sev-low-bg text-sev-low",
-  info: "bg-sev-info-bg text-sev-info",
-};
-
-/** Dense-table form: a small square in the severity hue and the word in secondary ink. */
-export function SeverityTag({ severity, className }: { severity: Severity; className?: string }) {
+/**
+ * Severity as a soft tinted pill (the one severity mark per row). `size="md"` for headers.
+ * The word is always present: colour is never the only carrier.
+ */
+export function SeverityBadge({
+  severity,
+  size = "sm",
+  className,
+}: {
+  severity: Severity;
+  size?: "sm" | "md";
+  className?: string;
+}) {
   return (
-    <span className={cn("inline-flex flex-none items-center gap-1.5 whitespace-nowrap text-ink-2", className)}>
-      <span aria-hidden="true" className={cn("size-2 rounded-[2px]", MARK[severity])} />
-      {SEVERITY_LABEL[severity]}
-    </span>
-  );
-}
-
-/** Header form: the severity hue on its own dark tint. */
-export function SeverityPill({ severity }: { severity: Severity }) {
-  return (
-    <span
+    <Badge
+      variant="outline"
       className={cn(
-        "inline-flex h-6 flex-none items-center rounded-sm px-2 text-xs font-medium whitespace-nowrap",
+        "flex-none gap-1.5 rounded-md border-0 ring-1 ring-inset",
+        size === "md" ? "h-6 px-2" : "h-5 px-1.5",
         PILL[severity],
+        className,
       )}
     >
+      <span aria-hidden="true" className={cn("size-1.5 rounded-full", DOT[severity])} />
       {SEVERITY_LABEL[severity]}
-    </span>
+    </Badge>
   );
 }
 
-export function severityMarkClass(severity: Severity): string {
-  return MARK[severity];
+/** A 6px severity dot (legends, palette rows); pair it with the word or a count. */
+export function SeverityDot({ severity, className }: { severity: Severity; className?: string }) {
+  return <span aria-hidden="true" className={cn("inline-block size-1.5 flex-none rounded-full", DOT[severity], className)} />;
 }
 
 /** Hue used by charts for each severity (CSS variable, validated by ChartContainer). */

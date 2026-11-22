@@ -54,7 +54,8 @@ def client(
     path.write_text(token, encoding="utf-8")
     path.chmod(0o600)
     app = create_app(
-        settings=ApiSettings(service_token_file=path),
+        # Cache off: the consistency checks bracket each API number with direct SQL counts.
+        settings=ApiSettings(service_token_file=path, cache_ttl_seconds=0),
         repository=live_repo,
         integrations=PlatformIntegrations(),
     )
@@ -120,11 +121,11 @@ def test_every_collection_endpoint_answers_with_real_data(
 def test_assets_and_their_services(
     client: tuple[TestClient, dict[str, str]], live_repo: ClickHouseRepository
 ) -> None:
-    assets = _get(client, "/api/v1/assets", limit=200)
+    assets = _get(client, "/api/v1/assets", limit=200, include_retired="true")
     _consistent(
         live_repo,
         "SELECT count() FROM extorq.v_assets",
-        lambda: _get(client, "/api/v1/assets", limit=1)["page"]["total"],
+        lambda: _get(client, "/api/v1/assets", limit=1, include_retired="true")["page"]["total"],
     )
     for asset in assets["items"]:
         encoded = quote(asset["asset_id"], safe="")
@@ -186,8 +187,10 @@ def test_health_reflects_collector_reports(
     _consistent(
         live_repo,
         "SELECT count() FROM extorq.v_collector_latest",
-        lambda: len(_get(client, "/api/v1/health")["collectors"]),
+        lambda: len(_get(client, "/api/v1/health", include_retired="true")["collectors"]),
     )
+    # Retired collectors are only left out of the default list, and counted.
+    assert all(c["lifecycle_state"] != "retired" for c in health["collectors"])
     for collector in health["collectors"]:
         if collector["last_success_at"] is None:
             assert collector["stale"] is True
@@ -228,3 +231,26 @@ def test_alert_drilldown_when_alerts_exist(client: tuple[TestClient, dict[str, s
         resolved = {e["event_id"] for e in detail["evidence"]}
         assert resolved.isdisjoint(detail["unresolved_evidence_ids"])
         _get(client, f"/api/v1/alerts/{alert['alert_id']}/assessments")
+
+
+def test_lifecycle_is_consistent_across_views(client: tuple[TestClient, dict[str, str]]) -> None:
+    """Retired assets: left out of the default list and rollups, counted, never deleted."""
+    everything = _get(client, "/api/v1/assets", limit=200, include_retired="true")
+    default = _get(client, "/api/v1/assets", limit=200)
+    overview = _get(client, "/api/v1/overview")
+    retired = {a["asset_id"] for a in everything["items"] if a["lifecycle_state"] == "retired"}
+    assert set(overview["lifecycle"]["retired_asset_ids"]) == retired
+    assert {a["asset_id"] for a in default["items"]} == {
+        a["asset_id"] for a in everything["items"]
+    } - retired
+    assert default["retired_excluded"] == len(retired)
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for asset in everything["items"]:
+        by_type.setdefault(asset["asset_type"], []).append(asset)
+    for coverage in overview["asset_coverage"]:
+        members = by_type.get(coverage["asset_type"], [])
+        assert coverage["assets_retired"] == sum(a["asset_id"] in retired for a in members)
+        assert coverage["assets_total"] == len(members) - coverage["assets_retired"]
+    for asset in everything["items"]:
+        if asset["lifecycle_state"] != "active":
+            assert asset["lifecycle_reason"]
