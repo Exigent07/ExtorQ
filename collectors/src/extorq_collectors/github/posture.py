@@ -515,14 +515,43 @@ def _workflow_checks(snapshot: RepoSnapshot) -> list[CheckOutcome]:
     def unparseable(a: WorkflowAnalysis) -> FindingDraft | None:
         if a.ok:
             return None
+        # Fail closed: the bounded lexical scan still reports risk indicators of a
+        # workflow that cannot be analysed, and they raise the severity.
+        lex = a.lexical
+        severity = Severity.LOW
+        attributes: dict[str, Any] = {"analysis": "lexical_fallback"}
+        indicators: list[str] = []
+        if lex is not None:
+            indicators = lex.indicators()
+            if lex.write_all or lex.privileged_untrusted_checkout:
+                severity = Severity.HIGH
+            elif lex.write_scopes or lex.privileged_triggers:
+                severity = Severity.MEDIUM
+            attributes.update(
+                {
+                    "lexical_write_all": lex.write_all,
+                    "lexical_write_scopes": list(lex.declared_write_scopes),
+                    "lexical_privileged_triggers": list(lex.privileged_triggers),
+                    "lexical_untrusted_checkout": list(lex.untrusted_checkout),
+                    "lexical_truncated": lex.truncated,
+                }
+            )
+        scan_text = (
+            "lexical scan: " + "; ".join(indicators)
+            if indicators
+            else ("lexical scan: no risk indicators" if lex is not None else "text unavailable")
+        )
         return FindingDraft(
             check_id="github.workflow.unparseable",
-            severity=Severity.LOW,
+            severity=severity,
             title=f"Workflow {a.path} could not be analysed",
             resource_key=f"{repo_key}:{a.path}",
             resource=_workflow_resource(a),
-            evidence=a.error,
-            remediation="Fix the workflow syntax; ExtorQ cannot assess an unparseable workflow.",
+            evidence=f"{a.error}; {scan_text}",
+            remediation="Fix the workflow so it parses within ExtorQ's bounds (size, aliases, "
+            "duplicate keys); until then its effective permissions are unknown and only "
+            "lexical indicators are available.",
+            attributes=attributes,
         )
 
     outcomes = [

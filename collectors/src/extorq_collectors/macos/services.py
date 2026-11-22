@@ -104,7 +104,12 @@ APPLE_SERVICES: tuple[AppleService, ...] = (
         ServiceCategory.SSH,
         "/System/Library/LaunchDaemons/ssh.plist",
         frozenset(
-            {"/usr/sbin/sshd", "/usr/libexec/sshd-session", "/usr/libexec/sshd-keygen-wrapper"}
+            {
+                "/usr/sbin/sshd",
+                "/usr/libexec/sshd-session",
+                "/usr/libexec/sshd-auth",
+                "/usr/libexec/sshd-keygen-wrapper",
+            }
         ),
         "loaded",
         "system",
@@ -251,7 +256,7 @@ def is_app_instance_label(label: str) -> bool:
 
 
 def app_display_name(executable: str) -> str:
-    """``/Applications/Docker.app/Contents/MacOS/com.docker.backend`` -> ``com.docker.backend``."""
+    """``/Applications/ExampleApp.app/Contents/MacOS/example-backend`` -> ``example-backend``."""
     return os.path.basename(executable) or executable
 
 

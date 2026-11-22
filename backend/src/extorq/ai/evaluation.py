@@ -246,8 +246,10 @@ def compute_metrics(run: EvalRun) -> dict[str, Any]:
         + ("baseline_correct" if r.baseline == r.label else "baseline_wrong")
         for r in results
     )
+    # Unanswered cases (failures, not run) count as wrong; with no answer at all there is
+    # nothing to measure, so accuracy is reported as n/a rather than 0 %.
     metrics["jev"] = {
-        "accuracy": _rate(jev_correct, total),
+        "accuracy": _rate(jev_correct, total) if answered else None,
         "correct": jev_correct,
         "answered": len(answered),
         "status_counts": dict(status_counts),
@@ -263,8 +265,10 @@ def compute_metrics(run: EvalRun) -> dict[str, Any]:
         "accuracy_on_confident": _rate(
             sum(1 for r in confident if r.jev == r.label), len(confident)
         ),
-        "accuracy_before_caution_guards": _rate(
-            sum(1 for r in answered if pre_guard_label(r) == r.label), total
+        "accuracy_before_caution_guards": (
+            _rate(sum(1 for r in answered if pre_guard_label(r) == r.label), total)
+            if answered
+            else None
         ),
         "caution_guard_changes": sum(
             1 for r in answered if pre_guard_label(r) not in (None, r.jev)
@@ -449,7 +453,13 @@ def build_report(run: EvalRun, *, dataset: Path, max_calls: int, date: str) -> d
         "counts and coverage gaps; it cannot see actors, review signals or maintenance context.",
         "Jev output is advisory: it never changes alert severity or suppresses alerts.",
     ]
-    if run.live and metrics.get("jev"):
+    if run.live and metrics.get("jev") and metrics["jev"]["accuracy"] is None:
+        notes.insert(
+            0,
+            "No Jev answer in this run (statuses: "
+            f"{metrics['jev']['status_counts']}); no comparison with the baseline is possible.",
+        )
+    elif run.live and metrics.get("jev"):
         jev_acc = metrics["jev"]["accuracy"] or 0.0
         base_acc = metrics["baseline"]["accuracy"] or 0.0
         verdict = (

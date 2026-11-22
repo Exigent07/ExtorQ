@@ -10,9 +10,11 @@ synthetic-labelling conventions.
 from __future__ import annotations
 
 import sys
+import uuid
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -22,6 +24,7 @@ from fixture_builder import (
     LINUX,
     MACOS,
     FixtureWriter,
+    captured_events,
     http_probe,
     k8s_audit_events,
     k8s_risk_flags,
@@ -219,6 +222,188 @@ def k8s002() -> dict[str, FixtureWriter]:
         offset_s=60,
     )
     out[f"{d}/negative_benign_state.jsonl"] = fx
+    out.update(_k8s002_bootstrap(d))
+    return out
+
+
+# Genuine normalised audit events of the lab cluster's birth (2026-11-21 10:16Z), exported
+# read-only from the live store (tests/rules/captures/README.md).
+BIRTH_CAPTURE = "k8s_cluster_birth_live.jsonl"
+RBAC_GROUP = "rbac.authorization.k8s.io"
+
+
+def _subject(kind: str, name: str) -> dict[str, str]:
+    return {"kind": kind, "apiGroup": RBAC_GROUP, "name": name}
+
+
+def _rbac_create_variant(
+    base: str,
+    *,
+    at: datetime,
+    name: str,
+    user: str,
+    groups: list[str],
+    subjects: list[dict[str, str]],
+    role_ref: tuple[str, str],
+    namespace: str | None = None,
+) -> list:
+    """B2's captured RBAC create reshaped into another object/actor/time (SYNTHETIC)."""
+
+    def mutate(record: dict[str, Any]) -> None:
+        key = f"extorq-fixture:{base}:{namespace}:{name}:{user}:{at.isoformat()}"
+        record["auditID"] = str(uuid.uuid5(uuid.NAMESPACE_URL, key))
+        record["user"] = {"username": user, "groups": groups}
+        record["objectRef"]["name"] = name
+        kind = record["objectRef"]["resource"]
+        if namespace is None:
+            record["objectRef"].pop("namespace", None)
+            uri = f"/apis/{RBAC_GROUP}/v1/{kind}?fieldManager=kubectl-create"
+        else:
+            record["objectRef"]["namespace"] = namespace
+            uri = f"/apis/{RBAC_GROUP}/v1/namespaces/{namespace}/{kind}?fieldManager=kubectl-create"
+        record["requestURI"] = uri
+        meta = {"name": name, **({"namespace": namespace} if namespace else {})}
+        for body in ("requestObject", "responseObject"):
+            record[body]["metadata"] = dict(meta)
+            record[body]["subjects"] = subjects
+            record[body]["roleRef"] = {
+                "apiGroup": RBAC_GROUP,
+                "kind": role_ref[0],
+                "name": role_ref[1],
+            }
+        record["requestReceivedTimestamp"] = at.isoformat().replace("+00:00", "Z")
+        stage = at + timedelta(milliseconds=2)
+        record["stageTimestamp"] = stage.isoformat().replace("+00:00", "Z")
+
+    return k8s_audit_events(base, mutate=mutate)
+
+
+def _k8s002_bootstrap(d: str) -> dict[str, FixtureWriter]:
+    out: dict[str, FixtureWriter] = {}
+    live = captured_events(BIRTH_CAPTURE)
+    birth = next(e for e in live if e.kubernetes and e.kubernetes.resource == "namespaces")
+    t0 = birth.event_time
+    super_admin = ("kubernetes-super-admin", ["system:masters", "system:authenticated"])
+    crb_base = "rbac_crb_cluster_admin_create.json"
+    rb_base = "rbac_rolebinding_anonymous_create.json"
+
+    fx = FixtureWriter("k8s002-birth-live")
+    fx.events.extend(live)
+    out[f"{d}/negative_kubeadm_bootstrap_live.jsonl"] = fx
+
+    # Inventory (state) view of the documented binding, as the K8s inventory collector
+    # reports a non-baseline creation (event_time = creationTimestamp). SYNTHETIC record.
+    admins_create = next(
+        e for e in live if e.kubernetes and e.kubernetes.object_name == "kubeadm:cluster-admins"
+    )
+
+    def kubeadm_state(fx: FixtureWriter) -> None:
+        fx.add(
+            "k8s.resource.created",
+            admins_create.event_time.replace(microsecond=0),
+            asset=K8S,
+            action="created",
+            outcome="success",
+            resource={"type": "clusterrolebindings", "name": "kubeadm:cluster-admins"},
+            kubernetes={"cluster": "extorq-lab"},
+            message="clusterrolebindings kubeadm:cluster-admins observed for the first time",
+            attributes={
+                "kind": "ClusterRoleBinding",
+                "object_summary": admins_create.attributes["request_summary"],
+                "risk_flags": ["cluster_admin"],
+                "time_source": "creation_timestamp",
+            },
+        )
+
+    fx = FixtureWriter("k8s002-birth-live-state")
+    fx.events.extend(live)
+    kubeadm_state(fx)
+    out[f"{d}/negative_kubeadm_bootstrap_with_state.jsonl"] = fx
+
+    fx = FixtureWriter("k8s002-state-only")
+    fx.events.append(
+        next(e for e in live if e.kubernetes and e.kubernetes.resource == "namespaces")
+    )
+    kubeadm_state(fx)
+    out[f"{d}/positive_kubeadm_state_without_audit_create.jsonl"] = fx
+
+    fx = FixtureWriter("k8s002-no-birth")
+    fx.events.extend(
+        e for e in live if e.kubernetes and e.kubernetes.object_name == "kubeadm:cluster-admins"
+    )
+    out[f"{d}/positive_kubeadm_create_no_birth.jsonl"] = fx
+
+    out[f"{d}/negative_annotation_only_patch.jsonl"] = _derived(
+        "k8s002-annotate", "rbac_crb_annotate_patch.json"
+    )
+
+    def labels_only(record: dict[str, Any]) -> None:
+        record["auditID"] = str(uuid.uuid5(uuid.NAMESPACE_URL, "extorq-fixture:label-only-patch"))
+        record["requestObject"] = {"metadata": {"labels": {"extorq.io/owner": "platform"}}}
+        record["responseObject"]["metadata"]["labels"] = {"extorq.io/owner": "platform"}
+
+    fx = FixtureWriter("k8s002-labels")
+    fx.events.extend(k8s_audit_events("rbac_crb_annotate_patch.json", mutate=labels_only))
+    out[f"{d}/positive_label_only_patch.jsonl"] = fx
+
+    # Around the observed birth, each variant misses exactly one exception condition.
+    fx = FixtureWriter("k8s002-exception-not-met")
+    fx.events.append(birth)
+    admins = [_subject("Group", "kubeadm:cluster-admins")]
+    fx.events.extend(  # documented object and identity, but 15 minutes after the birth
+        _rbac_create_variant(
+            crb_base,
+            at=t0 + 15 * M,
+            name="kubeadm:cluster-admins",
+            user=super_admin[0],
+            groups=super_admin[1],
+            subjects=admins,
+            role_ref=("ClusterRole", "cluster-admin"),
+        )
+    )
+    fx.events.extend(  # inside the window, bootstrap identity, look-alike name
+        _rbac_create_variant(
+            crb_base,
+            at=t0 + 5 * S,
+            name="kubeadm:cluster-admin",
+            user=super_admin[0],
+            groups=super_admin[1],
+            subjects=admins,
+            role_ref=("ClusterRole", "cluster-admin"),
+        )
+    )
+    fx.events.extend(  # documented object inside the window, created by another identity
+        _rbac_create_variant(
+            rb_base,
+            at=t0 + 3 * S,
+            name="kubeadm:bootstrap-signer-clusterinfo",
+            namespace="kube-public",
+            user="system:serviceaccount:extorq-apps:default",
+            groups=[
+                "system:serviceaccounts",
+                "system:serviceaccounts:extorq-apps",
+                "system:authenticated",
+            ],
+            subjects=[_subject("User", "system:anonymous")],
+            role_ref=("Role", "kubeadm:bootstrap-signer-clusterinfo"),
+        )
+    )
+    out[f"{d}/positive_bootstrap_exception_not_met.jsonl"] = fx
+
+    fx = FixtureWriter("k8s002-content-differs")
+    fx.events.append(birth)
+    fx.events.extend(  # documented name, identity and time, but an extra subject
+        _rbac_create_variant(
+            crb_base,
+            at=t0 - 80 * S / 1000,
+            name="kubeadm:cluster-admins",
+            user=super_admin[0],
+            groups=super_admin[1],
+            subjects=[*admins, _subject("User", "mallory")],
+            role_ref=("ClusterRole", "cluster-admin"),
+        )
+    )
+    out[f"{d}/positive_bootstrap_content_differs.jsonl"] = fx
     return out
 
 
@@ -345,6 +530,20 @@ def gh001() -> dict[str, FixtureWriter]:
         WF_BASE.replace("    branches: [main]", "    branches: [main, develop]\n  pull_request:"),
     )
     out[f"{d}/negative_benign_edits.jsonl"] = fx
+
+    # Analyser >= 1.1.0 fails closed: an unparseable new version (here a duplicate
+    # mapping key) is compared lexically with the old one (analysis = lexical_fallback).
+    broken_escalation = WF_BASE.replace(
+        "on:\n  push:\n    branches: [main]",
+        "on:\n  push:\n    branches: [main]\n  pull_request_target:\n  push:\n    branches: [dev]",
+    ).replace("permissions:\n  contents: read", "permissions: write-all")
+    fx = FixtureWriter("gh001-lexical")
+    _workflow_event(fx, BASE, "7" * 40, path, WF_BASE, broken_escalation)
+    out[f"{d}/positive_lexical_fallback_write_all.jsonl"] = fx
+
+    fx = FixtureWriter("gh001-lexical-benign")
+    _workflow_event(fx, BASE, "8" * 40, path, WF_BASE, WF_BASE.replace("jobs:", "jobs:\njobs:"))
+    out[f"{d}/negative_lexical_fallback_benign.jsonl"] = fx
     return out
 
 
@@ -386,29 +585,65 @@ def _unit_event(
     )
 
 
+#: Name type of the primary PATH record as B1's auditd parser reports it (live values on
+#: the lab VM: openat CREATE/NORMAL, unlinkat DELETE, fchmodat/fchownat/fsetxattr NORMAL).
+_NAMETYPE_BY_SYSCALL = {"unlinkat": "DELETE", "unlink": "DELETE", "rmdir": "DELETE"}
+
+
 def _audit_watch(
     fx: FixtureWriter,
     t,
-    path: str,
+    path: str | None,
     key: str,
     serial: int,
     sim: dict[str, str] | None = None,
     *,
     syscall: str = "openat",
     exe: str = "/usr/bin/tee",
+    nametype: str | None = None,
+    success: bool = True,
+    paths: list[str] | None = None,
 ) -> None:
+    """One auditd watch hit with the attribute shape of B1's parser (``linux/auditd.py``).
+
+    ``path`` is the primary (first non-PARENT) PATH item, which B1 maps to
+    ``resource.path``; ``paths`` lists every PATH item as ``NAMETYPE:/abs/path``.
+    """
+    nt = nametype or _NAMETYPE_BY_SYSCALL.get(
+        syscall, "CREATE" if syscall in ("openat", "open", "creat") else "NORMAL"
+    )
+    if paths is None:
+        if path is None:
+            paths = [f"{nt}:?"]
+        elif nt == "NORMAL":
+            paths = [f"NORMAL:{path}"]
+        else:
+            paths = [f"PARENT:{path.rsplit('/', 1)[0]}/", f"{nt}:{path}"]
     fields: dict[str, object] = {"simulation": sim} if sim else {}
+    if path is not None:
+        fields["resource"] = {"type": "file", "path": path, "name": path.rsplit("/", 1)[-1]}
     fx.add(
         "file.audit.watch",
         t,
         asset=LINUX,
-        action="write",
-        outcome="success",
-        resource={"path": path},
+        action=f"audit.{syscall}",
+        outcome="success" if success else "failure",
         process={"executable": exe, "name": exe.rsplit("/", 1)[-1], "pid": 7021},
         actor={"type": "user", "id": "1000"},
-        message=f"audit watch {key}: {path} {syscall} by {exe}",
-        attributes={"audit_key": key, "syscall": syscall, "audit_serial": str(serial)},
+        message=f"auditd {key}: {syscall} {path or '?'} by 1000 via {exe.rsplit('/', 1)[-1]}",
+        attributes={
+            "audit_key": key,
+            "syscall": syscall,
+            "audit_serial": serial,
+            "success": success,
+            "exit_code": "0" if success else "-13",
+            "nametype": nt,
+            "paths": paths,
+            "arch": "aarch64",
+            "auid": 1000,
+            "euid": 0 if success else 1000,
+            "cwd": "/etc/systemd/system",
+        },
         **fields,
     )
 
@@ -439,24 +674,39 @@ def vm002() -> dict[str, FixtureWriter]:
     out[f"{d}/positive_created_with_audit_sim.jsonl"] = fx
 
     fx = FixtureWriter("vm002-b")
+    tunnel = "/etc/systemd/system/ssh-tunnel.service"
+    # None of these auditd hits create or modify the unit: they corroborate nothing.
+    _audit_watch(
+        fx, BASE - 30 * S, tunnel, "extorq_systemd", 813, syscall="unlinkat", exe="/usr/bin/rm"
+    )
+    _audit_watch(fx, BASE - 25 * S, tunnel, "extorq_systemd", 814, success=False, nametype="NORMAL")
+    _audit_watch(
+        fx, BASE - 20 * S, None, "extorq_systemd", 815, syscall="fsetxattr", exe="/usr/bin/install"
+    )
+    _audit_watch(fx, BASE - 15 * S, tunnel, "extorq_systemd", 816, syscall="276", exe="/usr/bin/mv")
+    _unit_event(fx, "persistence.systemd.unit_modified", BASE, tunnel, "b" * 64, prev="c" * 64)
+    out[f"{d}/positive_modified_inventory_only.jsonl"] = fx
+
+    fx = FixtureWriter("vm002-rename")
+    beacon = "/etc/systemd/system/beacon.service"
     _audit_watch(
         fx,
-        BASE - 30 * S,
-        "/etc/systemd/system/ssh-tunnel.service",
-        "extorq_systemd",
-        813,
-        syscall="unlinkat",
-        exe="/usr/bin/rm",
-    )
-    _unit_event(
-        fx,
-        "persistence.systemd.unit_modified",
         BASE,
-        "/etc/systemd/system/ssh-tunnel.service",
-        "b" * 64,
-        prev="c" * 64,
+        "/tmp/beacon.service",
+        "extorq_systemd",
+        817,
+        syscall="renameat",
+        exe="/usr/bin/mv",
+        nametype="DELETE",
+        paths=[
+            "PARENT:/tmp/",
+            "PARENT:/etc/systemd/system/",
+            "DELETE:/tmp/beacon.service",
+            f"CREATE:{beacon}",
+        ],
     )
-    out[f"{d}/positive_modified_inventory_only.jsonl"] = fx
+    _unit_event(fx, "persistence.systemd.unit_created", BASE + 40 * S, beacon, "9" * 64)
+    out[f"{d}/positive_renamed_into_place.jsonl"] = fx
 
     fx = FixtureWriter("vm002-c")
     _enabled(fx, BASE, "rsync.service")
@@ -612,6 +862,53 @@ def corr002() -> dict[str, FixtureWriter]:
         exe="/usr/bin/rm",
     )
     out[f"{d}/negative_deletion_only.jsonl"] = fx
+
+    # auditd hits that neither create nor modify a unit file: none of them is stage 3.
+    fx = FixtureWriter("corr002-noncounting")
+    http_probe(fx, BASE, "203.0.113.68")
+    for i in range(4):
+        ssh_failed_connection(fx, BASE + 5 * M + i * 9 * S, "203.0.113.68", 51200 + i, "admin")
+    evil = "/etc/systemd/system/evil.service"
+    _audit_watch(fx, BASE + 10 * M, evil, "extorq_systemd", 910, success=False, nametype="NORMAL")
+    _audit_watch(
+        fx, BASE + 11 * M, None, "extorq_systemd", 911, syscall="fsetxattr", exe="/usr/bin/install"
+    )
+    _audit_watch(fx, BASE + 12 * M, "/etc/systemd/system/.evil.service.swp", "extorq_systemd", 912)
+    _audit_watch(fx, BASE + 13 * M, evil, "extorq_systemd", 913, syscall="56")
+    _audit_watch(
+        fx,
+        BASE + 14 * M,
+        "/etc/systemd/system/old.service",
+        "extorq_systemd",
+        914,
+        syscall="renameat",
+        exe="/usr/bin/mv",
+        nametype="DELETE",
+        paths=[
+            "PARENT:/etc/systemd/system/",
+            "PARENT:/tmp/",
+            "DELETE:/etc/systemd/system/old.service",
+            "CREATE:/tmp/old.service",
+        ],
+    )
+    out[f"{d}/negative_noncounting_audit_hits.jsonl"] = fx
+
+    # Persistence seen by auditd only, plus a removal of another unit (context only).
+    fx = FixtureWriter("corr002-removal-context")
+    http_probe(fx, BASE, "203.0.113.69")
+    for i in range(4):
+        ssh_failed_connection(fx, BASE + 5 * M + i * 9 * S, "203.0.113.69", 51300 + i, "admin")
+    _audit_watch(fx, BASE + 12 * M, "/etc/systemd/system/beacon.service", "extorq_systemd", 920)
+    _audit_watch(
+        fx,
+        BASE + 13 * M,
+        "/etc/systemd/system/old-agent.service",
+        "extorq_systemd",
+        921,
+        syscall="unlinkat",
+        exe="/usr/bin/rm",
+    )
+    out[f"{d}/positive_audit_create_removal_context.jsonl"] = fx
     return out
 
 

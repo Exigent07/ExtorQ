@@ -282,15 +282,33 @@ def test_correlation_store_is_preferred_when_present(monkeypatch: pytest.MonkeyP
 
 
 class WorkerStorage(Storage):
+    """Queue semantics of ``store.pending_triage``: stored rows leave the queue, ``exclude``
+    keys are filtered, newest-first order is the list order."""
+
     def __init__(self, pending: list[tuple[str, str, str]], **kw: Any) -> None:
         super().__init__(**kw)
         self.pending = pending
 
+    def _stored(self) -> set[str]:
+        keys: set[str] = set()
+        for insert in self.ch.inserts:
+            if insert["table"] == "ai_assessments":
+                for values in insert["rows"]:
+                    row = dict(zip(insert["columns"], values, strict=True))
+                    keys.add(store.pending_key(row["alert_id"], row["context_input_hash"]))
+        return keys
+
+    def open_items(self) -> list[tuple[str, str, str]]:
+        stored = self._stored()
+        return [p for p in self.pending if store.pending_key(p[0], p[2]) not in stored]
+
     def handle(self, sql: str, params: dict[str, Any]) -> list[tuple[Any, ...]]:
         if "SELECT count()" in sql and "investigation_contexts" in sql:
-            return [(len(self.pending),)]
+            return [(len(self.open_items()),)]
         if "SELECT l.alert_id, l.context_id, l.input_hash" in sql:
-            return self.pending[: params["limit"]]
+            excluded = set(params["exclude"])
+            rows = [p for p in self.open_items() if store.pending_key(p[0], p[2]) not in excluded]
+            return list(rows[: params["limit"]])
         return super().handle(sql, params)
 
 
@@ -437,6 +455,7 @@ def test_worker_skips_a_poison_context_and_continues() -> None:
     w.context_loader = loader
     stats = w.run_cycle()
     assert stats.skipped == 1 and stats.processed == 1 and stats.saved == 1
+    assert stats.invalid == 1
 
 
 def test_worker_instance_name_comes_from_platform_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -453,3 +472,140 @@ def test_worker_instance_name_comes_from_platform_settings(monkeypatch: pytest.M
     assert worker_mod._instance_name() is None
     monkeypatch.setattr(worker_mod, "optional_attr", lambda module, name: None)
     assert worker_mod._instance_name() is None
+
+
+# ── ai-worker robustness (session 3 review findings) ──────────────────
+
+
+def _ctx_for(alert_id: str) -> InvestigationContext:
+    """CTX under another alert id (SYNTHETIC; the queue key differs by alert id)."""
+    return CTX.model_copy(
+        update={"alert_id": alert_id, "alert": CTX.alert.model_copy(update={"alert_id": alert_id})}
+    )
+
+
+def _unreadable(n: int, start: int = 1) -> list[tuple[str, str, str]]:
+    return [(f"{i:032x}", f"{i:032x}", f"{i:064x}") for i in range(start, start + n)]
+
+
+def _loader_for(good: dict[str, InvestigationContext], loads: list[str]) -> Any:
+    def loader(client: Any, alert_id: str) -> InvestigationContext | None:
+        loads.append(alert_id)
+        if alert_id in good:
+            return good[alert_id]
+        raise ContextLoadError("correlation store rejected the stored context (X)")
+
+    return loader
+
+
+def test_worker_pages_past_a_block_of_unreadable_contexts() -> None:
+    bad = _unreadable(5)
+    good = {a: _ctx_for(a) for a in ("a" * 32, "b" * 32)}
+    storage = WorkerStorage(bad + [(a, c.context_id, c.input_hash) for a, c in good.items()])
+    client = answering_client()
+    w = _worker(storage, settings=enabled_settings(ai_worker_batch_size=2), client=client)
+    loads: list[str] = []
+    w.context_loader = _loader_for(good, loads)
+    stats = w.run_cycle()
+    assert (stats.scanned, stats.invalid, stats.skipped) == (7, 5, 5)
+    assert (stats.processed, stats.saved) == (2, 2) and len(client.calls) == 2
+    assert stats.status is HealthStatus.DEGRADED
+    assert "5 unreadable context(s) skipped" in stats.reason
+    details = w.health(stats).details
+    assert details["cycle_invalid_contexts"] == 5 and details["invalid_contexts_total"] == 5
+    # Next cycle: the unreadable contexts are excluded by the query itself and never re-loaded.
+    loads.clear()
+    again = w.run_cycle()
+    assert loads == [] and (again.processed, again.invalid) == (0, 0)
+    assert again.status is HealthStatus.OK and again.queue_depth == 5
+    last_page = [p for sql, p in storage.ch.queries if "SELECT l.alert_id" in sql][-1]
+    assert {store.pending_key(a, h) for a, _, h in bad} <= set(last_page["exclude"])
+
+
+def test_worker_scan_limit_bounds_a_cycle_and_the_queue_still_progresses() -> None:
+    bad = _unreadable(6)
+    good = {"a" * 32: _ctx_for("a" * 32)}
+    storage = WorkerStorage([*bad, ("a" * 32, good["a" * 32].context_id, CTX.input_hash)])
+    settings = enabled_settings(ai_worker_batch_size=2, ai_worker_max_scan_per_cycle=4)
+    w = _worker(storage, settings=settings)
+    loads: list[str] = []
+    w.context_loader = _loader_for(good, loads)
+    first = w.run_cycle()
+    assert (first.scanned, first.invalid, first.processed) == (4, 4, 0)
+    second = w.run_cycle()
+    assert (second.scanned, second.invalid, second.processed) == (3, 2, 1)
+    assert len(loads) == 7, "every context is loaded exactly once"
+
+
+def test_worker_keeps_a_paid_result_and_retries_only_the_write() -> None:
+    storage = WorkerStorage([(CTX.alert_id, CTX.context_id, CTX.input_hash)])
+    storage.ch.fail_inserts = True
+    now = [1000.0]
+    client = answering_client()
+    settings = enabled_settings(
+        ai_worker_write_retry_base_seconds=10, ai_worker_write_retry_max_seconds=40
+    )
+    w = _worker(storage, settings=settings, client=client)
+    w.monotonic = lambda: now[0]
+    first = w.run_cycle()
+    assert (first.processed, first.write_errors, len(client.calls)) == (1, 1, 1)
+    assert w.awaiting_storage == 1 and first.status is HealthStatus.DEGRADED
+    assert "new provider calls paused" in first.reason
+    assert w.guard.used_estimate(0) == 1, "the unsaved attempt still counts toward the cap"
+    assert w.health(first).details["awaiting_storage"] == 1
+    # Before the backoff expires: no write retry and, above all, no new paid call.
+    now[0] += 5
+    second = w.run_cycle()
+    assert (second.write_retries, second.processed, len(client.calls)) == (0, 0, 1)
+    # Backoff expired, storage still down: one write retry, the delay doubles, still no call.
+    now[0] += 10
+    third = w.run_cycle()
+    assert (third.write_retries, third.write_errors, len(client.calls)) == (1, 1, 1)
+    delay = w.next_retry_in()
+    assert delay is not None and 20.0 <= delay <= 22.0  # 2 x 10 s, jitter <= 10 %
+    # Storage recovers: the cached result is written; nothing is sent to the provider again.
+    storage.ch.fail_inserts = False
+    now[0] += 25
+    fourth = w.run_cycle()
+    assert (fourth.retried_saved, fourth.saved, w.awaiting_storage) == (1, 1, 0)
+    assert len(client.calls) == 1 and fourth.status is HealthStatus.OK
+    assert w.guard.used_estimate(0) == 0, "stored later: no longer counted in-process"
+    (insert,) = [i for i in storage.ch.inserts if i["table"] == "ai_assessments"]
+    assert dict(zip(insert["columns"], insert["rows"][0], strict=True))["alert_id"] == CTX.alert_id
+    assert w.totals.written == 1 and w.totals.write_errors == 2
+
+
+def test_worker_drops_a_result_after_max_write_attempts_and_never_calls_again() -> None:
+    storage = WorkerStorage([(CTX.alert_id, CTX.context_id, CTX.input_hash)])
+    storage.ch.fail_inserts = True
+    now = [0.0]
+    client = answering_client()
+    settings = enabled_settings(
+        ai_worker_write_max_attempts=2, ai_worker_write_retry_base_seconds=1
+    )
+    w = _worker(storage, settings=settings, client=client)
+    w.monotonic = lambda: now[0]
+    w.run_cycle()  # paid call + first failed write
+    now[0] += 5
+    dropped = w.run_cycle()  # second failed write: result dropped
+    assert w.awaiting_storage == 0 and w.totals.dropped_results == 1
+    assert w.health(dropped).details["results_dropped_total"] == 1
+    storage.ch.fail_inserts = False
+    now[0] += 5
+    later = w.run_cycle()
+    assert later.processed == 0 and len(client.calls) == 1, "never sent to the provider again"
+
+
+def test_worker_skips_a_replaced_context_that_is_already_triaged() -> None:
+    stale = (CTX.alert_id, CTX.context_id, "9" * 64)  # queue still names an older hash
+    storage = WorkerStorage([stale])
+    client = answering_client()
+    w = _worker(storage, client=client)
+    first = w.run_cycle()  # the loader returns the current context: it is triaged once
+    assert first.processed == 1 and len(client.calls) == 1
+    values = storage.ch.inserts[0]["rows"][0]
+    row = dict(zip(store.ASSESSMENT_COLUMNS, values, strict=True))
+    columns = [c.strip() for c in store._SELECT_COLUMNS.split(",")]
+    storage.reusable_rows = [tuple(row[c] for c in columns)]
+    second = w.run_cycle()  # same stale queue entry: already triaged, no second call
+    assert (second.processed, second.skipped) == (0, 1) and len(client.calls) == 1

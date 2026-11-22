@@ -26,7 +26,7 @@ A rule is two files under `rules/<domain>/`:
 | `group_by`, `params`, `false_positives`, `blind_spots`, `references` | grouping documentation; SQL parameters; analyst guidance |
 | `query` | SQL file name (must stay inside `rules/`) |
 | `summary_template` | deterministic alert summary, `{placeholder}` syntax only (no attribute access, no format specs); values are sanitised and truncated |
-| `tests` | fixture cases: `name`, `fixture` (JSONL), `expect: alert|no_alert`, optional `alerts`, `confidence`, `entities`, `now`, `description` |
+| `tests` | fixture cases: `name`, `fixture` (JSONL inside `rules/`), `expect: alert|no_alert`, optional `alerts`, `confidence`, `entities`, `features` (exact expected feature values), `summary_contains` (substrings of every summary), `now`, `description` |
 | `enabled` | optional, default `true`; disabled rules are registered with `enabled = 0` and never run |
 
 `query_sha256` is computed by the loader from the SQL text and must not be written by
@@ -93,7 +93,11 @@ before the normal window. If there are any, that evaluation's window starts at
 `earliest late event - lookback` (bounded by `EXTORQ_DETECTOR_CATCHUP_MAX_SECONDS`,
 default 6 h; 0 disables). Alert identities do not depend on the window, so a longer
 window never duplicates alerts. Consequence: a detector restart evaluates up to 6 hours
-of telemetry that arrived while it was down.
+of telemetry that arrived while it was down (observed 2026-11-21 20:27Z: the restarted
+detector re-evaluated the afternoon with the new rule versions; 0 alerts created, 0
+updated). Regression test: `test_late_burst_ingested_after_its_window_alerts_exactly_once`
+(the detector runs first, the burst is ingested 26 minutes late, six later runs: exactly one
+alert creation, one stored version, the full evidence).
 
 Identities and privileges:
 
@@ -138,6 +142,36 @@ fails the run.
   The lookup never blocks an alert write.
 * Summaries are rendered from `summary_template` with sanitised values (no AI).
 
+### Rule upgrades and stored alerts
+
+A new rule version applies to every evaluation after the detector loads it; it does not
+rewrite stored alerts. Because evidence only grows (an alert never silently loses
+evidence), an alert keeps the evidence and union-merged list features that an older
+version attached, and a re-evaluation that adds nothing writes no new version (so the
+summary and features of an old alert also stay as written). Live example: CORR-002 alert
+`b46da3805d1c6f17b6c1ed363b49a777` was created by v1.0.0 with an auditd `unlinkat` by
+`/usr/bin/rm` (a cleanup) as persistence evidence; v1.2.0 no longer counts deletions, still
+finds the chain (the unit creation at 15:07:11), and the stored alert still lists
+`/usr/bin/rm` in `persistence_writers`. Use the dry run (below) to see what the current
+version produces for any stored alert. Revalidating stored evidence on a version upgrade
+(a `superseded` evidence role) is **planned** (C2-IC-6; needs a contract change).
+
+### Dry run against stored telemetry
+
+```bash
+uv run python -m extorq.detection.dryrun --rule CORR-002 \
+    --start 2026-11-21T14:00:00Z --end 2026-11-21T16:30:00Z
+```
+
+Evaluates the current rule definition over a historical window exactly as the engine does
+(rule SQL as `extorq_rules_ro`, row validation, alert identity, window-bucket continuation)
+and compares every row with the stored alert it would create (`NEW`) or extend (`STORED`):
+the evidence this version produces, by event type and source type, and stored evidence it
+no longer produces. Nothing is written (the store is wrapped in a client that refuses
+writes); reads use `extorq_api_ro` (or `--read-role detect`); the window is limited to 7
+days; telemetry values are sanitised. Use it before deploying a rule change and to explain
+historical alerts after one.
+
 ## 4. Rule runs, health and failure handling
 
 * Every evaluation writes a `rule_runs` row: status (`succeeded|failed`), rows matched,
@@ -164,7 +198,9 @@ fails the run.
 uv run extorq rules validate                      # static validation of every rule
 uv run extorq rules test                          # fixture harness (Docker, section 6)
 uv run extorq detector --once                     # one forced evaluation of every rule
-docker compose --profile full up -d --no-deps detector   # the service (owner C2)
+docker compose --profile full up -d --build --no-deps detector  # rebuild + recreate (owner C2)
+docker compose --profile full restart detector    # rule-only changes (rules are bind-mounted)
+uv run python -m extorq.detection.dryrun --rule <ID> --start <UTC> --end <UTC>  # read-only
 uv run extorq context build <alert_id>            # (re)build + store a context
 ```
 
@@ -176,30 +212,41 @@ Settings (`EXTORQ_DETECTOR_*`, no secrets): `RULES_DIR`, `INGEST_DELAY_SECONDS`,
 ## 6. Rule test harness
 
 `extorq rules test` and `uv run pytest tests/rules` start an ephemeral
-`clickhouse/clickhouse-server:26.8.42.13` container `extorq-c2-rules-ch` on a random
-loopback port (throwaway admin password via a 0600 env file deleted after start), apply
+`clickhouse/clickhouse-server:26.8.42.13` container `extorq-c2-rules-ch-<pid>-<random>` on a
+random loopback port (throwaway admin password via a 0600 env file deleted after start;
+the name is unique per run, so two sessions running the suite at once never touch each
+other's container, and only leftovers of processes that no longer exist are removed), apply
 migrations 0001, 0003 and 0004, create users mirroring `extorq_rules_ro` (readonly) and
 `extorq_detect`, and for each declared test case:
 
 1. truncate, load the JSONL fixture (validated by the contracts), shift it by whole days
    (bucket alignment preserved), insert through A's `extorq.storage.rows.to_row`;
 2. run the real `DetectionEngine` for that rule at a fixed `now`;
-3. assert the expectation (alert / no alert, count, confidence, entities), simulation-tag
-   propagation and integrity (evidence ids exist in `events`, `alert_evidence` holds the
-   full set, `event_count >= evidence`).
+3. assert the expectation (alert / no alert, count, confidence, entities, expected feature
+   values, summary substrings), simulation-tag propagation and integrity (evidence ids
+   exist in `events`, `alert_evidence` holds the full set, `event_count >= evidence`).
 
 The container is always removed. Engine properties are tested on the same server:
 duplicate replay is idempotent for every rule, late events extend (not duplicate)
 alerts, identities are stable across fresh detector state, a failing rule is recorded
 and isolated, rule SQL cannot read `alerts` (privileges), missing sources are reported,
-`service_ids` come from the evidence (and shadowing references are ignored).
+`service_ids` come from the evidence (and shadowing references are ignored), late
+telemetry is caught up exactly once, and the dry run writes nothing.
 
 Fixtures are synthetic and labelled (`labels: {"extorq.fixture": "synthetic"}`,
 collector/parser `fixture-synthetic`, RFC 5737 addresses), regenerated deterministically
 by `uv run python tests/rules/generate_fixtures.py [--only <builder>]`. Kubernetes
 fixtures are derived from audit records captured from the real kind cluster by B2 and
 normalised with B2's own normaliser (`derived-captured`); GitHub attributes are computed
-by C1's workflow analyser.
+by C1's workflow analyser. Two kinds of fixtures carry genuine data:
+
+* `tests/rules/captures/k8s_cluster_birth_live.jsonl`: ten normalised audit events of the
+  lab cluster's birth (2026-11-21 10:16Z), exported read-only from the live store with
+  `raw` and client-certificate fingerprints removed (labelled `derived-captured`); the
+  K8S-002 bootstrap fixtures are derived from it.
+* `rules/github/tests/GH-001/c1_*.jsonl`: verbatim copies of C1's collector-output fixtures
+  (real collector code path over a synthetic GitHub API fake);
+  `tests/rules/test_gh001_collector_contract.py` runs GH-001 on C1's current files too.
 
 ## 7. Adding a rule
 

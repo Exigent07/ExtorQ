@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { RawExcerptToggle } from "@/components/views/events/raw-excerpt";
 import type { EvidenceEvent } from "@/lib/api/schemas";
 import { DASH, humanize } from "@/lib/format";
+import { chronological } from "@/lib/investigation";
 import { serviceHref } from "@/lib/security/ids";
 
 function actorOf(e: EvidenceEvent): string | null {
@@ -30,8 +31,9 @@ function identifiers(e: EvidenceEvent): string[] {
 }
 
 /**
- * Supporting evidence: the stored events the detector cited. Each row is an anchor target
- * (`#evidence-<event_id>`) so AI statements can point at it; raw excerpts load on demand.
+ * Supporting evidence: the stored events the detector cited, oldest first. Each row is an
+ * anchor target (`#evidence-<event_id>`) so AI statements can point at it; raw excerpts load
+ * on demand.
  */
 export function EvidenceTable({ evidence }: { evidence: EvidenceEvent[] }) {
   return (
@@ -46,7 +48,7 @@ export function EvidenceTable({ evidence }: { evidence: EvidenceEvent[] }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {evidence.map((e) => {
+        {chronological(evidence).map((e) => {
           const actor = actorOf(e);
           const ids = identifiers(e);
           const href = e.service_id ? serviceHref(e.service_id) : null;

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import timedelta
 from typing import Annotated
 
@@ -24,7 +23,7 @@ from extorq.api.routes.common import (
     Until,
     now_ms,
 )
-from extorq.api.routes.services import evaluate_services
+from extorq.api.routes.services import evaluate_scope, service_evaluator
 from extorq.contracts import AssetType, Environment
 
 router = APIRouter(tags=["assets"])
@@ -51,10 +50,7 @@ def list_assets(
         offset,
     )
     ids = [str(row["asset_id"]) for row in rows]
-    by_asset: dict[str, list[s.CollectorStatus]] = defaultdict(list)
-    for row in repo.collectors(""):
-        status = service.collector_status(row, now)
-        by_asset[status.asset_id].append(status)
+    all_collectors = [service.collector_status(row, now) for row in repo.collectors("")]
     last_events = (
         {str(r["asset_id"]): r.get("last_event_at") for r in repo.asset_last_events(ids)}
         if ids
@@ -64,7 +60,7 @@ def list_assets(
     items = [
         service.asset_item(
             row,
-            by_asset.get(asset_id, []),
+            service.collectors_for_asset(asset_id, all_collectors),
             last_events.get(asset_id),
             open_alerts.get(asset_id, 0),
         )
@@ -94,7 +90,10 @@ def get_asset(
     row = repo.get_asset(asset_id)
     if row is None:
         raise NotFound("asset not found")
-    collectors = [service.collector_status(r, now) for r in repo.collectors(asset_id)]
+    # One evaluator (ALL collectors) for the asset's coverage and its services' coverage:
+    # own collectors plus those of ancestor assets (a node is covered by its cluster's).
+    evaluator = service_evaluator(repo, settings, now)
+    collectors = evaluator.asset_collectors(asset_id)
     last_events = repo.asset_last_events([asset_id])
     last_event_at = last_events[0].get("last_event_at") if last_events else None
     open_counts = service.severity_counts(
@@ -141,11 +140,9 @@ def get_asset(
         ASSET_RECENT_ALERTS_LIMIT,
         0,
     )
-    attribution = repo.finding_service_attribution([str(r["finding_id"]) for r in finding_rows])
-    evaluator = service.ServiceEvaluator(collectors, now, settings.service_stale_seconds)
-    service_items, truncated, _ = evaluate_services(
-        repo, evaluator, ServiceFilters(asset_id=asset_id)
-    )
+    # Same function as GET /assets/{asset_id}/services: evaluated against ALL collectors, so
+    # a Kubernetes node's services see the cluster collectors that cover them.
+    services_scope = evaluate_scope(repo, evaluator, ServiceFilters(asset_id=asset_id))
     return s.AssetDetailResponse(
         asset=asset,
         collectors=collectors,
@@ -153,8 +150,8 @@ def get_asset(
         event_counts=event_counts,
         event_counts_range=event_range,
         findings_summary=service.findings_summary(severity_rows, lifecycle),
-        findings=[service.finding_item(r, lifecycle_list, attribution) for r in finding_rows],
+        findings=[service.finding_item(r, lifecycle_list) for r in finding_rows],
         recent_alerts=[service.alert_item(r) for r in alert_rows],
-        services_summary=service.services_summary(service_items, truncated=truncated),
+        services_summary=services_scope.summary(),
         child_assets=[service.asset_brief(r) for r in repo.asset_children(asset_id)],
     )

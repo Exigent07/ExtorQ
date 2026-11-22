@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Literal
 
 from extorq_collectors.github.workflow import (
-    MAX_WORKFLOW_BYTES,
+    MAX_LEXICAL_BYTES,
     WorkflowAnalysis,
     analyse_workflow,
     compare_workflows,
@@ -35,11 +35,12 @@ def _load(path_arg: str, workflow_path: str) -> WorkflowAnalysis | None:
     file_path = Path(path_arg)
     if not file_path.is_file():
         raise SystemExit(f"error: {path_arg} is not a file")
-    if file_path.stat().st_size > MAX_WORKFLOW_BYTES:
-        return WorkflowAnalysis(
-            path=workflow_path, ok=False, error=f"workflow exceeds {MAX_WORKFLOW_BYTES} bytes"
-        )
-    return analyse_workflow(workflow_path, file_path.read_text(encoding="utf-8", errors="replace"))
+    # Bounded read, like the collector: an oversized file is scanned lexically (prefix).
+    with file_path.open("rb") as handle:
+        data = handle.read(MAX_LEXICAL_BYTES + 1)
+    truncated = len(data) > MAX_LEXICAL_BYTES
+    text = data[:MAX_LEXICAL_BYTES].decode("utf-8", errors="replace")
+    return analyse_workflow(workflow_path, text, truncated=truncated)
 
 
 def main(argv: list[str] | None = None) -> int:

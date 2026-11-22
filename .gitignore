@@ -54,3 +54,6 @@ id_ed25519*
 !*.pub
 *kubeconfig*
 *.kubeconfig
+
+# Console screenshots are regenerated on demand (scripts/screenshots.mjs); not versioned
+frontend/docs/screenshots/*.png

@@ -1,14 +1,23 @@
--- CORR-002 v1.1.0: ordered multi-stage activity on one Linux host:
+-- CORR-002 v1.2.0: ordered multi-stage activity on one Linux host:
 --   stage 1  HTTP probing      >= {probe_min_requests} 4xx responses to one source, of which
 --                              >= {probe_min_routes} distinct probe-like routes, within
 --                              {probe_window_seconds} (sliding window, web-server access logs)
 --   stage 2  SSH auth failures  >= {ssh_min_connections} failed connections or
 --                              >= {ssh_min_failures} 'Failed <method>' attempts from one source
 --                              within {ssh_window_seconds} (sliding window, sshd journald)
---   stage 3  systemd persistence  a unit file created/modified/enabled (inventory diff,
---                              not baseline, not allowlisted) or an auditd watch hit with key
---                              {audit_key} on a unit path that is not a deletion
---                              ({deletion_syscalls}: removing a unit is not persistence)
+--   stage 3  systemd persistence  CREATION OR MODIFICATION evidence only (v1.2.0):
+--                              * a unit created/modified/enabled (inventory diff; not baseline,
+--                                not allowlisted), or
+--                              * a successful auditd watch hit (key {audit_key}) whose syscall
+--                                is in the allowlist {change_syscalls} (open/openat/creat/
+--                                truncate, rename/link/symlink into the directory, chmod/chown
+--                                family) and whose WRITTEN path (the CREATE/NORMAL path item, or
+--                                the CREATE item of a rename/link) is a unit file under
+--                                {unit_dirs} matching {unit_file_pattern}.
+--                              Deletions (nametype DELETE, {deletion_syscalls}) are CONTEXT
+--                              only: reported in the features, never stage or alert evidence.
+--                              Failed, xattr/timestamp, unknown or numeric syscalls never count
+--                              (allowlist: unrecognised input fails closed).
 -- in this order, stage 3 at most {sequence_seconds} after stage 1. Each stage time is the
 -- moment its threshold was reached (stage 3: the change itself). ClickHouse windowFunnel
 -- gates the assets whose stage markers form the ordered chain; the matching chains are
@@ -101,33 +110,85 @@ WITH
         GROUP BY asset_id, src,
                  toStartOfInterval(event_time, toIntervalSecond({ssh_window_seconds:UInt32}))
     ),
-    persist AS (
+    persist_inventory AS (
         SELECT
             event_id,
             event_time,
-            event_type,
+            toString(event_type) AS change_type,
             asset_id,
             if(ifNull(resource_name, '') != '', assumeNotNull(resource_name),
                arrayLast(x -> x != '', splitByChar('/', ifNull(resource_path, '')))) AS unit,
-            ifNull(resource_path, '') AS unit_path,
+            '' AS writer,
+            toUInt8(1) AS from_inventory,
+            simulation_run_id
+        FROM events
+        WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
+          AND event_time < {window_end:DateTime64(3, 'UTC')}
+          AND asset_type = 'linux_host'
+          AND source_type = 'linux.inventory'
+          AND event_type IN ('persistence.systemd.unit_created',
+                             'persistence.systemd.unit_modified',
+                             'persistence.systemd.unit_enabled')
+          AND NOT JSONExtractBool(attributes, 'baseline')
+          AND NOT has({allowlist_paths:Array(String)}, ifNull(resource_path, ''))
+        LIMIT 1 BY event_id
+    ),
+    audit_hits AS (
+        SELECT
+            event_id,
+            event_time,
+            asset_id,
+            JSONExtractString(attributes, 'syscall') AS syscall,
+            JSONExtractString(attributes, 'nametype') AS nametype,
+            ifNull(resource_path, '') AS primary_path,
+            if(nametype IN ('CREATE', 'NORMAL') AND primary_path != '', primary_path,
+               substring(arrayFirst(p -> startsWith(p, 'CREATE:/'),
+                                    JSONExtract(attributes, 'paths', 'Array(String)')), 8))
+                AS written_path,
             ifNull(process_executable, '') AS writer,
             simulation_run_id
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
           AND asset_type = 'linux_host'
-          AND ((source_type = 'linux.inventory'
-                AND event_type IN ('persistence.systemd.unit_created',
-                                   'persistence.systemd.unit_modified',
-                                   'persistence.systemd.unit_enabled')
-                AND NOT JSONExtractBool(attributes, 'baseline'))
-               OR (source_type = 'linux.auditd'
-                   AND event_type = 'file.audit.watch'
-                   AND JSONExtractString(attributes, 'audit_key') = {audit_key:String}
-                   AND NOT has({deletion_syscalls:Array(String)},
-                               JSONExtractString(attributes, 'syscall'))))
-          AND NOT has({allowlist_paths:Array(String)}, ifNull(resource_path, ''))
+          AND source_type = 'linux.auditd'
+          AND event_type = 'file.audit.watch'
+          AND JSONExtractString(attributes, 'audit_key') = {audit_key:String}
+          AND JSONExtractBool(attributes, 'success')
         LIMIT 1 BY event_id
+    ),
+    persist_audit AS (
+        SELECT
+            event_id,
+            event_time,
+            concat('audit.', syscall) AS change_type,
+            asset_id,
+            arrayLast(x -> x != '', splitByChar('/', written_path)) AS unit,
+            writer,
+            toUInt8(0) AS from_inventory,
+            simulation_run_id
+        FROM audit_hits
+        WHERE has({change_syscalls:Array(String)}, syscall)
+          AND arrayExists(d -> startsWith(written_path, d), {unit_dirs:Array(String)})
+          AND match(written_path, {unit_file_pattern:String})
+          AND NOT has({allowlist_paths:Array(String)}, written_path)
+    ),
+    persist AS (
+        SELECT * FROM persist_inventory
+        UNION ALL
+        SELECT * FROM persist_audit
+    ),
+    removals AS (
+        -- Context only: removing a unit file is not persistence.
+        SELECT
+            event_id,
+            event_time,
+            asset_id,
+            arrayLast(x -> x != '', splitByChar('/', primary_path)) AS unit
+        FROM audit_hits
+        WHERE (nametype = 'DELETE' OR has({deletion_syscalls:Array(String)}, syscall))
+          AND arrayExists(d -> startsWith(primary_path, d), {unit_dirs:Array(String)})
+          AND NOT arrayExists(d -> startsWith(written_path, d), {unit_dirs:Array(String)})
     ),
     marks AS (
         SELECT asset_id, t, toUInt8(1) AS stage FROM probe_marks
@@ -207,13 +268,27 @@ WITH
             uniqExact(x.event_id) AS n,
             arrayMap(y -> y.2, groupArraySorted(150)(tuple(x.event_time, x.event_id))) AS ids,
             arraySort(groupUniqArrayIf(10)(x.unit, x.unit != '')) AS units,
-            arraySort(groupUniqArray(4)(x.event_type)) AS change_types,
+            arraySort(groupUniqArrayIf(10)(x.unit, x.unit != '' AND x.from_inventory = 1))
+                AS units_inventory,
+            arraySort(groupUniqArray(8)(x.change_type)) AS change_types,
             arraySort(groupUniqArrayIf(4)(x.writer, x.writer != '')) AS writers,
             groupUniqArray(16)(x.simulation_run_id) AS sims
         FROM chains AS c
         INNER JOIN persist AS x ON x.asset_id = c.asset_id
         WHERE x.event_time > c.ssh_t
           AND x.event_time <= c.probe_t + toIntervalSecond({sequence_seconds:UInt32})
+        GROUP BY c.asset_id, c.bucket_start
+    ),
+    removal_ctx AS (
+        SELECT
+            c.asset_id AS asset_id,
+            c.bucket_start AS bucket_start,
+            toUInt32(uniqExact(r.event_id)) AS n,
+            arraySort(groupUniqArrayIf(10)(r.unit, r.unit != '')) AS units
+        FROM chains AS c
+        INNER JOIN removals AS r ON r.asset_id = c.asset_id
+        WHERE r.event_time >= c.probe_t - toIntervalSecond({probe_window_seconds:UInt32})
+          AND r.event_time <= c.probe_t + toIntervalSecond({sequence_seconds:UInt32})
         GROUP BY c.asset_id, c.bucket_start
     )
 SELECT
@@ -241,8 +316,12 @@ SELECT
         se.users,
         toUInt32(xe.n),
         xe.units,
+        xe.units_inventory,
+        arrayFilter(u -> NOT has(xe.units_inventory, u), xe.units),
         xe.change_types,
         xe.writers,
+        rc.units,
+        toUInt32(ifNull(rc.n, 0)),
         length(arrayIntersect(c.probe_srcs, c.ssh_srcs)) > 0,
         length(arrayFilter(ip -> NOT has({shared_nat_ips:Array(String)}, ip),
                            arrayIntersect(c.probe_srcs, c.ssh_srcs))) > 0,
@@ -254,7 +333,10 @@ SELECT
               'probe_routes Array(String), ssh_failure_events UInt32, ',
               'ssh_failed_connections UInt32, ssh_usernames Array(String), ',
               'persistence_events UInt32, persistence_units Array(String), ',
+              'persistence_units_inventory_confirmed Array(String), ',
+              'persistence_units_audit_only Array(String), ',
               'persistence_change_types Array(String), persistence_writers Array(String), ',
+              'context_unit_removals Array(String), context_removal_events UInt32, ',
               'same_source_ip Bool, same_non_nat_source_ip Bool, source_ip_shared_nat Bool, ',
               'causation_established Bool)')))
         AS features,
@@ -267,5 +349,6 @@ FROM chains AS c
 INNER JOIN probe_ev AS pe ON pe.asset_id = c.asset_id AND pe.bucket_start = c.bucket_start
 INNER JOIN ssh_ev AS se ON se.asset_id = c.asset_id AND se.bucket_start = c.bucket_start
 INNER JOIN persist_ev AS xe ON xe.asset_id = c.asset_id AND xe.bucket_start = c.bucket_start
+LEFT JOIN removal_ctx AS rc ON rc.asset_id = c.asset_id AND rc.bucket_start = c.bucket_start
 ORDER BY first_seen
 LIMIT 1000

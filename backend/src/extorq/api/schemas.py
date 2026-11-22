@@ -500,16 +500,6 @@ class ServiceListResponse(ApiModel):
     invalid_records: int = 0
 
 
-class AssetServicesResponse(ApiModel):
-    asset_id: str
-    #: ``null`` when the asset record itself has not been reported (services exist).
-    asset: AssetBrief | None = None
-    items: list[ServiceListItem]
-    page: PageInfo
-    summary: ServicesSummary
-    invalid_records: int = 0
-
-
 class ServiceInstanceItem(ApiModel):
     """A process, container or Pod of a service (``v_service_instances_current``)."""
 
@@ -539,6 +529,38 @@ class ServiceInstanceItem(ApiModel):
     #: ``observed_at`` is older than the service staleness threshold.
     stale: bool
     attributes: JsonObject | None = None
+
+
+class HostedService(ApiModel):
+    """A service of an ANCESTOR asset with present instances on this asset.
+
+    Example: a cluster workload (``k8s_workload`` of ``k8s:<cluster>``) whose Pods and
+    containers run on the node ``k8s:<cluster>/node/<name>``. Only instances whose
+    ``asset_id`` is this asset are listed, and only services whose asset is an ancestor of
+    it are accepted (an instance cannot attach itself to another asset's service).
+    """
+
+    service: ServiceListItem
+    #: Its instances on this asset, newest observation first (capped).
+    instances: list[ServiceInstanceItem]
+    #: Instances of this service on this asset that the API read (``>= len(instances)``).
+    instances_on_asset: int
+
+
+class AssetServicesResponse(ApiModel):
+    asset_id: str
+    #: ``null`` when the asset record itself has not been reported (services exist).
+    asset: AssetBrief | None = None
+    items: list[ServiceListItem]
+    page: PageInfo
+    summary: ServicesSummary
+    invalid_records: int = 0
+    #: Services of an ancestor asset running instances here, e.g. the cluster workloads
+    #: whose Pods run on a Kubernetes node. Not counted in ``summary`` (they belong to the
+    #: ancestor's inventory). Empty for assets that host no such instance.
+    hosted: list[HostedService] = Field(default_factory=list)
+    #: More hosted instances exist than the API reads in one request.
+    hosted_truncated: bool = False
 
 
 class ServiceSourceCollector(ApiModel):
@@ -604,8 +626,13 @@ class AssetListItem(ApiModel):
     first_seen: datetime
     last_seen: datetime
     observed_by: str
+    #: Collectors covering this asset: its own plus those of an ancestor asset (a
+    #: Kubernetes node ``k8s:<cluster>/node/<name>`` is covered by the cluster's collectors).
     collectors_total: int
     collectors_stale: int
+    #: How many of ``collectors_total`` report for an ancestor asset (their ``asset_id``
+    #: differs); 0 when every collector reports for this asset itself.
+    collectors_inherited: int = 0
     coverage_status: CoverageStatus
     last_event_at: datetime | None = None
     open_alerts: int
@@ -658,8 +685,9 @@ class FindingItem(ApiModel):
     cvss_score: float | None = None
     remediation: str | None = None
     accepted_risk_reason: str | None = None
-    #: Service the finding applies to when the scanner attributed it (schema 1.1): the
-    #: latest non-null attribution among the finding's observations; ``null`` otherwise.
+    #: Service the finding applies to (schema 1.1): the attribution of the finding's LATEST
+    #: observation (``v_findings_current.service_id``). ``null`` when that observation
+    #: carries none: an older attribution is cleared, never carried forward.
     service_id: str | None = None
     #: Scan scope the lifecycle state applies to (lifecycle view only).
     scope_hash: str | None = None

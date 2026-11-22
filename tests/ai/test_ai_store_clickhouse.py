@@ -235,6 +235,10 @@ def test_pending_queue_semantics(clickhouse: Any) -> None:
     pending = store.pending_triage(clickhouse, limit=10, **args)
     assert {p.alert_id for p in pending} == {a.alert_id, b.alert_id}
     assert store.count_pending_triage(clickhouse, **args) == 2
+    skip_a = [store.pending_key(a.alert_id, a.input_hash)]
+    only_b = store.pending_triage(clickhouse, limit=10, exclude=skip_a, **args)
+    assert [p.alert_id for p in only_b] == [b.alert_id]
+    assert store.count_pending_triage(clickhouse, **args) == 2, "exclusion only pages the queue"
 
     now = datetime.now(UTC)
     ok = JevTriageProvider(
@@ -347,3 +351,50 @@ def test_worker_cycle_end_to_end(clickhouse: Any) -> None:
         parameters={"i": "test:worker"},
     ).result_rows
     assert health == [("ok", 3)]
+
+
+def test_worker_pages_past_a_tampered_context_at_the_head(clickhouse: Any) -> None:
+    """A context failing C2's hash check (newest, so first in the queue) never stalls it."""
+    from extorq.correlation.store import context_to_row, save_context
+
+    _truncate(clickhouse)
+    good = _store_ready("SSH-S2")
+    save_context(
+        clickhouse, good.model_copy(update={"created_at": datetime.now(UTC) - timedelta(minutes=1)})
+    )
+    bad = _store_ready("K8S-S1")
+    row = context_to_row(bad.model_copy(update={"created_at": datetime.now(UTC)}))
+    body = json.loads(row["body"])
+    body["alert"]["summary"] = "tampered after hashing"
+    row["body"] = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    clickhouse.insert("investigation_contexts", [list(row.values())], column_names=list(row))
+
+    loads: list[str] = []
+
+    def loader(client: Any, alert_id: str) -> InvestigationContext | None:
+        loads.append(alert_id)
+        return load_latest_context(client, alert_id)
+
+    settings = enabled_settings(ai_worker_batch_size=1)
+    worker = TriageWorker(
+        read_client=clickhouse,
+        write_client=clickhouse,
+        settings=settings,
+        provider=JevTriageProvider(
+            settings, key=jev_key(), client_factory=lambda k, s: answering_client()
+        ),
+        guard=BudgetGuard(AIProvider.JEV, settings.jev_daily_cap),
+        context_loader=loader,
+        instance="test:poison",
+    )
+    first = worker.run_cycle()
+    assert loads == [bad.alert_id, good.alert_id]
+    assert (first.invalid, first.processed, first.saved) == (1, 1, 1)
+    assert first.status is HealthStatus.DEGRADED
+    second = worker.run_cycle()
+    assert loads == [bad.alert_id, good.alert_id], "the tampered context is not loaded again"
+    assert (second.queue_depth, second.processed, second.invalid) == (1, 0, 0)
+    assert [a.alert_id for a in store.list_assessments(clickhouse, good.alert_id)] == [
+        good.alert_id
+    ]
+    assert store.list_assessments(clickhouse, bad.alert_id) == []

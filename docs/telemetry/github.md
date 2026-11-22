@@ -53,10 +53,10 @@ collector quotes in the data-gap reason.
 | `GET /repos/{o}/{r}/branches/{b}` | branch head and `protected` flag | Contents | default branch 404: empty repository |
 | `GET /repos/{o}/{r}/branches/{b}/protection` | protection details | Administration | 404 + unprotected: no protection; 404 + protected or 403: "unknown", data gap |
 | `GET /repos/{o}/{r}/commits`, `.../compare/{a}...{b}`, `.../commits/{sha}` | new commits since the checkpoint and their changed files | Contents | compare 404: checkpoint commit vanished (gap event) |
-| `GET /repos/{o}/{r}/contents/{path}?ref=` (raw) | workflow file before / after a commit | Contents | 404: file absent at that ref |
+| `GET /repos/{o}/{r}/contents/{path}?ref=` (raw, at most a 4 MiB prefix) | workflow file before / after a commit | Contents | 404: file absent at that ref; other errors: per-commit isolation (section 8) |
 | `GET /repos/{o}/{r}/activity` | push time, pusher, force-push flag | Contents / Metadata (see GitHub docs) | data gap; `event_time` falls back to first observation |
 | `GET /repos/{o}/{r}/actions/runs` | workflow runs | Actions | data gap |
-| `GET /repos/{o}/{r}/git/trees/{sha}?recursive=1`, `.../git/blobs/{sha}` (raw) | workflow inventory, CODEOWNERS presence | Contents | data gap; workflow checks skipped |
+| `GET /repos/{o}/{r}/git/trees/{sha}?recursive=1`, `.../git/blobs/{sha}` (raw, at most a 4 MiB prefix) | workflow inventory, CODEOWNERS presence | Contents | data gap; workflow checks skipped |
 | `GET /repos/{o}/{r}/dependabot/alerts?state=open` | Dependabot alerts | Dependabot alerts | "feature unavailable or not authorised" |
 | `GET /repos/{o}/{r}/code-scanning/alerts?state=open` | code scanning alerts | Code scanning alerts | same |
 | `GET /repos/{o}/{r}/secret-scanning/alerts?state=open&hide_secret=true` | secret scanning alerts (no secret values) | Secret scanning alerts | same |
@@ -84,10 +84,11 @@ message, never shown by `repr()`:
 The gh CLI token is an OAuth token whose scopes (typically `repo`, `workflow`, `read:org`,
 `gist`) are far broader than the read-only access the collector needs. While it is in use,
 CollectorHealth reports `token_source=gh_cli` and a warning, and any write-capable scopes
-GitHub reports in `X-OAuth-Scopes` are listed by name (never values). The shipped
-configuration keeps the fallback off (least privilege); an operator may enable it for the
-lab after the user approves using the CLI token. A fine-grained read-only token is
-preferred and takes precedence automatically.
+GitHub reports in `X-OAuth-Scopes` are listed by name (never values). The fallback is off
+by default (least privilege). For the lab it was enabled in `config/collectors/github.yaml`
+by the lead on 2026-11-22 with the user's explicit approval (PLAN section 11); live health
+shows `token_source=gh_cli`, `token_kind=oauth` and the broad-scope warning. A fine-grained
+read-only token is preferred and takes precedence automatically once configured.
 
 ## 3. Client behaviour (`client.py`)
 
@@ -109,7 +110,10 @@ preferred and takes precedence automatically.
   wait longer than `max_rate_limit_wait_seconds` (60 s) ends the cycle early instead of
   blocking; the next cycle resumes from the committed checkpoints. Optional phases (posture,
   alerts) are skipped when fewer than `rate_limit_reserve` (200) requests remain.
-* Response bodies are streamed and capped (16 MiB; workflow files 512 KiB) before parsing.
+* Response bodies are streamed and capped (16 MiB) before parsing; an oversized JSON body is
+  an error, never silently cut. Workflow files are read with `get_text_prefix`: at most the
+  first 4 MiB (`MAX_LEXICAL_BYTES`) of the raw content, the rest is never read and the
+  result is marked truncated (section 5, fail closed).
 
 Budget measured on 2026-11-21 against two public repositories (section 11): first cycle
 44 requests, following cycle 18 requests with four 304s, i.e. about 9 requests per
@@ -147,7 +151,7 @@ processed over several polls (checkpoint advances per chunk).
 Workflow YAML is attacker-controlled. Parsing uses a `SafeLoader` subclass with YAML 1.2
 booleans (so the key `on` stays `"on"`; documents loaded elsewhere with `True` keys are also
 understood), rejects duplicate keys, and bounds size (512 KiB), aliases (100) and nodes
-(50,000). Unparseable workflows are reported (`workflow_unparseable`), never guessed.
+(50,000). Analyser version `1.1.0` (`attributes.analyzer_version`).
 
 For each changed workflow file the collector fetches the file at the parent and at the
 commit and compares:
@@ -178,8 +182,50 @@ commit and compares:
 rule (C2) reads `write_all_added`, `added_write_scopes`, `triggers_added`,
 `dangerous_triggers_added`, `untrusted_checkout_added` and the parse/unknown flags.
 
-Offline use (no token, no network):
+Offline use (no token, no network; files are read as a bounded prefix like the collector):
 `uv run python -m extorq_collectors.github.analyze --path .github/workflows/ci.yml --before old.yml --after new.yml --repo-default read [--expect-escalation]`.
+
+### 5.1 Fail closed: lexical fallback for unanalysable workflows
+
+A workflow version that exists but cannot be analysed (over a budget, invalid YAML,
+duplicate keys, not a mapping) is never treated as absent: otherwise an attacker could hide
+an escalation by padding the file or adding aliases. Every analysis carries a bounded
+lexical scan of the raw text (`workflow.lexical_scan`), and when either version is
+unanalysable both versions are compared lexically (like with like). The event then has
+`attributes.analysis = "lexical_fallback"` (otherwise `"structured"`),
+`effective_permissions_unknown = true`, the parser error in `parse_error_before/after` and
+the risk flag `analysis_lexical_fallback`.
+
+The scan (outside full-line comments; `\x`/`\u` escapes, escaped line breaks and scalar
+anchors/aliases resolved) looks for exactly the GH-001 indicators:
+
+* `write-all` anywhere (block, flow, quoted, anchored) -> `write_all_added`;
+* `<write-capable scope>: write` pairs in block, flow or JSON style (tags and explicit keys
+  allowed) -> `added_write_scopes` (with repository default `write` and no `permissions` key
+  at all, the permissive default is assumed, flag `relies_on_repo_default_write`);
+* the privileged triggers `pull_request_target`, `workflow_run`, `issue_comment`, except
+  when only named inside a one-line `${{ }}` expression or as a property
+  (`github.event.workflow_run.*`) -> `triggers_added` / `dangerous_triggers_added`;
+* checkout of untrusted code: `ref:` / `repository:` using the pull request or workflow_run
+  head expressions, `refs/pull/`, `gh pr checkout`, `git fetch|checkout ... pull/${{`,
+  `allow-unsafe-pr-checkout` -> `untrusted_checkout_added` (with a privileged trigger),
+  evidence labels in `lexical_evidence` (fixed text, never attacker input).
+
+It cannot tell which job a declaration belongs to and over-approximates (a mention in a
+trailing comment or script also counts); indicators present in both versions cancel out.
+Checks it does not cover are reported as unknown (`null`): `unpinned_actions_added/after`,
+`script_injection_added`, `secrets_inherit_added`. Bounds: 4 MiB of text, 100,000 matches
+per pattern, 20,000 alias substitutions; all patterns are linear (measured on the lab Mac
+on 2026-11-21: 0.2-0.7 s for each of seven 4 MiB hostile inputs such as 4 million empty
+lines, 400,000 `git fetch` lines or 400,000 alias keys; the unit test bounds a mixed hostile
+input at 10 s). Text beyond 4 MiB is not examined: `lexical_truncated = true`,
+flag `lexical_scan_truncated`, and `workflow_sha256_*` is `null` (a prefix hash is not the
+file hash); the collector never claims an escalation it did not see. Versions larger than
+512 KiB are not diffed (`raw` says so) because `difflib` is superlinear.
+
+GH-001 (C2) fires on such events: v1.1.0 reads `analysis` and gives lexical-fallback
+evidence confidence `medium` (feature `analysis_methods`); see
+`docs/team/interface-changes/C1.md` section 7.1 for the verification.
 
 ## 6. Posture checks (`posture.py`, scanner `extorq-posture-github`)
 
@@ -203,7 +249,7 @@ Offline use (no token, no network):
 | `github.workflow.privileged_untrusted_checkout` | high | privileged trigger checks out untrusted code | workflow files |
 | `github.workflow.script_injection` | high | untrusted expression interpolated into a script | workflow files |
 | `github.workflow.secrets_inherit` | low | `secrets: inherit` | workflow files |
-| `github.workflow.unparseable` | low | workflow cannot be analysed | workflow files |
+| `github.workflow.unparseable` | low; medium / high from the lexical scan | workflow cannot be analysed; evidence and `attributes.lexical_*` carry the lexical indicators: high for write-all or privileged trigger + untrusted checkout, medium for write scopes or privileged triggers | workflow files (oversized blobs read as a 4 MiB prefix) |
 | `github.workflow.relies_on_default_write` | medium | no permissions block while the repository default is write | workflow files + Actions settings |
 
 Lifecycle (contracts `scan.py`): checks whose input is permanently unavailable (403/404)
@@ -241,7 +287,21 @@ organisation audit logs need Enterprise Cloud. Unavailable features surface as d
   longer than `runs_lookback_hours`), `record_build_failed` (an upstream item could not be
   converted to a valid record; it is skipped so one malformed item cannot stall the
   collector, and only the exception type is reported because validation messages can echo
-  attacker-controlled input).
+  attacker-controlled input), `commit_unavailable` (below).
+* **Per-commit isolation** (`commit_unavailable`): one commit whose detail or workflow
+  content cannot be read never blinds the repository. 401 and rate limits still end the
+  cycle (they affect every request). Permanent errors (for example 422 "diff taking too
+  long", 404, 403, an oversized or malformed response) produce a gap event at once and the
+  branch checkpoint moves past the commit. Transient errors (5xx, 408, network, after the
+  client's 3 in-request attempts) put the commit in a bounded retry set in the checkpoint
+  (at most 32 commits) while the checkpoint moves on; it is retried once per later poll with
+  its genuine push time and pusher, and after 3 polls it becomes the same gap event. The gap
+  event names the repository (`github.repository`), the commit (`github.commit_sha`,
+  message) and `attributes.{http_status, error_type, endpoint, branch, attempts,
+  transient}`. A commit's records are all-or-nothing, so a retry never duplicates part of it.
+* **Per-branch isolation**: when listing a branch's new commits fails (compare API), that
+  branch keeps its checkpoint and is retried next poll, while other branches and the runs,
+  posture and security-alert phases still run; the poll is reported `incomplete`.
 * A finding that fails contract validation (e.g. an out-of-range score) is never dropped
   from a successful scan: its check is marked failed, stays in scope and the scan becomes
   `partial`, so the lifecycle view cannot wrongly resolve it.
@@ -256,11 +316,16 @@ Known limitations:
 * Only the default branch plus up to 10 configured branches are monitored; workflow files
   are analysed as of each commit on those branches. Reusable workflows in other
   repositories are classified by reference only.
-* Platform retention: the `events` table keeps 90 days (`TTL event_time + 90 DAY`), while
-  the gateway accepts events up to 400 days old. Backfilled commits whose real push time is
-  older than 90 days are accepted and then dropped by the TTL (observed live with
-  `actions/hello-world-javascript-action`, pushed 2026-02-18). Reported to A / the lead in
-  `docs/team/interface-changes/C1.md`.
+* Platform retention: the `events` table keeps 90 days (`TTL event_time + 90 DAY`).
+  Backfilled commits whose real push time is older than that were accepted and then dropped
+  by the TTL (observed 2026-11-21 with `actions/hello-world-javascript-action`, pushed
+  2026-02-18). Since the lead's decision in PLAN section 11 the gateway quarantines such
+  events visibly with reason `older_than_retention` (A's code in
+  `backend/src/extorq/ingest/processing.py`; not re-tested by C1).
+* The lexical fallback (section 5.1) is a heuristic: it cannot attribute declarations to
+  jobs, so effective permissions stay unknown and it over-reports; content beyond 4 MiB is
+  not examined (reported as `lexical_scan_truncated`). Commits whose detail stays unreadable
+  are skipped with a `commit_unavailable` gap; their workflow changes are not analysed.
 
 ## 9. Polling instead of webhooks
 
@@ -299,6 +364,17 @@ Offline contract check: `tests/fixtures/github/gh001_collector_output.jsonl` (sy
 regenerated by `tests/fixtures/github/generate_gh001_fixture.py` from the real collector
 code path and the real lab workflow files) produces exactly one high-confidence GH-001
 alert with C2's rule in an ephemeral ClickHouse, and none for the baseline or cleanup.
+`tests/fixtures/github/gh001_lexical_fallback.jsonl` (same generator; the escalation version
+padded beyond 512 KiB, run marker `gh001lexical`) produces exactly one GH-001 alert with
+confidence `medium` under GH-001 v1.1.0 (lexical fallback), and none for the baseline or
+cleanup.
+
+Live lab repository (private, created by the lead with the user's approval):
+`Exigent07/extorq-lab`, commits `572f066` (initial, baseline workflow), `bf4026a` (GH-001
+escalation, `[extorq-sim 8dwz3wf6zji4]`) and `b464b80` (cleanup). A read-only clone for the
+scanners' git-history scan (C3, `config/scanners.yaml` target `gitleaks-lab-repo-history`)
+is at `var/cache/scanners/repos/extorq-lab` (full history; push URL disabled; refresh with
+`git -C var/cache/scanners/repos/extorq-lab pull --ff-only`).
 
 ## 11. Verification record (2026-11-21)
 
@@ -310,3 +386,15 @@ alert with C2's rule in an ephemeral ClickHouse, and none for the baseline or cl
 | Offline GH-001 dry run | `simulations/github/gh_001_workflow_permissions.sh --repo Exigent07/extorq-lab --dry-run` | escalation detected (write-all, 14 write scopes, `pull_request_target`, untrusted checkout); cleanup: no escalation; marker parsed |
 | Live read-only collection through the SDK runner and gateway | `uv run extorq-collect run --config <scratch config: octocat/Hello-World + actions/hello-world-javascript-action, page_size 2> --once` (twice) | cycle 1: 44 requests, 6 events, 4 scan runs, 4 findings, 8 inventory items, 15 permission gaps, health ok; cycle 2: 18 requests, 4 not-modified, 0 new events |
 | Records land in ClickHouse | queries as `extorq_api_ro` via 127.0.0.1:18123 | 4 assets, 3 commit events (unique ids), 4 scan runs (posture succeeded, alerts partial with 3 skipped features), 8 inventory items |
+
+Session 3 (2026-11-21, UTC; review fixes and the live lab repository):
+
+| Claim | Command | Result |
+|---|---|---|
+| Unit tests incl. lexical fallback (oversized, alias bomb, malformed, duplicate key, escapes, aliases, truncation, hostile-input timing) and per-commit isolation (422 gap, 502 retried then gap, recovery with push time, compare failure, 401 / rate limit propagate) | `uv run pytest tests/unit/github -q` | 204 passed |
+| Lint, format, types | `uv run ruff check` / `uv run ruff format --check` on the package, tests and fixtures; `uv run mypy collectors/src/extorq_collectors/github` | clean; mypy: no issues in 13 files |
+| Security suite still green | `uv run pytest tests/security -q` | 296 passed, 32 deselected |
+| GH-001 fires on lexical-fallback evidence | C2 harness `run_case`, ephemeral ClickHouse `extorq-c1-gh001-ch` (removed), both fixtures, assertions of C2's collector contract test | GH-001 v1.1.0: structured 1 alert, high; lexical fallback 1 alert, medium, `analysis_methods=[lexical_fallback]`, `effective_permissions_unknown=true`; evidence = the escalation event only; no alert for baseline or cleanup (v1.0.0 earlier the same evening: high / low) |
+| Live collection of the lab repository with the new code, twice | `uv run extorq-collect run --only github-repos --once` at 20:28:09 and 20:28:13 (a continuous `extorq-collect run` started by someone else had already polled at 20:25:12 and 20:27:16 with the same code) | both: status ok, 9 requests, 5 answered 304 (ETag), 0 events, 0 errors, `token_source=gh_cli`; runner's first cycle: posture scan succeeded (5 findings), workflow inventory `analyzer_version=1.1.0`, `analysis=structured` |
+| No duplicates, three workflow events, one alert | queries as `extorq_api_ro` | `github.workflow.modified` 3 unique ids in 3 stored rows: `572f066` added (contents:read), `bf4026a` write-all added, `b464b80` back to contents:read; `github.commit.observed` 3/3; GH-001 alerts: exactly 1 (`e70639259d3044a6da955d9bc79e48cd`, high, commit `bf4026a`, run `8dwz3wf6zji4`) |
+| Coverage gaps reported honestly on the live private repository | CollectorHealth details | branch protection, branch rules and rulesets: HTTP 403 "Upgrade to GitHub Pro or make this repository public"; `security_and_analysis` not visible to the token |

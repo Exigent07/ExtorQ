@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/console/states";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import type { InvestigationContext, Relationship, TimelineEntry } from "@/lib/api/schemas";
 import { formatCount, formatDuration, formatUtc } from "@/lib/format";
+import { summaryWithoutType } from "@/lib/investigation";
 
 import { basisLabel, EvidenceMark, RelationshipBadge, STRENGTH_LABEL } from "./relationship";
 
@@ -80,7 +81,7 @@ function TimelineRow({
           <UntrustedText value={entry.event_type} limit={48} />
         </span>
         <span className={entry.is_evidence ? "text-sm text-ink" : "text-sm text-ink-2"}>
-          <UntrustedText value={entry.summary} limit={entry.is_evidence ? 300 : 140} />
+          <UntrustedText value={summaryWithoutType(entry.summary, entry.event_type)} limit={entry.is_evidence ? 300 : 140} />
         </span>
         {jump ? (
           <a href={jump} className="ml-2 text-xs whitespace-nowrap text-muted-foreground hover:text-ink hover:underline">
@@ -187,7 +188,7 @@ function CorrelationRow({ r, entry }: { r: Relationship; entry: TimelineEntry | 
       </div>
       {entry ? (
         <div className="mt-0.5 text-sm text-ink-2">
-          <UntrustedText value={entry.summary} limit={200} />
+          <UntrustedText value={summaryWithoutType(entry.summary, entry.event_type)} limit={200} />
         </div>
       ) : null}
       <p className="mt-0.5 text-xs text-muted-foreground">

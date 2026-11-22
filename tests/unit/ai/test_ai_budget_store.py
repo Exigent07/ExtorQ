@@ -53,6 +53,35 @@ def test_reservation_finish_is_idempotent() -> None:
     assert guard.used_estimate(0) == 0
 
 
+def test_attempt_stored_by_a_later_write_retry_stops_counting_in_process() -> None:
+    guard = BudgetGuard(AIProvider.JEV, 10, clock=lambda: NOW)
+    unsaved = guard.try_reserve(lambda day: 0)
+    unsaved.finish(persisted=False)
+    assert guard.used_estimate(0) == 1
+    unsaved.persisted_later()
+    assert guard.used_estimate(0) == 0
+    unsaved.persisted_later()  # idempotent: never goes below zero or double-decrements
+    assert guard.used_estimate(0) == 0
+    stored = guard.try_reserve(lambda day: 0)
+    stored.finish(persisted=True)
+    stored.persisted_later()  # was never counted as unsaved: no effect
+    other = guard.try_reserve(lambda day: 0)
+    other.finish(persisted=False)
+    assert guard.used_estimate(0) == 1
+
+
+def test_late_storage_of_yesterdays_attempt_does_not_free_todays_budget() -> None:
+    clock = {"now": NOW}
+    guard = BudgetGuard(AIProvider.JEV, 10, clock=lambda: clock["now"])
+    yesterday = guard.try_reserve(lambda day: 0)
+    yesterday.finish(persisted=False)
+    clock["now"] = NOW + timedelta(days=1)
+    today = guard.try_reserve(lambda day: 0)  # rolls the day: in-process count reset
+    today.finish(persisted=False)
+    yesterday.persisted_later()
+    assert guard.used_estimate(0) == 1, "today's unsaved attempt still counts"
+
+
 def test_unreadable_usage_fails_closed() -> None:
     guard = BudgetGuard(AIProvider.JEV, 300, clock=lambda: NOW)
 

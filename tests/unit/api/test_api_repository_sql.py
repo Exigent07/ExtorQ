@@ -101,11 +101,12 @@ def _exercise(repo: r.ClickHouseRepository) -> None:
     repo.alert_series(series)
     repo.event_series(r.SeriesQuery(since=since, until=until, bucket_seconds=300))
     repo.asset_children("k8s:extorq-lab")
-    repo.finding_service_attribution(["c" * 32])
     repo.list_findings(r.FindingFilters(service_id="d" * 32), 10, 0)
     repo.list_services(r.ServiceFilters(asset_id="linux:lab-vm-01", service_kind="k8s_service"), 9)
     repo.get_service("d" * 32)
-    repo.service_instances("d" * 32, 10)
+    repo.service_instances("d" * 32, 10, scope_asset="linux:lab-vm-01")
+    repo.instances_on_asset("k8s:extorq-lab/node/extorq-lab-control-plane", 10)
+    repo.services_by_id(["d" * 32], 10)
     repo.service_event_sources("d" * 32, since, until)
     repo.service_auth_summary("d" * 32, since, until)
     repo.service_auth_sources("d" * 32, since, until, 10)
@@ -188,3 +189,24 @@ def test_datetimes_from_the_driver_are_normalised_to_aware_utc() -> None:
     assert rows[0]["t"] == NOW
     assert rows[0]["t"].tzinfo is not None
     assert rows[0]["arr"][0] == NOW
+
+
+def test_finding_attribution_sql_uses_the_latest_observation_only() -> None:
+    """Attribution = v_findings_current.service_id (latest observation, NULL included); the
+    observation fallback applies the same rule. No query may match a finding through an OLDER
+    attributed observation (the session-2 ``finding_id IN (...)`` filter did)."""
+    findings_sql = (
+        r.FINDINGS_LC_LIST_SQL,
+        r.FINDINGS_LC_COUNT_SQL,
+        r.FINDINGS_OBS_LIST_SQL,
+        r.FINDINGS_OBS_COUNT_SQL,
+    )
+    for sql in findings_sql:
+        assert "finding_id IN (SELECT" not in sql, sql
+    assert "service_id = {service_id:String}" in r.FINDINGS_LC_LIST_SQL
+    assert re.search(r"\bservice_id\s*\n?FROM extorq\.v_findings_current", r.FINDINGS_LC_LIST_SQL)
+    for sql in (r.FINDINGS_OBS_LIST_SQL, r.FINDINGS_OBS_COUNT_SQL):
+        # argMax over a 1-tuple keeps a NULL latest value instead of skipping it.
+        assert "argMax(tuple(service_id), observed_at).1 AS f_service_id" in sql
+        assert "f_service_id = {service_id:String}" in sql
+    assert not hasattr(r, "FINDING_SERVICE_ATTRIBUTION_SQL")

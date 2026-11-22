@@ -32,38 +32,48 @@ collectors:
     settings: {ssh: {host: 127.0.0.1, port: 2222}}   # -> ctx.config
 ```
 
-A file may hold one mapping, a list, or `{collectors: [...]}`. Values that look like
-credentials are rejected at load time; reference secrets by file path
-(`*_file` settings). Producer authorization (kinds, source types, asset patterns) is
-enforced by the gateway from `var/secrets/producers.json` (PLAN §4.3; service kinds for
-the macOS, Linux and Kubernetes-inventory producers since contract 1.1).
+A file may hold one mapping, a list, or `{collectors: [...]}`. String settings that
+look like credentials are rejected at load time (each string is checked together with
+its key, so `password: x` is refused); the error names the setting path, never the
+value. Booleans, numbers, dates and nulls are never candidates: a flag such as
+`allow_gh_cli_token: true` is accepted. Reference secrets by file path (`*_file`
+settings). Producer authorization (kinds, source types, asset patterns) is enforced by
+the gateway from `var/secrets/producers.json` (PLAN §4.3; service kinds for the macOS,
+Linux and Kubernetes-inventory producers since contract 1.1).
 
 ## 3. Writing a collector
 
 ```python
 from typing import ClassVar
+
 from extorq_collectors.sdk import Collector, CollectorContext, asset_upsert
+
 
 class ExampleCollector(Collector):
     collector_type: ClassVar[str] = "linux_ssh"
     source_types: ClassVar[tuple[str, ...]] = ("linux.journald",)  # all allowed for the producer
 
-    def setup(self, ctx: CollectorContext) -> None:      # optional, once before the first cycle
+    def setup(self, ctx: CollectorContext) -> None:  # optional, once before the first cycle
         ...
 
     def collect(self, ctx: CollectorContext) -> None:
         cursor = ctx.checkpoints.get("journal.cursor")
         events, new_cursor, newest = read_source(cursor)  # SecurityEvent models
         added, changed, removed = ctx.diff_snapshot("units", current_units)  # dict[key, dict]
-        asset = asset_upsert(ctx, asset_type="linux_host", name="lab-vm-01",
-                             attributes={"os_version": "24.04"})
-        ctx.emit([*events, *unit_records(added, changed, removed), *([asset] if asset else [])],
-                 {"journal.cursor": new_cursor})
-        ctx.report_lag(newest)                       # lag_seconds in CollectorHealth
-        ctx.checkpoint_summary = "cursor ok"         # short, no secrets
-        ctx.health_details = {"lines_read": 120}     # scalars / short lists
+        asset = asset_upsert(
+            ctx, asset_type="linux_host", name="lab-vm-01", attributes={"os_version": "24.04"}
+        )
+        ctx.emit(
+            [*events, *unit_records(added, changed, removed), *([asset] if asset else [])],
+            {"journal.cursor": new_cursor},
+        )
+        if packages_unavailable:  # this cycle succeeded only partly
+            ctx.mark_degraded("package inventory unavailable: dpkg query timed out")
+        ctx.report_lag(newest)  # lag_seconds in CollectorHealth
+        ctx.checkpoint_summary = "cursor ok"  # short, no secrets
+        ctx.health_details = {"lines_read": 120}  # scalars / short lists
 
-    def close(self) -> None:                         # optional, at shutdown
+    def close(self) -> None:  # optional, at shutdown
         ...
 ```
 
@@ -80,9 +90,20 @@ Rules:
 * Commit checkpoints **with** the records they cover. A snapshot staged by
   `diff_snapshot` is persisted only by the next `emit`; if the cycle fails it is
   discarded and the next cycle diffs again (nothing is lost or skipped).
+* `ctx.committed_snapshot(name)` returns the last **committed** snapshot as
+  `{item_key: item}` (a read-only copy; items staged by `diff_snapshot` in this cycle are
+  not included until `emit`). Use it to carry over items of a source that could not be
+  read this cycle, so "unreadable" never looks like "deleted".
 * `ctx.state` (KV) is for small non-critical state and is not atomic with records.
 * Raise on failure: the runner reports it (sanitised) and keeps the other collectors
   running. Long blocking calls need their own timeouts.
+* Partial success: when `collect` completes but part of its work did not (one source or
+  repository failed, rate limited, a broader credential than needed is in use), call
+  `ctx.mark_degraded(reason)`. The cycle is reported `degraded` instead of `ok`, the
+  reasons go to `last_error` (`degraded: <reason>; ...`) and
+  `details.degraded_reasons` (redacted, sanitised, up to 8 distinct reasons), and
+  `last_success_at` still advances. The hint applies to the current cycle only: call it
+  again every cycle while the condition lasts. A cycle that raises stays `failed`.
 
 ### Services (contract 1.1)
 
@@ -110,8 +131,27 @@ uv run extorq-collect run --once                # one cycle each, deliver, exit 
 uv run extorq-collect run --config path/to/file.yaml
 uv run extorq-collect status [--json]           # outbox, dead letters, last health (read-only)
 uv run extorq-collect flush [--requeue-dead]    # deliver buffered records without collecting
-make collectors | collectors-once | collectors-status | collectors-flush | sdk-selftest
+make collectors | collectors-once | collectors-flush | sdk-selftest
 ```
+
+Continuous collection (demo and day-to-day): the host collectors (macOS, Linux VM over
+SSH, Kubernetes inventory, GitHub) run as ONE background process:
+
+```
+make collectors-start            # all enabled collectors; ONLY=a,b to limit
+make collectors-status           # runner pid + uptime, then outbox/dead letters/last health
+make collectors-stop             # SIGTERM: the current cycle commits, then exit (SIGKILL after 90 s)
+```
+
+`scripts/collectors_ctl.py` starts `nohup uv run --frozen extorq-collect run` in its own
+session (survives the terminal), with stdin `/dev/null`, output appended to
+`var/log/collectors.log` (0600, rotated once at 50 MiB) and the pid in
+`var/run/collectors.pid`. Starting twice is a no-op; it refuses to start while another
+`extorq-collect run` is active (duplicate collection; `--force` overrides), and a stale
+or recycled pid is never signalled. It installs no launchd job or other persistence and
+does not restart a crashed runner: `make collectors-status` (and `make demo-check`, which
+requires fresh `last_success_at` for every enabled collector) show it. Restart after
+changing collector code or configuration: `make collectors-stop collectors-start`.
 
 Paths resolve against `EXTORQ_HOME` or the repository root found from the current
 directory. Relevant settings: `EXTORQ_GATEWAY_URL` (default `https://127.0.0.1:8443`),
@@ -128,10 +168,11 @@ directory. Relevant settings: `EXTORQ_GATEWAY_URL` (default `https://127.0.0.1:8
   gateway outage only delays delivery. Batches: <= 500 records, gzip, `batch_id` reused
   across retries; outbox rows are deleted only after a 202 (a replayed 202 counts).
   Retry/backoff/dead-letter policy: `docs/data-flow.md` section 2.
-* `CollectorHealth` status: `failed` when the cycle raised, `degraded` when delivery
-  is failing or dead letters exist, otherwise `ok`. Collector-provided `health_details`
-  are coerced into the contract shape (keys normalised, nested values serialised,
-  strings redacted and bounded) so a bad detail never suppresses the health record.
+* `CollectorHealth` status: `failed` when the cycle raised; `degraded` when the
+  collector called `ctx.mark_degraded(reason)`, delivery is failing or dead letters exist;
+  otherwise `ok`. Collector-provided `health_details` are coerced into the contract shape
+  (keys normalised, nested values serialised, strings redacted and bounded) so a bad
+  detail never suppresses the health record.
 * Stop with SIGTERM/SIGINT: threads finish their current step; nothing committed is lost.
 
 ## 6. Simulation runs (`sim-record`)
@@ -163,7 +204,9 @@ It reports only while run, so it shows as stale afterwards; treat it as a self-t
 
 `tests/unit/platform/test_platform_sdk.py` (atomic emit, rollback, diffs, sender
 retry/backoff/Retry-After, lost-202 replay, 403 bisection, systemic 422, dead-letter
-requeue, runner isolation, health sanitisation, sim-record, asset upserts) with the
-in-process fake gateway `tests/unit/platform/fake_gateway.py`;
-`tests/failure/test_failure_durability.py` exercises a real outbox across gateway and
-writer restarts.
+requeue, runner isolation, health sanitisation, degraded hint, committed snapshots,
+string-only config secret check, sim-record, asset upserts) with the in-process fake
+gateway `tests/unit/platform/fake_gateway.py`;
+`tests/unit/platform/test_platform_collectors_ctl.py` (background runner start/stop/
+status with a fake `uv`); `tests/failure/test_failure_durability.py` exercises a real
+outbox across gateway and writer restarts.

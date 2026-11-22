@@ -351,6 +351,15 @@ def _pending_parameters(
     }
 
 
+#: Upper bound on the exclusion list sent with one pending-queue query.
+MAX_PENDING_EXCLUDE = 1_000
+
+
+def pending_key(alert_id: str, input_hash: str) -> str:
+    """Exclusion key of one (alert, context hash) pair in :func:`pending_triage`."""
+    return f"{alert_id}:{input_hash}"
+
+
 def pending_triage(
     read_client: Any,
     *,
@@ -359,13 +368,22 @@ def pending_triage(
     max_failed: int,
     backoff_seconds: int,
     max_age_hours: int,
+    exclude: Iterable[str] = (),
 ) -> list[PendingContext]:
-    """Latest contexts without a successful Jev triage for that context hash (bounded)."""
+    """Latest contexts without a successful Jev triage for that context hash (bounded).
+
+    ``exclude`` holds :func:`pending_key` values the caller already handled or must skip
+    (unreadable contexts, results awaiting storage), so the next page of the queue is
+    reached even when its head is blocked. The first :data:`MAX_PENDING_EXCLUDE` distinct
+    keys are sent (callers order them by priority and re-check membership themselves).
+    """
     params = _pending_parameters(prompt_version, max_failed, backoff_seconds, max_age_hours)
     params["limit"] = max(1, min(limit, 500))
+    params["exclude"] = list(dict.fromkeys(exclude))[:MAX_PENDING_EXCLUDE]
     result = read_client.query(
         "SELECT l.alert_id, l.context_id, l.input_hash "
         + _PENDING_FROM
+        + "  AND NOT has({exclude:Array(String)}, concat(l.alert_id, ':', l.input_hash))\n"
         + "ORDER BY l.context_created_at DESC, l.alert_id ASC LIMIT {limit:UInt32}",
         parameters=params,
     )

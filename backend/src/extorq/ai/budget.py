@@ -42,13 +42,27 @@ def utc_day_start(now: datetime) -> datetime:
 @dataclass
 class Reservation:
     guard: BudgetGuard
+    #: UTC day the slot was reserved on.
+    day: datetime | None = None
     _done: bool = False
+    _counted_unsaved: bool = False
 
     def finish(self, *, persisted: bool) -> None:
         """Release the in-flight slot; unpersisted attempts keep counting today."""
         if not self._done:
             self._done = True
+            self._counted_unsaved = not persisted
             self.guard._release(persisted=persisted)
+
+    def persisted_later(self) -> None:
+        """The attempt was finished unsaved and stored by a later write retry.
+
+        The stored row now counts in the persisted total, so the in-process count drops it
+        (same UTC day only; a new day already reset the in-process count).
+        """
+        if self._counted_unsaved:
+            self._counted_unsaved = False
+            self.guard._persisted_later(self.day)
 
 
 class BudgetGuard:
@@ -86,13 +100,18 @@ class BudgetGuard:
             if used >= self.daily_cap:
                 raise BudgetExceeded(self.provider, used, self.daily_cap)
             self._inflight += 1
-            return Reservation(self)
+            return Reservation(self, day)
 
     def _release(self, *, persisted: bool) -> None:
         with self._lock:
             self._inflight = max(0, self._inflight - 1)
             if not persisted:
                 self._unsaved += 1
+
+    def _persisted_later(self, day: datetime | None) -> None:
+        with self._lock:
+            if day is not None and self._day == day and self._unsaved > 0:
+                self._unsaved -= 1
 
     def used_estimate(self, persisted: int) -> int:
         with self._lock:

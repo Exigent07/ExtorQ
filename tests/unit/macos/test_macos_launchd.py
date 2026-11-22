@@ -39,9 +39,10 @@ def item_for(relative: str, allowlist: LabelAllowlist | None = None) -> LaunchIt
 
 
 def test_homebrew_agent_plist_fields_and_hash() -> None:
-    item = item_for("launchd/user_agents/sh.brew.redis.plist")
-    raw = (FIXTURES / "launchd/user_agents/sh.brew.redis.plist").read_bytes()
-    assert item.label == "sh.brew.redis"
+    # Synthetic third-party agent with a Homebrew-layout program path (fixtures README).
+    item = item_for("launchd/user_agents/com.example.thirdparty.redis.plist")
+    raw = (FIXTURES / "launchd/user_agents/com.example.thirdparty.redis.plist").read_bytes()
+    assert item.label == "com.example.thirdparty.redis"
     assert item.program == "/opt/homebrew/opt/redis/bin/redis-server"
     assert item.program_arguments == [
         "/opt/homebrew/opt/redis/bin/redis-server",
@@ -55,13 +56,14 @@ def test_homebrew_agent_plist_fields_and_hash() -> None:
 
 
 def test_empty_dictionary_plist_has_no_label() -> None:
-    item = item_for("launchd/user_agents/com.google.keystone.agent.plist")
+    item = item_for("launchd/user_agents/com.example.thirdparty.labelless.plist")
     assert item.label is None and item.parse_error is None and item.sha256 is not None
 
 
 def test_system_daemon_fixture_and_start_interval(tmp_path: Path) -> None:
-    item = item_for("launchd/system_daemons/com.docker.vmnetd.plist")
-    assert item.label == "com.docker.vmnetd"
+    item = item_for("launchd/system_daemons/com.example.thirdparty.helper.plist")
+    assert item.label == "com.example.thirdparty.helper"
+    assert [s.path for s in item.socket_specs] == ["/var/run/com.example.thirdparty.helper.sock"]
     data = plistlib.dumps({"Label": "x.interval", "Program": "/bin/true", "StartInterval": 300})
     probe = LaunchItem(path="p", scope="user", kind="agent")
     parse_plist_bytes(probe, data)
@@ -106,11 +108,12 @@ def test_scan_diff_created_modified_deleted_and_allowlist(
 ) -> None:
     agents = copy_fixture_dir("launchd/user_agents", tmp_path / "LaunchAgents")
     location = Location(agents, "user", "agent")
-    allow = LabelAllowlist(["sh.brew.*"])
+    allow = LabelAllowlist(["com.example.thirdparty.redis"])
     first = scan_locations([location], allow)
-    assert len(first.items) == 7
+    assert len(first.items) == 4
     previous = {path: item.summary() for path, item in first.items.items()}
-    assert first.items[str(agents / "sh.brew.redis.plist")].allowlisted is True
+    assert first.items[str(agents / "com.example.thirdparty.redis.plist")].allowlisted is True
+    assert first.items[str(agents / "com.example.thirdparty.php.plist")].allowlisted is False
 
     new = agents / "com.extorq.sim.abcd1234.plist"
     new.write_bytes(
@@ -122,24 +125,24 @@ def test_scan_diff_created_modified_deleted_and_allowlist(
             }
         )
     )
-    (agents / "sh.brew.php.plist").unlink()
-    redis = agents / "sh.brew.redis.plist"
+    (agents / "com.example.thirdparty.php.plist").unlink()
+    redis = agents / "com.example.thirdparty.redis.plist"
     redis.write_bytes(redis.read_bytes().replace(b"redis.conf", b"redis-alt.conf"))
     second = scan_locations([location], allow)
     changes = diff(previous, second.items)
-    assert [(c.kind, os.path.basename(c.path)) for c in changes] == [
+    assert [(c.kind, os.path.basename(c.path)) for c in changes] == [  # sorted by path
+        ("deleted", "com.example.thirdparty.php.plist"),
+        ("modified", "com.example.thirdparty.redis.plist"),
         ("created", "com.extorq.sim.abcd1234.plist"),
-        ("deleted", "sh.brew.php.plist"),
-        ("modified", "sh.brew.redis.plist"),
     ]
     events = [change_to_event(c, src, observed_at=OBSERVED, snapshot="s1") for c in changes]
-    created, deleted, modified = events
+    deleted, modified, created = events
     assert created.event_type == "persistence.launchd.item_created"
     assert created.attributes["scope"] == "user"
     assert created.attributes["run_at_load"] is False
     assert created.simulation is not None and created.simulation.run_id == "abcd1234"
     assert deleted.event_type == "persistence.launchd.item_deleted"
-    assert deleted.attributes["label"] == "sh.brew.php"
+    assert deleted.attributes["label"] == "com.example.thirdparty.php"
     assert modified.attributes["allowlisted"] is True  # flagged, never suppressed
     assert modified.attributes["previous_sha256"] == previous[str(redis)]["fp"]
     for event in events:
@@ -152,8 +155,8 @@ def test_scan_diff_created_modified_deleted_and_allowlist(
     inv = to_inventory(item, src, observed_at=OBSERVED, snapshot="s1")
     assert inv.item_type.value == "launch_item" and inv.present
     gone = tombstone(
-        str(agents / "sh.brew.php.plist"),
-        previous[str(agents / "sh.brew.php.plist")],
+        str(agents / "com.example.thirdparty.php.plist"),
+        previous[str(agents / "com.example.thirdparty.php.plist")],
         src,
         observed_at=OBSERVED,
         snapshot="s1",
@@ -162,7 +165,7 @@ def test_scan_diff_created_modified_deleted_and_allowlist(
 
 
 def test_identical_recreation_gets_a_new_event_id(src: SourceContext) -> None:
-    item = item_for("launchd/user_agents/sh.brew.mysql.plist")
+    item = item_for("launchd/user_agents/com.example.thirdparty.mysql.plist")
     change = Change("created", item.path, item, None)
     a = change_to_event(change, src, observed_at=OBSERVED, snapshot="s1")
     b = change_to_event(change, src, observed_at=OBSERVED, snapshot="s2")
@@ -190,14 +193,16 @@ def test_missing_directory_is_not_an_error(tmp_path: Path) -> None:
     assert result.items == {} and result.errors == []
 
 
-# ── launchctl print parsing (real, scrubbed output) ──────────────────
+# ── launchctl print parsing (real output, trimmed; third-party rows synthetic) ──
 
 
 def test_launchctl_system_domain_listing() -> None:
     listing = parse_domain_print(fixture_text("services/launchctl_print_system.txt"), "system")
-    assert listing.ok and len(listing.jobs) > 400
-    vmnetd = listing.jobs["com.docker.vmnetd"]
-    assert vmnetd.running and vmnetd.pid == 516
+    assert listing.ok and len(listing.jobs) == 11
+    helper = listing.jobs["com.example.thirdparty.helper"]
+    assert helper.running and helper.pid == 516
+    assert listing.jobs["com.apple.lskdd"].last_exit == "(pe)"  # status column marker kept
+    assert "com.apple.logd.admin" not in listing.jobs  # endpoint rows are not jobs
     assert listing.jobs["com.apple.ftp-proxy"].pid is None  # loaded, idle (socket-activated)
     assert "com.openssh.sshd" not in listing.jobs  # Remote Login off on the reference host
     assert listing.overrides["com.apple.ftp-proxy"] is True
@@ -207,11 +212,16 @@ def test_launchctl_system_domain_listing() -> None:
 def test_launchctl_gui_domain_listing_ignores_other_blocks() -> None:
     text = fixture_text("services/launchctl_print_gui.txt")
     listing = parse_domain_print(text, "gui/501")
-    assert listing.jobs["sh.brew.redis"].pid == 904
+    assert listing.jobs["com.example.thirdparty.redis"].pid == 904
     assert listing.jobs["com.apple.controlcenter"].pid == 656
-    assert listing.overrides["sh.brew.mysql"] is True
-    # endpoint rows ("0x... M D label") and environment values are never parsed as jobs
+    assert listing.overrides["com.example.thirdparty.mysql"] is True
+    assert listing.overrides["com.apple.ScriptMenuApp"] is False
+    # endpoint rows ("0x... M D label"), unmanaged-process blocks and environment values are
+    # never parsed as jobs
     assert all(" " not in label for label in listing.jobs)
+    assert "com.apple.BKAgentService" not in listing.jobs
+    assert not any("unmanaged" in label for label in listing.jobs)
+    assert len(listing.jobs) == 11
     assert "SSH_AUTH_SOCK" not in repr(listing)
 
 

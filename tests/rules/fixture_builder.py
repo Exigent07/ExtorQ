@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -258,12 +259,17 @@ DERIVED_LABELS = {"extorq.fixture": "derived-captured"}
 
 
 def k8s_audit_events(
-    filename: str, *, rename: str | None = None, received_at: datetime | None = None
+    filename: str,
+    *,
+    rename: str | None = None,
+    received_at: datetime | None = None,
+    mutate: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[SecurityEvent]:
     """Normalise one captured kube-apiserver audit record with B2's real normaliser.
 
-    Unmodified records are labelled ``derived-captured``; records edited here (e.g. the
-    object renamed to carry a simulation marker) are labelled ``synthetic``.
+    Unmodified records are labelled ``derived-captured``; records edited here (the object
+    renamed to carry a simulation marker, or reshaped by ``mutate``) are labelled
+    ``synthetic``.
     """
     from extorq.ingest.otlp_k8s import normalize_otlp_logs
 
@@ -274,6 +280,9 @@ def k8s_audit_events(
         record["objectRef"]["name"] = rename
         body = json.dumps(record).replace(f'"{old}"', f'"{rename}"')
         record = json.loads(body)
+        labels = SYNTHETIC_LABELS
+    if mutate is not None:
+        mutate(record)
         labels = SYNTHETIC_LABELS
     when = received_at or datetime.fromisoformat(record["stageTimestamp"].replace("Z", "+00:00"))
     payload = {
@@ -319,6 +328,15 @@ def k8s_audit_events(
     if failures:
         raise ValueError(f"{filename}: normaliser rejected the record: {failures}")
     return [e.model_copy(update={"labels": dict(labels)}) for e in events]
+
+
+CAPTURES = Path(__file__).resolve().parent / "captures"
+
+
+def captured_events(filename: str) -> list[SecurityEvent]:
+    """Genuine normalised events exported from the live store (see captures/README.md)."""
+    lines = (CAPTURES / filename).read_text(encoding="utf-8").splitlines()
+    return [SecurityEvent.model_validate_json(line) for line in lines if line.strip()]
 
 
 def k8s_risk_flags(filename: str) -> list[str]:

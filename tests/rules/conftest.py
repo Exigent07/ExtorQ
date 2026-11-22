@@ -1,6 +1,6 @@
 """Shared fixtures for the rule test harness (ephemeral ClickHouse in Docker).
 
-The container ``extorq-c2-rules-ch`` is started once per session and always
+The container ``extorq-c2-rules-ch-<pid>-<random>`` is started once per session and always
 removed afterwards. Tests are skipped (not failed) when Docker is unavailable.
 """
 

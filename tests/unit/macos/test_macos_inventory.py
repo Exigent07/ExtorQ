@@ -1,4 +1,8 @@
-"""Listener, process, application and account inventory parsing (real command output)."""
+"""Listener, process, application and account inventory parsing.
+
+Fixtures are real command output from the reference Mac, trimmed to the lines these tests
+need; third-party processes and applications are SYNTHETIC placeholders (README).
+"""
 
 from __future__ import annotations
 
@@ -35,7 +39,7 @@ def test_netstat_rows_and_last_pid_attribution() -> None:
     assert rows
     launchd_held = [r for r in rows if r.process_name == "launchd"]
     assert launchd_held and all(r.pid == 1 for r in launchd_held)
-    spaced = [r for r in rows if r.process_name == "Codex (Aperitif)"]
+    spaced = [r for r in rows if r.process_name == "Example App (UI)"]
     assert spaced and spaced[0].pid == 42240  # process names may contain spaces
     listeners = listeners_from_rows(rows, include_udp=False)
     proxy = listeners["tcp:127.0.0.1:8021"]
@@ -62,7 +66,7 @@ def test_lsof_field_output_current_user_only() -> None:
 
 def test_lsof_names_with_spaces_and_udp_wildcards() -> None:
     entries = parse_lsof_fields(fixture_text("services/lsof_tcp_services.txt"))
-    assert "Code Helper (Plugin)" in {e.command for e in entries}
+    assert "Example Helper (Plugin)" in {e.command for e in entries}
     udp = listeners_from_lsof(parse_lsof_fields(fixture_text("services/lsof_udp_services.txt")))
     assert all(":*" not in key for key in udp)  # unbound sockets (port '*') are skipped
 
@@ -89,7 +93,9 @@ def test_withheld_socket_table_falls_back_to_lsof() -> None:
 
 def test_ps_snapshot_and_verified_paths() -> None:
     rows = parse_ps(fixture_text("services/ps_services.txt"))
-    assert len(rows) > 500
+    assert len(rows) == 19
+    spaced = next(r for r in rows if r.pid == 7310)
+    assert spaced.name == "Example Helper (Plugin)"  # paths with spaces stay intact
     launchd = next(r for r in rows if r.pid == 1)
     assert launchd.command == "/sbin/launchd" and launchd.started_at is not None
     qemu = next(r for r in rows if r.command == "qemu-system-aarch64")
@@ -106,6 +112,14 @@ def test_system_profiler_applications() -> None:
     apps = parse_system_profiler_apps(fixture_text("inventory/system_profiler_apps.json"))
     textedit = next(a for a in apps if a.name == "TextEdit")
     assert textedit.obtained_from == "apple" and textedit.signed_by[0] == "macOS Software Signing"
+    stub = next(a for a in apps if a.name == "Automator Application Stub")
+    assert stub.signed_by == () and stub.attributes()["signed"] is False  # unsigned stays visible
+    assert {a.obtained_from for a in apps} == {
+        "apple",
+        "unknown",
+        "identified_developer",
+        "mac_app_store",
+    }
 
 
 def test_accounts_inventory_and_events(src: SourceContext) -> None:

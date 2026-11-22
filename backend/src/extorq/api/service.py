@@ -193,9 +193,6 @@ def asset_class_coverage(
     collectors: Sequence[s.CollectorStatus],
     last_event_by_type: dict[str, datetime | None],
 ) -> list[s.AssetClassCoverage]:
-    by_asset: dict[str, list[s.CollectorStatus]] = defaultdict(list)
-    for collector in collectors:
-        by_asset[collector.asset_id].append(collector)
     by_type: dict[str, list[Row]] = defaultdict(list)
     for asset in assets:
         by_type[str(asset["asset_type"])].append(asset)
@@ -205,7 +202,9 @@ def asset_class_coverage(
     result: list[s.AssetClassCoverage] = []
     for asset_type in ordered:
         members = by_type.get(asset_type, [])
-        statuses = [coverage_status(by_asset.get(str(a["asset_id"]), [])) for a in members]
+        statuses = [
+            coverage_status(collectors_for_asset(str(a["asset_id"]), collectors)) for a in members
+        ]
         total = len(members)
         ok = statuses.count("ok")
         degraded = statuses.count("degraded")
@@ -377,6 +376,7 @@ def asset_item(
         observed_by=str(row["observed_by"]),
         collectors_total=len(collectors),
         collectors_stale=sum(1 for c in collectors if c.stale),
+        collectors_inherited=sum(1 for c in collectors if c.asset_id != str(row["asset_id"])),
         coverage_status=coverage_status(collectors),
         last_event_at=last_event_at,
         open_alerts=open_alerts,
@@ -402,10 +402,20 @@ LIFECYCLE_UNAVAILABLE_NOTE = (
 )
 
 
-def finding_item(
-    row: Row, lifecycle: bool, attribution: dict[str, str] | None = None
-) -> s.FindingItem:
-    """Map a findings row; ``attribution`` maps finding_id -> attributed service_id."""
+def finding_service_id(row: Row) -> str | None:
+    """The finding's service attribution: that of its LATEST observation, else ``None``.
+
+    Rows come from ``v_findings_current`` (column ``service_id``) or from the
+    observation fallback, which applies the same rule. A NULL on the latest observation
+    clears an older link: attribution is evidence of the latest scan, never carried
+    forward from an earlier one.
+    """
+    value = row.get("service_id")
+    return str(value) if value else None
+
+
+def finding_item(row: Row, lifecycle: bool) -> s.FindingItem:
+    """Map a findings row (lifecycle view or observation fallback)."""
     state = row.get("state") if lifecycle else None
     return s.FindingItem(
         finding_id=str(row["finding_id"]),
@@ -430,7 +440,7 @@ def finding_item(
         cvss_score=opt_float(row.get("cvss_score")),
         remediation=row.get("remediation"),
         accepted_risk_reason=row.get("accepted_risk_reason"),
-        service_id=(attribution or {}).get(str(row["finding_id"])),
+        service_id=finding_service_id(row),
         scope_hash=(row.get("scope_hash") or None) if lifecycle else None,
         last_success_at=row.get("last_success_at") if lifecycle else None,
         latest_scan_status=row.get("latest_scan_status") if lifecycle else None,
@@ -748,16 +758,23 @@ NO_SERVICES_NOTE = (
 )
 
 
+def is_ancestor_asset(ancestor_id: str, asset_id: str) -> bool:
+    """``ancestor_id`` is a strict ancestor of ``asset_id`` in the asset-id namespace
+    (``k8s:<cluster>`` of ``k8s:<cluster>/node/<name>``); segment-aware, never a bare prefix."""
+    return bool(ancestor_id) and asset_id.startswith(ancestor_id + "/")
+
+
 def collectors_for_asset(
     asset_id: str, collectors: Sequence[s.CollectorStatus]
 ) -> list[s.CollectorStatus]:
     """Collectors of the asset itself or of an ancestor in the asset-id namespace.
 
     Kubernetes node assets are ``k8s:<cluster>/node/<name>``: the cluster collector
-    (asset ``k8s:<cluster>``) covers them.
+    (asset ``k8s:<cluster>``) covers them. The one rule for asset coverage (list, detail,
+    overview classes) and service coverage alike.
     """
     return [
-        c for c in collectors if c.asset_id == asset_id or asset_id.startswith(c.asset_id + "/")
+        c for c in collectors if c.asset_id == asset_id or is_ancestor_asset(c.asset_id, asset_id)
     ]
 
 
@@ -832,6 +849,15 @@ class ServiceEvaluator:
         self._collectors = list(collectors)
         self._now = now
         self._stale_seconds = stale_seconds
+
+    @property
+    def collectors(self) -> list[s.CollectorStatus]:
+        """Every collector health report this evaluator was built from."""
+        return list(self._collectors)
+
+    def asset_collectors(self, asset_id: str) -> list[s.CollectorStatus]:
+        """Collectors covering ``asset_id`` (own + ancestors): the asset-coverage input."""
+        return collectors_for_asset(asset_id, self._collectors)
 
     def source_collectors(self, asset_id: str, source_type: str) -> list[s.CollectorStatus]:
         return [

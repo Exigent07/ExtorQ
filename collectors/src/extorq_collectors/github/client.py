@@ -132,6 +132,8 @@ class ApiResponse:
     not_modified: bool
     links: Mapping[str, str] = field(default_factory=dict)
     headers: Mapping[str, str] = field(default_factory=dict)
+    #: True when only a prefix of the body was read (``get_text_prefix``).
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -248,6 +250,21 @@ class GitHubClient:
         """GET raw file content (``application/vnd.github.raw+json``) as text, size-capped."""
         response = self.get(path, params=params, raw=True, max_bytes=max_bytes)
         return str(response.data)
+
+    def get_text_prefix(
+        self, path: str, *, params: QueryParams | None = None, max_bytes: int
+    ) -> tuple[str, bool]:
+        """GET raw file content, reading at most ``max_bytes`` decoded bytes.
+
+        Unlike :meth:`get_text` an oversized body is not an error: the first
+        ``max_bytes`` are returned with ``truncated=True`` and the rest is never read.
+        """
+        if not path.startswith("/") or "://" in path:
+            raise ValueError("path must be an API-relative path starting with '/'")
+        response = self._request(
+            path, params=params, etag=None, raw=True, max_bytes=max_bytes, truncate=True
+        )
+        return ("" if response.data is None else str(response.data)), response.truncated
 
     def paginate(
         self,
@@ -395,22 +412,33 @@ class GitHubClient:
             return min(900.0, 60.0 * (2 ** min(self.rate_limit.secondary_hits - 1, 4)))
         return None
 
-    def _read_body(self, response: httpx.Response, endpoint: str, limit: int) -> bytes:
+    def _read_body(
+        self, response: httpx.Response, endpoint: str, limit: int, *, truncate: bool = False
+    ) -> tuple[bytes, bool]:
+        """Body bytes (at most ``limit``) and whether it was cut short.
+
+        Without ``truncate`` an oversized body raises :class:`GitHubResponseError`; with
+        it (successful responses only) reading stops at ``limit`` and the prefix is kept.
+        """
+        truncate = truncate and 200 <= response.status_code < 300
         declared = response.headers.get("content-length")
-        if declared is not None and declared.isdigit() and int(declared) > limit:
+        if not truncate and declared is not None and declared.isdigit() and int(declared) > limit:
             raise GitHubResponseError(
                 response.status_code, endpoint, f"response exceeds {limit} bytes"
             )
         chunks: list[bytes] = []
         total = 0
         for chunk in response.iter_bytes():
+            if total + len(chunk) > limit:
+                if not truncate:
+                    raise GitHubResponseError(
+                        response.status_code, endpoint, f"response exceeds {limit} bytes"
+                    )
+                chunks.append(chunk[: limit - total])
+                return b"".join(chunks), True
             total += len(chunk)
-            if total > limit:
-                raise GitHubResponseError(
-                    response.status_code, endpoint, f"response exceeds {limit} bytes"
-                )
             chunks.append(chunk)
-        return b"".join(chunks)
+        return b"".join(chunks), False
 
     @staticmethod
     def _error_message(body: bytes) -> str:
@@ -430,6 +458,7 @@ class GitHubClient:
         etag: str | None,
         raw: bool = False,
         max_bytes: int | None = None,
+        truncate: bool = False,
     ) -> ApiResponse:
         endpoint = urlsplit(url).path or url
         headers: dict[str, str] = {}
@@ -451,7 +480,7 @@ class GitHubClient:
                 with self._http.stream(
                     "GET", url, params=query or None, headers=headers
                 ) as response:
-                    body = self._read_body(response, endpoint, limit)
+                    body, cut = self._read_body(response, endpoint, limit, truncate=truncate)
             except httpx.TransportError as exc:  # timeouts, connection errors, protocol errors
                 if attempt < self._max_attempts:
                     self._sleep(self._backoff(attempt))
@@ -469,6 +498,8 @@ class GitHubClient:
                 self.not_modified_count += 1
                 return ApiResponse(304, None, response_etag or etag, True, links)
             if 200 <= status < 300:
+                if cut and not raw:
+                    raise GitHubResponseError(status, endpoint, f"response exceeds {limit} bytes")
                 return ApiResponse(
                     status,
                     self._parse_body(body, raw=raw, endpoint=endpoint, status=status),
@@ -476,6 +507,7 @@ class GitHubClient:
                     False,
                     links,
                     {"content-type": response.headers.get("content-type", "")},
+                    truncated=cut,
                 )
             message = self._error_message(body)
             accepted = response.headers.get("x-accepted-github-permissions")

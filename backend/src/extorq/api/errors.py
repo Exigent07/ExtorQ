@@ -74,6 +74,17 @@ def _is_storage_error(exc: Exception) -> bool:
     return module.startswith("clickhouse_connect")
 
 
+#: Seconds a client should wait after the read identity's ClickHouse quota is exhausted
+#: (quota intervals are one minute, PLAN 4.4 / migration 0002).
+QUOTA_RETRY_AFTER_SECONDS = 30
+
+
+def _is_quota_exceeded(exc: Exception) -> bool:
+    """ClickHouse error 201 (QUOTA_EXCEEDED): a load limit, not an outage."""
+    text = str(exc)
+    return "QUOTA_EXCEEDED" in text or "Code: 201." in text or "code: 201," in text
+
+
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError) -> JSONResponse:
@@ -126,6 +137,10 @@ def classify_unhandled(exc: BaseException, *, request_id: str, path: str) -> tup
     responses carry the request id and security headers. ClickHouse driver errors become
     503 (their messages may contain SQL and are only logged, truncated).
     """
+    if isinstance(exc, Exception) and _is_storage_error(exc) and _is_quota_exceeded(exc):
+        # 429 (not 503): clients must not retry immediately, which would only extend it.
+        log.warning("storage_quota_exceeded", request_id=request_id, path=path)
+        return 429, "storage query quota of the API is exhausted for this minute; retry shortly"
     if isinstance(exc, Exception) and _is_storage_error(exc):
         log.error(
             "storage_error",

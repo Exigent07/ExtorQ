@@ -319,6 +319,10 @@ services:
       - "127.0.0.1:3001:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      # Per-deployment key for Grafana's secret encryption (D1-IC-1; never the public default).
+      # Changing it makes secrets stored under the old key unreadable: recreate the
+      # grafana-data volume (it only holds provisioned, reproducible state).
+      GF_SECURITY_SECRET_KEY__FILE: /run/secrets/grafana_secret_key
       GF_SERVER_HTTP_ADDR: 0.0.0.0
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
@@ -328,6 +332,7 @@ services:
       EXTORQ_CLICKHOUSE_PORT: "8123"
     secrets:
       - grafana_admin_password
+      - grafana_secret_key
       - extorq_grafana_password
     volumes:
       - grafana-data:/var/lib/grafana
@@ -385,6 +390,8 @@ secrets:
     file: ./var/secrets/frontend_session_secret
   grafana_admin_password:
     file: ./var/secrets/grafana_admin_password
+  grafana_secret_key:
+    file: ./var/secrets/grafana_secret_key
   jev_api_key:
     environment: JEV_API_KEY
   gemini_api_key:

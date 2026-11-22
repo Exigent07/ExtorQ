@@ -180,6 +180,40 @@ def test_workflow_checks_and_default_write_reliance() -> None:
     assert "github.workflow.unparseable" in found
 
 
+def test_unparseable_workflow_finding_fails_closed_with_lexical_indicators() -> None:
+    broken = "\nbroken: [unclosed\n"
+    cases = {
+        "plain.yml": ("on: push" + broken, Severity.LOW, "no risk indicators"),
+        "scopes.yml": (
+            "on: push\npermissions:\n  contents: write" + broken,
+            Severity.MEDIUM,
+            "write scopes: contents",
+        ),
+        "trigger.yml": ("on: workflow_run" + broken, Severity.MEDIUM, "privileged triggers"),
+        "writeall.yml": ("on: push\npermissions: write-all" + broken, Severity.HIGH, "write-all"),
+        "pwn.yml": (
+            "on: pull_request_target\njobs:\n  x:\n    steps:\n      - uses: actions/checkout@v4\n"
+            "        with: {ref: '${{ github.event.pull_request.head.sha }}'}" + broken,
+            Severity.HIGH,
+            "untrusted checkout",
+        ),
+    }
+    workflows = [
+        analyse_workflow(f".github/workflows/{name}", text) for name, (text, _, _) in cases.items()
+    ]
+    found = findings(evaluate_posture(snapshot(workflows=workflows)))
+    by_path = {f.resource_key.rsplit("/", 1)[1]: f for f in found["github.workflow.unparseable"]}
+    assert set(by_path) == set(cases)
+    for name, (_, severity, evidence) in cases.items():
+        draft = by_path[name]
+        assert draft.severity == severity, name
+        assert draft.evidence is not None and evidence in draft.evidence, (name, draft.evidence)
+        assert draft.attributes["analysis"] == "lexical_fallback"
+    assert by_path["writeall.yml"].attributes["lexical_write_all"] is True
+    # A structured write-all finding is only made from a parsed workflow (no duplicates).
+    assert "github.workflow.write_all" not in found
+
+
 def test_scan_scope_excludes_permanent_gaps_and_transients_make_it_partial() -> None:
     draft = FindingDraft(
         check_id="github.repo.codeowners_missing",

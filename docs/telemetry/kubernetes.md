@@ -256,8 +256,22 @@ cluster-info ConfigMap).
 | node | Asset `k8s:extorq-lab/node/<node>` (kubernetes_node, parent the cluster) | |
 | workload | Service `k8s_workload`, name `<ns>/<name>` | `service_id(cluster, "k8s_workload", "<ns>/<Kind>/<name>")`; Kind = top-level controller (Deployment via ReplicaSet owner, CronJob via Job owner, DaemonSet, StatefulSet, standalone ReplicaSet/Job) or `Pod` for bare/static pods |
 | Kubernetes Service | Service `k8s_service`, name `<ns>/<name>` | `service_id(cluster, "k8s_service", "<ns>/<name>")`; a logical API object, never a host OS service |
-| Pod | ServiceInstance `pod`, asset = node | `instance_id(service, "pod", <pod UID>)`; static pods use the kubelet config hash (`kubernetes.io/config.hash`), which is also the UID in node log paths |
-| container | ServiceInstance `container`, parent = pod instance | `instance_id(service, "container", <bare container id>)`; runtime in `attributes.runtime` |
+| Pod | ServiceInstance `pod`, asset = node (cluster while unscheduled, see below) | `instance_id(service, "pod", <pod UID>)`; static pods use the kubelet config hash (`kubernetes.io/config.hash`), which is also the UID in node log paths |
+| container | ServiceInstance `container`, parent = pod instance, asset = the pod's | `instance_id(service, "container", <bare container id>)`; runtime in `attributes.runtime` |
+
+Instance asset attribution (A-IC-2, lead decision, session 3): every ServiceInstance
+carries an `asset_id`, because the gateway can only authorise an instance against the
+producer's asset patterns through it and quarantines instances without one
+(`asset_unattributable`). A scheduled pod (and its containers) is attributed to the node
+it runs on (`k8s:extorq-lab/node/<spec.nodeName>`). A pod the scheduler has not bound yet
+(`Pending`, no `spec.nodeName`) is attributed to the cluster asset `k8s:extorq-lab` that
+manages it, with `node_name` null and `attributes.asset_scope = "cluster"`,
+`attributes.scheduled = false`; the next cycle after scheduling re-emits it on its node
+(same `instance_id`; `service_instances` keeps the newest row). The node is never
+guessed. Previously such pods were omitted. Verified live 2026-11-21 20:31-20:33Z with a
+never-schedulable check pod in `extorq-apps` (stored `asset_id = k8s:extorq-lab`,
+`state = pending`, then a `present = 0` tombstone after deletion) and 0 quarantined
+records of the k8s producers (details: `docs/team/status/B2.md`).
 
 Coverage: workloads have an implemented adapter (`webapp-json` for lab-portal, `k8s-audit`
 for kube-apiserver, `k8s-container-log` otherwise) and are `monitored` when the log agent is

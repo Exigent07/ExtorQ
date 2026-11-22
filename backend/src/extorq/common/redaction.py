@@ -14,6 +14,18 @@ Two independent controls:
 
 Both are pure functions with no I/O. Patterns are deliberately specific so
 ordinary identifiers (SHA-256 digests, event ids, UUIDs) are not destroyed.
+
+Key-based rules (``password=...``, ``"api_key": ...``, ``Authorization: ...``) only
+treat strings as secret candidates where the text is structured (B2-IC-2):
+
+* a literal ``true``/``false``/``null``/``None`` is never a credential, whatever the key
+  says (``allow_gh_cli_token=true``, ``"automount_sa_token": false``);
+* after a quoted key (JSON, Python dict) an unquoted number is data, not a secret
+  (``"max_token": 4096``); in free text a number stays a candidate (``password=123456``);
+* quoted values are matched escape-aware (``"a\\"b"`` is one value).
+
+Redacting a valid JSON document therefore yields valid JSON whose booleans, numbers
+and nulls are unchanged.
 """
 
 from __future__ import annotations
@@ -39,6 +51,18 @@ def _keep_prefix(label: str) -> Callable[[re.Match[str]], str]:
     marker = f"[REDACTED:{label}]"
     return lambda match: f"{match.group(1)}{marker}"
 
+
+# Unquoted value delimiters of the key-based rules (a value ends before one of these).
+_VALUE_CHARS = r"[^\s&,;\"'<>}{)\]]"
+# JSON / Python literals: never a credential, whatever the key says.
+_LITERAL_VALUE = rf"(?:true|false|null|none)(?!{_VALUE_CHARS})"
+# A JSON number (only exempt after a quoted key, i.e. inside JSON or a Python dict).
+_JSON_NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
+# Quoted string values, escape-aware first (JSON), then plain (free text, e.g. "C:\\x\\").
+_QUOTED_VALUE = (
+    r"\"(?:[^\"\\\n]|\\.){1,1024}\"|'(?:[^'\\\n]|\\.){1,1024}'"
+    r"|\"[^\"]{1,1024}\"|'[^']{1,1024}'"
+)
 
 _PEM_PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"
@@ -119,11 +143,14 @@ _RULES: tuple[_Rule, ...] = (
         # words such as "authorization=denied" in application logs survive.
         "authorization_header",
         re.compile(
-            r"(?i)(\b(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?"
+            r"(?i)(\b(?:proxy-)?authorization([\"'])?\s*[:=]\s*([\"'])?"
             r"(?:(?:token|apikey|api-key|key|digest|negotiate|ntlm|aws4-hmac-sha256|hoba|"
             r"mutual|scram-sha-1|scram-sha-256|vapid|dpop|oauth|signature|hawk|sharedkey|"
             r"ssws|googlelogin|bearer|basic)\s+)?)"
-            r"(?![^\r\n\"']*\[REDACTED)(?=[^\s\"',;]*[0-9+/=_.~-])([^\s\"',;]{8,1024})"
+            r"(?![^\r\n\"']*\[REDACTED)"
+            # quoted key + unquoted value = a JSON number, never a credential (B2-IC-2)
+            rf"(?(2)(?(3)|(?!{_JSON_NUMBER}(?![^\s\"',;{{}}\[\]]))))"
+            r"(?=[^\s\"',;{}\[\]]*[0-9+/=_.~-])([^\s\"',;{}\[\]]{8,1024})"
         ),
         _keep_prefix("authorization"),
     ),
@@ -173,20 +200,25 @@ _RULES: tuple[_Rule, ...] = (
         "env_secret_assignment",
         re.compile(
             r"(\b[A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|_PWD)\s*=\s*)"
-            r"(?!\[REDACTED)([^\s\"'&;]{1,1024})"
+            r"(?!\[REDACTED)(?!(?i:true|false|null|none)(?![^\s\"'&;]))([^\s\"'&;]{1,1024})"
         ),
         _keep_prefix("secret"),
     ),
     (
+        # key=value / "key": value. Only strings are candidates in structured text: JSON
+        # literals never, numbers not after a quoted key (B2-IC-2, see module docstring).
         "secret_assignment",
         re.compile(
             r"(?i)((?<![A-Za-z0-9])"
             r"(?:password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|"
             r"client[_-]?secret|auth[_-]?token|private[_-]?key|session[_-]?secret)"
-            r"[\"']?\s*[:=]\s*)"
-            r"(?!\[REDACTED)(\"[^\"]{1,1024}\"|'[^']{1,1024}'|[^\s&,;\"'<>}{)\]]{1,1024})"
+            r"([\"'])?\s*[:=]\s*)"
+            rf"(?!\[REDACTED)(?!{_LITERAL_VALUE})"
+            # after a quoted key: no JSON number, no array (objects never match: "{" ends values)
+            rf"(?(2)(?!(?:{_JSON_NUMBER})(?!{_VALUE_CHARS})|\[))"
+            rf"({_QUOTED_VALUE}|{_VALUE_CHARS}{{1,1024}})"
         ),
-        lambda match: f"{match.group(1)}{_quote_like(match.group(2))}",
+        lambda match: f"{match.group(1)}{_quote_like(match.group(3))}",
     ),
 )
 

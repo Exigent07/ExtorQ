@@ -108,7 +108,8 @@ def test_overview_counts_are_duplicate_safe(run: Any) -> None:
     # e1 was delivered twice: 4 distinct events, not 5.
     assert run("extorq-security-overview", "Events") == [{"events": 4}]
     assert run("extorq-security-overview", "Alerts") == [{"alerts": 2}]
-    assert run("extorq-security-overview", "Open findings (current)") == [{"open_findings": 1}]
+    # trivy: 1 open (1 resolved); synthetic-posture: 2 open (the attribution cases).
+    assert run("extorq-security-overview", "Open findings (current)") == [{"open_findings": 3}]
     coverage = {
         r["coverage"]: r["services"]
         for r in run("extorq-security-overview", "Services by coverage state")

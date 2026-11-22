@@ -206,3 +206,62 @@ def test_repository_rules_all_have_positive_and_negative_tests() -> None:
     for rule in RULES.values():
         assert {c.expect for c in rule.tests} == {"alert", "no_alert"}, rule.rule_id
         assert rule.metadata.false_positives and rule.metadata.blind_spots, rule.rule_id
+
+
+_VALID_RULE = (
+    "rule_id: XX-002\nversion: 1.0.0\ntitle: t\ndescription: d\nseverity: low\n"
+    "asset_types: [linux_host]\nrequires:\n  - source_type: linux.journald\n"
+    "    event_types: [auth.ssh.login_failed]\nschedule: {interval_seconds: 60, "
+    "lookback_seconds: 600}\ndedup: {strategy: event}\ngroup_by: [a]\nquery: XX-002.sql\n"
+    "tests:\n"
+)
+_VALID_SQL = (
+    "SELECT event_id AS signature FROM events "
+    "WHERE event_time >= {window_start:DateTime64(3, 'UTC')} "
+    "AND event_time < {window_end:DateTime64(3, 'UTC')}"
+)
+
+
+def _rule_with_case(tmp_path: Path, case: str):
+    (tmp_path / "XX-002.yaml").write_text(_VALID_RULE + case)
+    (tmp_path / "XX-002.sql").write_text(_VALID_SQL)
+    (tmp_path / "f.jsonl").write_text("")
+    return load_rule_file(tmp_path / "XX-002.yaml", tmp_path)
+
+
+def test_test_cases_accept_feature_and_summary_expectations(tmp_path: Path) -> None:
+    rule, problems = _rule_with_case(
+        tmp_path,
+        "  - name: c\n    fixture: f.jsonl\n    expect: alert\n"
+        "    features: {persistence_units: [a.service], causation_established: false}\n"
+        "    summary_contains: 'context only: a'\n",
+    )
+    assert problems == [] and rule is not None
+    [case] = rule.tests
+    assert case.features == {"persistence_units": ["a.service"], "causation_established": False}
+    assert case.summary_contains == ("context only: a",)
+
+
+def test_test_case_expectations_are_validated(tmp_path: Path) -> None:
+    _, problems = _rule_with_case(
+        tmp_path,
+        "  - name: c\n    fixture: f.jsonl\n    expect: alert\n    features: {a: {nested: 1}}\n",
+    )
+    assert "features must map names to scalars or scalar lists" in "\n".join(map(str, problems))
+    _, problems = _rule_with_case(
+        tmp_path,
+        "  - name: c\n    fixture: f.jsonl\n    expect: alert\n    summary_contains: [1]\n",
+    )
+    assert "summary_contains must be a string or list" in "\n".join(map(str, problems))
+
+
+def test_harness_feature_comparison_is_exact() -> None:
+    from extorq.detection.harness import _feature_problems
+
+    alert = {"features": '{"units": ["a.service"], "n": 1, "flag": false}'}
+    assert _feature_problems(alert, {"units": ["a.service"], "n": 1, "flag": False}) == []
+    problems = _feature_problems(alert, {"units": ["b.service"], "missing": True})
+    assert len(problems) == 2 and "<missing>" in problems[1]
+    assert _feature_problems({"features": "not json"}, {"x": 1}) == [
+        "alert features are not valid JSON"
+    ]

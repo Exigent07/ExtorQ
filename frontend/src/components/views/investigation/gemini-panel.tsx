@@ -6,7 +6,8 @@ import { StatusPill } from "@/components/console/status-badge";
 import { Timestamp } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import type { AIAssessment, EvidenceStatement, InvestigationSummary } from "@/lib/api/schemas";
-import { formatCount, formatMs, humanize } from "@/lib/format";
+import { formatCount, formatMs, formatUtc, humanize } from "@/lib/format";
+import { providerTime } from "@/lib/investigation";
 
 import { aiStatusText } from "./ai-labels";
 import { SummaryRequestButton } from "./summary-request";
@@ -115,9 +116,9 @@ function SummaryBody({ summary, onPage }: { summary: InvestigationSummary; onPag
           <h3 className="mb-1 text-sm font-medium text-ink">Timeline as summarised</h3>
           <ol className="divide-y divide-rule text-sm">
             {summary.timeline.map((item, i) => (
-              <li key={i} className="grid gap-x-3 py-1.5 sm:grid-cols-[9rem_minmax(0,1fr)]">
-                <span className="font-mono text-xs text-muted-foreground">
-                  <UntrustedText value={item.time} limit={32} />
+              <li key={i} className="grid gap-x-3 py-1.5 sm:grid-cols-[10.5rem_minmax(0,1fr)]">
+                <span className="font-mono text-xs text-muted-foreground" title={item.time}>
+                  <UntrustedText value={providerTime(item.time, formatUtc)} limit={32} />
                 </span>
                 <span>
                   <span className={item.verified ? "text-ink" : "text-ink-2"}>

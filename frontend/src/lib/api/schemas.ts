@@ -743,6 +743,8 @@ export const zAssetListItem = z.object({
   observed_by: z.string(),
   collectors_total: z.number().int(),
   collectors_stale: z.number().int(),
+  /** Of collectors_total, those reporting for an ancestor asset (node -> cluster). */
+  collectors_inherited: z.number().int().default(0),
   coverage_status: zCoverageStatus,
   last_event_at: zTime.nullish(),
   open_alerts: z.number().int(),
@@ -1045,16 +1047,6 @@ export const zServiceRecord = zServiceItem.extend({
 });
 export type ServiceRecord = z.infer<typeof zServiceRecord>;
 
-export const zAssetServicesResponse = z.object({
-  asset_id: z.string(),
-  asset: zAssetBrief.nullish(),
-  items: z.array(zServiceItem),
-  page: zPageInfo,
-  summary: zServicesSummary,
-  invalid_records: z.number().int().default(0),
-});
-export type AssetServicesResponse = z.infer<typeof zAssetServicesResponse>;
-
 export const zServiceInstance = z.object({
   instance_id: z.string(),
   service_id: z.string(),
@@ -1082,6 +1074,27 @@ export const zServiceInstance = z.object({
   stale: z.boolean(),
 });
 export type ServiceInstance = z.infer<typeof zServiceInstance>;
+
+/** A service of an ancestor asset with instances on this asset (cluster workload -> node Pods). */
+export const zHostedService = z.object({
+  service: zServiceItem,
+  instances: z.array(zServiceInstance),
+  instances_on_asset: z.number().int(),
+});
+export type HostedService = z.infer<typeof zHostedService>;
+
+export const zAssetServicesResponse = z.object({
+  asset_id: z.string(),
+  asset: zAssetBrief.nullish(),
+  items: z.array(zServiceItem),
+  page: zPageInfo,
+  summary: zServicesSummary,
+  invalid_records: z.number().int().default(0),
+  /** Ancestor services running instances here (API >= session 3; older APIs omit it). */
+  hosted: z.array(zHostedService).default([]),
+  hosted_truncated: z.boolean().default(false),
+});
+export type AssetServicesResponse = z.infer<typeof zAssetServicesResponse>;
 
 export const zServiceTelemetrySource = z.object({
   source_type: z.string(),

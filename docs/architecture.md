@@ -1,7 +1,8 @@
 # ExtorQ Architecture
 
 Owner: agent F (documentation). Living document; baseline 2026-11-21, updated
-for contract schema **1.1** (service-aware monitoring, PLAN section 10).
+for contract schema **1.1** (service-aware monitoring, PLAN section 10) and
+re-checked on 2026-11-22 (build session 3).
 Authoritative interfaces: [`docs/team/PLAN.md`](team/PLAN.md) and the Pydantic
 contracts in [`backend/src/extorq/contracts/`](../backend/src/extorq/contracts/).
 
@@ -25,7 +26,7 @@ monitors four asset classes:
 | macOS host (the Mac itself) | `macos:workstation-01` | native collector running as the operator user (unified log, launchd, inventory, posture) |
 | Ubuntu 24.04 VM under QEMU/HVF | `linux:lab-vm-01` | agentless SSH pull through a forced-command dispatcher |
 | kind cluster `extorq-lab` | `k8s:extorq-lab`, nodes `k8s:extorq-lab/node/<name>` | OTel Collector DaemonSet (audit + container logs) and a read-only inventory collector |
-| GitHub lab repository | `github:<owner>/extorq-lab` | REST API polling with a read-only token |
+| GitHub lab repository | `github:<owner>/extorq-lab` (lab: private `Exigent07/extorq-lab`) | REST API polling; the lab uses the approved gh CLI token fallback, a fine-grained read-only token is preferred ([known limitations](known-limitations.md) C8) |
 
 Design principle: **deterministic collection and detection establish the
 evidence; AI assists interpretation and is never authoritative.** Unknown values
@@ -79,21 +80,21 @@ flowchart LR
 | Component | Code | Owner | Status |
 |---|---|---|---|
 | Contracts, catalog, identities | `backend/src/extorq/contracts/` | lead | implemented (schema 1.1) |
-| ClickHouse schema | `infra/clickhouse/migrations/0001..0004` | lead (0001, 0004), A (0002), C3 (0003) | implemented, applied on the running stack |
+| ClickHouse schema | `infra/clickhouse/migrations/0001..0006` | lead (0001, 0004, 0006), A (0002), C3 (0003, 0005) | implemented, 0001-0006 applied on the running stack |
 | Bootstrap (secrets, CA, producers) | `scripts/bootstrap.py` | A | implemented |
-| Ingest gateway | `backend/src/extorq/ingest/` | A (B2 for `otlp_k8s.py`) | implemented; service record kinds in progress |
-| Spool and writer | `backend/src/extorq/pipeline/` | A | implemented; service rows mapping in progress |
+| Ingest gateway | `backend/src/extorq/ingest/` | A (B2 for `otlp_k8s.py`) | implemented (schema 1.1 record kinds, service identity binding, 90-day event age limit) |
+| Spool and writer | `backend/src/extorq/pipeline/` | A | implemented (incl. service rows) |
 | Collector SDK and runner | `collectors/src/extorq_collectors/sdk/`, `cli.py` | A | implemented (runner, outbox, sender, `extorq-collect` CLI) |
 | Shared service-discovery interface | `collectors/src/extorq_collectors/services/` | lead, then B1 | implemented (interface + planned adapters) |
 | Linux VM, dispatcher, collector | `infra/vm/`, `collectors/src/extorq_collectors/linux/` | B1 | implemented (VM, dispatcher, parsers, collector, discovery, adapters); live verification by B1 |
-| Kubernetes lab, OTel, normaliser, inventory | `infra/kind/`, `backend/src/extorq/ingest/otlp_k8s.py`, `collectors/src/extorq_collectors/kubernetes/` | B2 | implemented (cluster, audit policy, RBAC, DaemonSet, normaliser, inventory collector, hierarchy); Kubernetes simulations in progress |
+| Kubernetes lab, OTel, normaliser, inventory | `infra/kind/`, `backend/src/extorq/ingest/otlp_k8s.py`, `collectors/src/extorq_collectors/kubernetes/` | B2 | implemented (cluster, audit policy, RBAC, DaemonSet, normaliser, inventory collector, hierarchy, K8S-001/K8S-002 simulations) |
 | macOS collector | `collectors/src/extorq_collectors/macos/` | B3 | implemented (parsers, collector, discovery, sshd and Screen Sharing adapters) |
 | GitHub collector | `collectors/src/extorq_collectors/github/` | C1 | implemented (client, poller, workflow analyser, posture) |
-| Detection, rules, correlation | `backend/src/extorq/detection/`, `backend/src/extorq/correlation/`, `rules/` | C2 | implemented (engine, SQL guard, VM-001, VM-002, K8S-001, K8S-002, GH-001, CORR-002, context builder) |
-| Scanners | `scanners/` | C3 | implemented (normalisers, runner, lifecycle view 0003) |
+| Detection, rules, correlation | `backend/src/extorq/detection/`, `backend/src/extorq/correlation/`, `rules/` | C2 | implemented (engine with late-data catch-up, SQL guard, VM-001, VM-002, K8S-001, K8S-002, GH-001, experimental HTTP-001, APP-001, MAC-001, CORR-002, context builder, scenario verification tooling) |
+| Scanners | `scanners/` | C3 | implemented (normalisers, runner, lifecycle views 0003 and 0005) |
 | AI (Jev, Gemini) | `backend/src/extorq/ai/` | E | implemented (providers, sanitiser, budgets, worker) |
 | Analyst API, Grafana | `backend/src/extorq/api/`, `infra/grafana/` | D1 | implemented (API incl. service endpoints; Grafana image, provisioning, dashboards) |
-| Security console | `frontend/` | D2 | implemented views: overview, assets, services, detections, investigations, health; `frontend/Dockerfile` in progress |
+| Security console | `frontend/` | D2 | implemented views: overview, assets, services, detections, investigations, health; `frontend/Dockerfile` present (compose container not yet verified end to end) |
 
 ## 3. Data flow
 
@@ -121,7 +122,7 @@ flowchart LR
 5. **Correlate.** For new or updated alerts the detector builds an
    `InvestigationContext` (evidence, timeline, relationships with explicit
    confidence, coverage and gaps) whose canonical hash (`input_hash`) pins
-   exactly what any later AI assessment saw (correlation in progress, C2).
+   exactly what any later AI assessment saw (`backend/src/extorq/correlation/`).
 6. **Enrich (optional).** The ai-worker asks Jev for advisory triage; the API
    asks Gemini for a summary only when an analyst requests it. Both receive a
    sanitised allow-list projection of the context and write only
@@ -346,8 +347,9 @@ adapters strip query strings and Referer values from emitted events. How to add 
   (`infra/vm/files/nginx/extorq-lab.conf`); the lab portal never logs passwords
   (`lab/apps/lab-portal/`).
 * The gateway still redacts secret patterns in free-text fields of every
-  record kind as defence in depth (`backend/src/extorq/ingest/processing.py`;
-  service kinds in progress, A). Pattern redaction is not a substitute for not
+  record kind, including `service` and `service_instance`, as defence in depth
+  (`backend/src/extorq/ingest/processing.py`; verified by
+  `tests/security/test_security_ingest_redaction.py`). Pattern redaction is not a substitute for not
   collecting: see [threat model T21](threat-model.md#t21-service-adapters-collecting-sensitive-data-i).
 
 ### 5.7 Kubernetes levels
@@ -408,25 +410,26 @@ Rules (PLAN 10.1 rule 5):
 
 ### 5.10 Drill-down in the UI
 
-Target navigation (D1 API, D2 console; in progress):
+Navigation (D1 API, D2 console; implemented):
 **Asset -> Services / Workloads -> Telemetry -> Findings -> Alerts -> Investigation.**
-Planned API: `GET /api/v1/assets/{id}/services`, `GET /api/v1/services`,
+API: `GET /api/v1/assets/{id}/services`, `GET /api/v1/services`,
 `GET /api/v1/services/{service_id}` (instances, endpoints, coverage, events,
-findings, alerts). Unsupported and unmonitored services are listed with their
-`coverage_note`.
+findings, alerts), and `service_id` filters on events, findings and alerts.
+Unsupported and unmonitored services are listed with their `coverage_note` and
+the API's effective coverage reasons.
 
 ### 5.11 Implementation status (PLAN 10.2)
 
-| Agent | Work | Status (2026-11-21, 20:30 IST) |
+| Agent | Work | Status (2026-11-22) |
 |---|---|---|
-| lead | contracts 1.1, migration 0004, shared interface, planned adapters | implemented, applied |
-| A | rows mapping, producer kinds, gateway 1.1, redaction of service kinds, SDK support | implemented; identity binding of service records open (F-19) |
+| lead | contracts 1.1, migrations 0004 and 0006, shared interface, planned adapters | implemented, applied |
+| A | rows mapping, producer kinds, gateway 1.1, redaction of service kinds, SDK support, identity binding | implemented (gateway quarantines `identity_mismatch`, F-19 gateway part) |
 | B1 | Linux discovery (units, cgroups, sockets, config), ssh/nginx/apache/webapp-json/systemd/auditd adapters, service records | implemented; process-argument minimisation open (F-17) |
 | B2 | node assets, workload and Kubernetes Service services, Pod/container instances, log enrichment, k8s adapters | implemented |
 | B3 | macOS discovery (launchd, processes, listeners), sshd and Screen Sharing adapters | implemented |
 | C2 | service-aware correlation, `alerts.service_ids`, CORR-002 | implemented (`backend/src/extorq/correlation/`, `rules/correlation/CORR-002.*`) |
 | C3 | `0005_findings_services.sql`, finding attribution | implemented (`infra/clickhouse/migrations/0005_findings_services.sql`, `scanners/src/extorq_scanners/services.py`) |
-| D1 | service endpoints | implemented; asset-scoped joins open (F-19) |
+| D1 | service endpoints | implemented; asset-scoped instance and event joins open (F-19 API part) |
 | D2 | drill-down views | implemented (assets, services, detections, investigations) |
 | E | service summaries in the AI projection (names, kinds, coverage only) | implemented (`backend/src/extorq/ai/projection.py`) |
 | F | architecture, threat model, AGENTS.md, known limitations, security tests | this document; `tests/security/` |
@@ -445,7 +448,14 @@ each component is recorded by its owner and in [testing.md](testing.md).
 * Mandatory rules: VM-001 (SSH authentication failures burst), VM-002 (systemd
   persistence), K8S-001 (privileged Pod denied by Pod Security Admission),
   K8S-002 (risky RBAC change), GH-001 (workflow permission escalation). Their
-  semantics are fixed in PLAN 5.3.
+  semantics are fixed in PLAN 5.3; all five have alerted on genuine scenario
+  telemetry ([testing.md section 4](testing.md#4-scenario-verification-genuine-telemetry)).
+* Experimental rules: HTTP-001 (web probing), APP-001 (failed application
+  logins), MAC-001 (launchd persistence) and CORR-002 (ordered probing, SSH
+  failures and systemd persistence on one host; confidence never above medium,
+  never causation). Catalog: [`docs/detection-catalog.md`](detection-catalog.md).
+* Late-arriving telemetry (for example a collector backfill) is re-evaluated by
+  a catch-up pass without duplicating alerts.
 * Only the detector writes alerts (`extorq_detect`); AI and analysts cannot.
 
 ## 7. AI boundary

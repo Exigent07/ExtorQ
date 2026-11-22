@@ -35,8 +35,22 @@ pnpm gen:api             # regenerate types after D1 republishes docs/api/openap
 EXTORQ_SMOKE_ANALYST_PASSWORD_FILE=../var/secrets/analyst_password \
 EXTORQ_SMOKE_VIEWER_PASSWORD_FILE=../var/secrets/viewer_password \
   node scripts/smoke.mjs [--base http://127.0.0.1:3100]   # read-only end-to-end check
+EXTORQ_SHOTS_PASSWORD_FILE=../var/secrets/analyst_password \
+  node --experimental-websocket scripts/screenshots.mjs --base http://127.0.0.1:3000 \
+  --out docs/screenshots name=/path ...                    # headless Chrome PNGs (docs/screenshots)
 docker build -t extorq/frontend:0.1.0 .                     # compose builds the same context
 ```
+
+The smoke test covers the overview, every asset class with its four tabs (macOS host, Linux VM,
+kind cluster, Kubernetes node, GitHub repository), a Kubernetes workload, a Kubernetes Service
+and a host service, the investigation of each mandatory rule (VM-001, VM-002, K8S-001, K8S-002,
+GH-001: header, evidence, timeline, coverage, involved services, honest Jev/Gemini states),
+detection filters, health and viewer read-only behaviour. Pin the investigations with
+`EXTORQ_SMOKE_ALERTS="VM-001=<id>,..."` (otherwise the newest alert per rule in 30 days). It
+paces requests (`EXTORQ_SMOKE_PACE_MS`, default 1500): the API's ClickHouse read identity has a
+SHARED quota of 1200 queries per minute and a console page costs about 10-20 queries; an
+unpaced run once starved every API user for a minute. The API answers 429 + `Retry-After`
+when the quota is exhausted, and the client does not retry 429 (only 502/503/504).
 
 Configuration (server-side environment only; there are no `NEXT_PUBLIC_*` variables):
 
@@ -58,6 +72,8 @@ src/app/login/                  sign-in page + server action (throttled, constan
 src/app/(console)/              authenticated views (layout re-checks the session)
   page.tsx                      Overview
   assets/, assets/[assetId]/    asset classes; asset detail tabs: overview | services | findings | events
+                                (a Kubernetes node's services tab lists the cluster workloads whose
+                                Pods/containers run on it: API `hosted`)
   services/[serviceId]/         service drill-down
   detections/                   alert history (GET filters) + rules
   investigations/[alertId]/     investigation
@@ -133,6 +149,18 @@ error = inside the failed block with a retry. No gradients, glows or decorative 
 4. Render strings with `UntrustedText`; use `SortableTable` (TanStack) for client-side sorting.
 5. Add the route's markers to `scripts/smoke.mjs`, a unit test for any new pure logic, then run
    lint, typecheck, test, build and the smoke test.
+
+## Notes for maintainers
+
+- `next.config.ts` sets `agentRules: false`: Next.js 16 `next dev` otherwise appends a generated
+  block to this file whenever it detects an AI coding agent.
+- Investigation display rules live in `src/lib/investigation.ts` (unit-tested): timeline and
+  correlation rows drop the event type the summary repeats, evidence rows are chronological,
+  AI-provider times are shown in UTC only when they are well-formed ISO instants.
+- Health shows the ingestion spool backlog once (gateway and writer report the same SQLite
+  spool; detector and ai-worker queues are not ingestion) from fresh reports only
+  (`src/lib/health.ts`). Collector counts say when they are inherited from the cluster
+  (`src/lib/assets.ts`).
 
 ## Known limitations
 

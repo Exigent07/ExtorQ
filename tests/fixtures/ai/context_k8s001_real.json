@@ -1,0 +1,3839 @@
+{
+ "alert": {
+  "alert_id": "cfbff55664cf6d62121a96e4cbe6692a",
+  "asset_id": "k8s:extorq-lab",
+  "asset_type": "kubernetes_cluster",
+  "confidence": "high",
+  "created_at": "2026-11-21T15:02:37.953000Z",
+  "detector_version": "extorq-detector/0.1.0",
+  "entities": {
+   "audit_id": "1c5b0a73-d24d-4672-b877-0cdd2de48c1c",
+   "cluster": "extorq-lab",
+   "namespace": "extorq-restricted",
+   "pod": "extorq-sim-bcfcb726ff01",
+   "user": "kubernetes-admin"
+  },
+  "event_count": 1,
+  "evidence_event_ids": [
+   "4ce9b3021b7b6970710e40ad034bc21c"
+  ],
+  "evidence_truncated": false,
+  "features": {
+   "dry_run": false,
+   "enforce_policy": "baseline:latest",
+   "privileged_flags": [
+    "host_pid",
+    "privileged"
+   ],
+   "subresource": "",
+   "verb": "create",
+   "violation": "pods \"extorq-sim-bcfcb726ff01\" is forbidden: violates PodSecurity \"baseline:latest\": host namespaces (hostPID=true), privileged (container \"sim\" must not set securityContext.privileged=true)"
+  },
+  "first_seen": "2026-11-21T15:02:01.903000Z",
+  "group_key": "extorq-lab|extorq-restricted|kubernetes-admin",
+  "last_seen": "2026-11-21T15:02:01.903000Z",
+  "mitre_techniques": [
+   "T1610",
+   "T1611"
+  ],
+  "rule_id": "K8S-001",
+  "rule_title": "Privileged pod denied by Pod Security admission",
+  "rule_version": "1.0.0",
+  "schema_version": "1.1",
+  "service_ids": [
+   "eee2545dfda34195d1064c4ebc4c14de"
+  ],
+  "severity": "medium",
+  "simulation_run_ids": [
+   "bcfcb726ff01"
+  ],
+  "summary": "Pod Security admission denied create of privileged pod extorq-sim-bcfcb726ff01 in namespace extorq-restricted by kubernetes-admin on k8s:extorq-lab (flags: host_pid, privileged; policy baseline:latest; dry run: no)",
+  "updated_at": "2026-11-21T15:02:37.953000Z",
+  "window_end": "2026-11-21T15:02:27.953000Z",
+  "window_start": "2026-11-21T14:42:37.953000Z"
+ },
+ "alert_id": "cfbff55664cf6d62121a96e4cbe6692a",
+ "asset": {
+  "asset_id": "k8s:extorq-lab",
+  "asset_type": "kubernetes_cluster",
+  "criticality": "high",
+  "environment": "lab",
+  "name": "extorq-lab"
+ },
+ "builder_version": "extorq-correlation/0.1.0",
+ "context_id": "7175a00bb7ea287f5383ec7e49e90d7f",
+ "coverage": [
+  {
+   "collector_id": null,
+   "gap_during_window": true,
+   "lag_seconds": null,
+   "last_success_at": null,
+   "note": "No collector has reported health for this source type.",
+   "source_type": "k8s.audit",
+   "stale": true,
+   "status": "unknown"
+  }
+ ],
+ "created_at": "2026-11-21T15:02:38.383000Z",
+ "evidence": [
+  {
+   "actor_name": "kubernetes-admin",
+   "asset_id": "k8s:extorq-lab",
+   "event_id": "4ce9b3021b7b6970710e40ad034bc21c",
+   "event_time": "2026-11-21T15:02:01.903000Z",
+   "event_type": "k8s.api.request",
+   "key_fields": {
+    "attributes.pod_security_violation": "pods \"extorq-sim-bcfcb726ff01\" is forbidden: violates PodSecurity \"baseline:latest\": host namespaces (hostPID=true), privileged (container \"sim\" must not set securityContext.privileged=true)",
+    "attributes.request_summary": "{\"automount_sa_token\":[REDACTED:secret],\"containers\":1,\"host_pid\":true,\"images\":[\"alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1\"],\"kind\":\"Pod\",\"privileged\":[\"sim\"]}",
+    "kubernetes.audit_id": "1c5b0a73-d24d-4672-b877-0cdd2de48c1c",
+    "kubernetes.namespace": "extorq-restricted",
+    "kubernetes.object_name": "extorq-sim-bcfcb726ff01",
+    "kubernetes.resource": "pods",
+    "kubernetes.response_code": 403,
+    "kubernetes.source_ips": [
+     "172.18.0.1"
+    ],
+    "kubernetes.user": "kubernetes-admin",
+    "kubernetes.verb": "create"
+   },
+   "outcome": "denied",
+   "service_id": "eee2545dfda34195d1064c4ebc4c14de",
+   "service_name": "kube-system/kube-apiserver-extorq-lab-control-plane",
+   "source_type": "k8s.audit",
+   "src_ip": "172.18.0.1",
+   "summary": "k8s.api.request create extorq-restricted/pods/extorq-sim-bcfcb726ff01 by kubernetes-admin -> 403"
+  }
+ ],
+ "features": {
+  "causation_established": false,
+  "cross_service_activity": true,
+  "evidence_events_in_context": 1,
+  "evidence_services": 1,
+  "k8s_actors": [
+   "kubernetes-admin",
+   "system:apiserver",
+   "system:kube-controller-manager",
+   "system:kube-scheduler",
+   "system:node:extorq-lab-control-plane",
+   "system:serviceaccount:extorq-system:extorq-inventory",
+   "system:serviceaccount:extorq-system:extorq-otel-collector",
+   "system:serviceaccount:local-path-storage:local-path-provisioner-service-account"
+  ],
+  "k8s_cluster_admin_grants": 1,
+  "k8s_forbidden_requests": 0,
+  "k8s_namespaces": [
+   "extorq-apps",
+   "extorq-posture-lab",
+   "extorq-restricted",
+   "extorq-system",
+   "kube-public",
+   "kube-system"
+  ],
+  "k8s_psa_denials": 1,
+  "related_assets": 0,
+  "related_candidate": 30,
+  "related_direct": 1,
+  "related_events": 149,
+  "related_services": 2,
+  "related_unestablished": 118,
+  "simulation_tagged": true,
+  "source_types": [
+   "k8s.api_inventory",
+   "k8s.audit",
+   "k8s.container_log"
+  ]
+ },
+ "findings": [
+  {
+   "check_id": "K8S-RBAC-005",
+   "finding_id": "db44a06e51be83ee92430a2fafb57b7f",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "critical",
+   "state": "open",
+   "title": "Binding to anonymous / unauthenticated users"
+  },
+  {
+   "check_id": "K8S-POD-003",
+   "finding_id": "1e665be5ff7cf772833c8253d958b8e2",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "high",
+   "state": "open",
+   "title": "hostPath volume"
+  },
+  {
+   "check_id": "K8S-RBAC-001",
+   "finding_id": "f843c8de5b2f8c7df0c0b204f0370ac8",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "high",
+   "state": "open",
+   "title": "Binding grants cluster-admin"
+  },
+  {
+   "check_id": "K8S-POD-003",
+   "finding_id": "fac7564346253953885e1405b0d3a910",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "high",
+   "state": "open",
+   "title": "hostPath volume"
+  },
+  {
+   "check_id": "CVE-2026-78410",
+   "finding_id": "0b4474bceb7d3bf77e382684823919e9",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-78410 in util-linux 2.41.5-0+deb13u1 [bsdutils, libblkid1, liblastlog2-2 +6] (image extorq/lab-portal): util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection"
+  },
+  {
+   "check_id": "CVE-2026-9538",
+   "finding_id": "39892154c9b7bf61da61421d2c26169c",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-9538 in perl 5.40.1-6+deb13u1 [perl-base] (image extorq/lab-portal): perl-Archive-Tar: perl-Archive-Tar: Denial of Service via crafted tar header with large entry size"
+  },
+  {
+   "check_id": "CVE-2025-69720",
+   "finding_id": "6ca86778c8900b19b280345ad03e418d",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2025-69720 in ncurses 6.5+20250216-2 [libncursesw6, libtinfo6, ncurses-base +1] (image extorq/lab-portal): ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution."
+  },
+  {
+   "check_id": "CVE-2026-119374",
+   "finding_id": "7232e95365c82fe4aedec3f9a92eb6b1",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-119374 in sqlite3 3.46.1-7+deb13u2 [libsqlite3-0] (image extorq/lab-portal): sqlite: sqlite: Arbitrary code execution via corrupted FTS5 index"
+  },
+  {
+   "check_id": "CVE-2026-76642",
+   "finding_id": "73a3ffd9c75181d45643b3a299ba301d",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-76642 in util-linux 2.41.5-0+deb13u1 [bsdutils, libblkid1, liblastlog2-2 +6] (image extorq/lab-portal): util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks"
+  },
+  {
+   "check_id": "CVE-2026-119373",
+   "finding_id": "7c5348ad16b3dd7f2fa8199b9557b732",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-119373 in sqlite3 3.46.1-7+deb13u2 [libsqlite3-0] (image extorq/lab-portal): sqlite: sqlite: Denial of service via heap-based buffer overflow in FTS5"
+  },
+  {
+   "check_id": "CVE-2026-54369",
+   "finding_id": "816d6689380feb68a7f7b9d05d791497",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-54369 in acl 2.3.2-2 [libacl1] (image extorq/lab-portal): acl: Symlink traversal privilege escalation via libacl functions"
+  },
+  {
+   "check_id": "CVE-2026-78408",
+   "finding_id": "8310f2952a842fe4b077729403bdb35f",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-78408 in util-linux 2.41.5-0+deb13u1 [bsdutils, libblkid1, liblastlog2-2 +6] (image extorq/lab-portal): util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority"
+  },
+  {
+   "check_id": "CVE-2026-124709",
+   "finding_id": "95931f31f8a3398380be8d7fb40fa83a",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-124709 in openssl 3.5.7-1~deb13u3 [libssl3t64, openssl, openssl-provider-legacy] (image extorq/lab-portal): openssl: openssl: Denial of Service via memory leak in QUIC stream handling"
+  },
+  {
+   "check_id": "CVE-2026-85091",
+   "finding_id": "a1d860535a2a5815b6682912c378dc2f",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-85091 in zlib 1:1.3.dfsg+really1.3.1-1 [zlib1g] (image extorq/lab-portal): zlib: zlib: Heap buffer overflow in gz_vacate() allows arbitrary code execution"
+  },
+  {
+   "check_id": "CVE-2026-119379",
+   "finding_id": "c8993adcf94a89ea4e08b1cdf3b9757a",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-119379 in sqlite3 3.46.1-7+deb13u2 [libsqlite3-0] (image extorq/lab-portal): sqlite: sqlite: Arbitrary code execution via crafted session changesets"
+  },
+  {
+   "check_id": "CVE-2026-78409",
+   "finding_id": "dd009435d71957a3a84fca10c9e2db1c",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-78409 in util-linux 2.41.5-0+deb13u1 [bsdutils, libblkid1, liblastlog2-2 +6] (image extorq/lab-portal): util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks"
+  },
+  {
+   "check_id": "CVE-2026-16742",
+   "finding_id": "f4c2fc6ddd91b292d1f827dbc911b8a3",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "CVE-2026-16742 in systemd 257.13-1~deb13u1 [libsystemd0, libudev1] (image extorq/lab-portal): systemd: systemd-homed: Local privilege escalation via missing home-record signature verification"
+  },
+  {
+   "check_id": "KSV-0014",
+   "finding_id": "c40360edb4f494e08088057878bedd23",
+   "last_observed_at": "2026-11-21T14:57:38.508000Z",
+   "scanner": "trivy",
+   "severity": "high",
+   "state": "open",
+   "title": "Root file system is not read-only"
+  },
+  {
+   "check_id": "K8S-POD-005",
+   "finding_id": "594370be19a49493ee9de85ac44e7585",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "medium",
+   "state": "open",
+   "title": "Container runs as root (runAsUser 0)"
+  },
+  {
+   "check_id": "K8S-POD-005",
+   "finding_id": "d1f6b3bd40701029c42b024b06fad5c7",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "medium",
+   "state": "open",
+   "title": "Container runs as root (runAsUser 0)"
+  },
+  {
+   "check_id": "K8S-NS-001",
+   "finding_id": "edfa3527bb33101dced555635871e082",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "medium",
+   "state": "open",
+   "title": "Namespace without Pod Security enforcement (or privileged)"
+  },
+  {
+   "check_id": "K8S-NS-001",
+   "finding_id": "ef8e3826fc1688c27ddb3523806ad9a6",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "medium",
+   "state": "open",
+   "title": "Namespace without Pod Security enforcement (or privileged)"
+  },
+  {
+   "check_id": "K8S-NS-001",
+   "finding_id": "fef05ee52b1fe95bf22cc895652a3313",
+   "last_observed_at": "2026-11-21T15:02:00.311000Z",
+   "scanner": "extorq-posture-k8s",
+   "severity": "medium",
+   "state": "open",
+   "title": "Namespace without Pod Security enforcement (or privileged)"
+  },
+  {
+   "check_id": "CVE-2026-97054",
+   "finding_id": "89706d83ebdca77d0ecdd9263f0d894f",
+   "last_observed_at": "2026-11-21T14:57:43.022000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-97054 in stdlib v1.27.3 (image otel/opentelemetry-collector-contrib): For HTTP/1 servers, when MaxBytesReader's limit is exceeded, \"Connecti ..."
+  },
+  {
+   "check_id": "CVE-2026-86805",
+   "finding_id": "0671bae81ab5164c2caccecc895337d9",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-86805 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: glibc: Privilege escalation and arbitrary code execution via TOCTOU race condition in dynamic loader"
+  },
+  {
+   "check_id": "CVE-2026-119371",
+   "finding_id": "0e2151627580cd223102d89f5e707af1",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-119371 in sqlite3 3.46.1-7+deb13u2 [libsqlite3-0] (image extorq/lab-portal): sqlite: sqlite: Denial of Service via stack exhaustion from deeply nested Common Table Expressions"
+  },
+  {
+   "check_id": "CVE-2026-107496",
+   "finding_id": "0eb11dc295067e84e55dfb2c677eedb0",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-107496 in openssl 3.5.7-1~deb13u3 [libssl3t64, openssl, openssl-provider-legacy] (image extorq/lab-portal): openssl: openssl: Denial of Service via crafted EC certificate in CMS encryption"
+  },
+  {
+   "check_id": "CVE-2026-6368",
+   "finding_id": "102ad92baabdac04b43e9a51eec9d48b",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-6368 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: glibc: Process abort due to invalid memory in wordexp"
+  },
+  {
+   "check_id": "CVE-2026-42250",
+   "finding_id": "150c1643a54f4a9c8ef97a1c445eeacb",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-42250 in bzip2 1.0.8-6 [libbz2-1.0] (image extorq/lab-portal): bzip2: bzip2: Denial of Service in bzip2recover via a specially crafted file"
+  },
+  {
+   "check_id": "CVE-2026-54411",
+   "finding_id": "159577738a33b5bff97a0c3b252c8b9e",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-54411 in pam 1.7.0-5 [libpam-modules, libpam-modules-bin, libpam-runtime +1] (image extorq/lab-portal): linux-pam: Plaintext password recovery via timing discrepancy in pam_userdb module"
+  },
+  {
+   "check_id": "CVE-2026-95818",
+   "finding_id": "180d6cdd9c63fe41462631e31e26e697",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-95818 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: glibc: Local attacker can cause denial of service and information disclosure via stack-based buffer overflow."
+  },
+  {
+   "check_id": "CVE-2026-119372",
+   "finding_id": "1ad712ffc4d80f2ef9225c86e7d0fb34",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-119372 in sqlite3 3.46.1-7+deb13u2 [libsqlite3-0] (image extorq/lab-portal): sqlite: sqlite: Denial of Service via use-after-free in full-text search"
+  },
+  {
+   "check_id": "CVE-2026-95691",
+   "finding_id": "1f212faf60de4261b4b5d10f0a287c43",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-95691 in openssl 3.5.7-1~deb13u3 [libssl3t64, openssl, openssl-provider-legacy] (image extorq/lab-portal): openssl: openssl: Denial of Service via overlapping QUIC CRYPTO frame processing"
+  },
+  {
+   "check_id": "CVE-2026-95692",
+   "finding_id": "21859a059117847a7f5224e165570fd9",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-95692 in openssl 3.5.7-1~deb13u3 [libssl3t64, openssl, openssl-provider-legacy] (image extorq/lab-portal): openssl: OpenSSL: Denial of Service via out-of-bounds read in AES-GCM-SIV"
+  },
+  {
+   "check_id": "CVE-2026-3184",
+   "finding_id": "2ed745ef23cdacc710488665a78c7807",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-3184 in util-linux 2.41.5-0+deb13u1 [bsdutils, libblkid1, liblastlog2-2 +6] (image extorq/lab-portal): util-linux: util-linux: Access control bypass due to improper hostname canonicalization"
+  },
+  {
+   "check_id": "CVE-2026-18477",
+   "finding_id": "2f2b98b79082b6a418ed0aa7ad546d47",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-18477 in tar 1.35+dfsg-3.1 (image extorq/lab-portal): tar: tar: TOCTOU in incremental dumpdir 'X' rename handling allows restore path escape"
+  },
+  {
+   "check_id": "CVE-2026-3219",
+   "finding_id": "34a99f788a9df3bb24229dcd37414990",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-3219 in pip 25.0.1 (image extorq/lab-portal): pip: pip: Incorrect file installation due to improper archive handling"
+  },
+  {
+   "check_id": "CVE-2026-114691",
+   "finding_id": "3707e68349baf9942f153fed3309b6a4",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-114691 in gcc-14 14.2.0-19 [gcc-14-base, libgcc-s1, libstdc++6] (image extorq/lab-portal): gcc: Integer wrap in `std"
+  },
+  {
+   "check_id": "CVE-2026-77117",
+   "finding_id": "370cb7a214b3ebf190c69e7a7cdee10c",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-77117 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: Non-progress DoS in SHIFT_JISX0213 -&gt"
+  },
+  {
+   "check_id": "CVE-2026-8674",
+   "finding_id": "37a406ee5ba59f0e401ce72c99a44bc4",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-8674 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: glibc DNS stub resolver: Denial of Service via long search domain in configuration"
+  },
+  {
+   "check_id": "CVE-2026-19499",
+   "finding_id": "3ee979df9d817ce498015d13c67b1949",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-19499 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: Buffer Overflow in strfmon right-justification padding"
+  },
+  {
+   "check_id": "CVE-2026-84243",
+   "finding_id": "450f7de21c0e272e658afb9f465ab3b1",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-84243 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: glibc: Arbitrary code execution via directory traversal in LANGUAGE environment variable"
+  },
+  {
+   "check_id": "CVE-2026-27171",
+   "finding_id": "45ced7ca85b7d843f31d20a5ba50a941",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-27171 in zlib 1:1.3.dfsg+really1.3.1-1 [zlib1g] (image extorq/lab-portal): zlib: zlib: Denial of Service via infinite loop in CRC32 combine functions"
+  },
+  {
+   "check_id": "CVE-2026-50813",
+   "finding_id": "52a37a2ab91810bc0fc268d875fdc3d8",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-50813 in sqlite3 3.46.1-7+deb13u2 [libsqlite3-0] (image extorq/lab-portal): sqlite: SQLite: Information disclosure via Session Extension changeset merge path"
+  },
+  {
+   "check_id": "CVE-2026-35190",
+   "finding_id": "5fed06b6f5afa3078890e1b1ad7e54ab",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-35190 in openssl 3.5.7-1~deb13u3 [libssl3t64, openssl, openssl-provider-legacy] (image extorq/lab-portal): openssl: openssl: Denial of Service via out-of-bounds read during TLS key-share processing"
+  },
+  {
+   "check_id": "CVE-2026-50812",
+   "finding_id": "605d901e7679ec0c775761b8b2760959",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-50812 in sqlite3 3.46.1-7+deb13u2 [libsqlite3-0] (image extorq/lab-portal): sqlite: SQLite: Denial of Service via malformed changeset in Session Extension"
+  },
+  {
+   "check_id": "CVE-2026-6238",
+   "finding_id": "65c5453bdecbed5289e5628569897675",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-6238 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: glibc: Application crash or uninitialized memory read via crafted DNS response"
+  },
+  {
+   "check_id": "CVE-2026-8643",
+   "finding_id": "6627d27bb44ce4e154e6715ccf7d43d6",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-8643 in pip 25.0.1 (image extorq/lab-portal): python-pip: Path traversal via malicious entry point name in pip wheel installation allows arbitrary file overwrite"
+  },
+  {
+   "check_id": "CVE-2026-54371",
+   "finding_id": "67adc1f4d8469f1bb32b2f759506d76b",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-54371 in attr 1:2.5.2-3 [libattr1] (image extorq/lab-portal): attr: attr: Symlink Traversal Privilege Escalation via getfattr and setfattr"
+  },
+  {
+   "check_id": "CVE-2026-19542",
+   "finding_id": "6e01294652aaa05848fc50bc546c8eec",
+   "last_observed_at": "2026-11-21T14:57:39.902000Z",
+   "scanner": "trivy",
+   "severity": "medium",
+   "state": "open",
+   "title": "CVE-2026-19542 in glibc 2.41-12+deb13u4 [libc-bin, libc6] (image extorq/lab-portal): glibc: Fix out-of-bounds array write in tdelete"
+  }
+ ],
+ "input_hash": "b26c2d7c3c1fee479abdb9ddabe343dcbd56545796dd923e942d36e8dfd785e9",
+ "limitations": [
+  "Relationships show co-occurrence and shared attributes within the context window; they never establish causation.",
+  "Evidence source IP 172.18.0.1 is a shared NAT/gateway/loopback address: it does not identify one origin, and links through it stay unestablished.",
+  "At least one telemetry source is stale or had a gap during the window: absence of related events is not evidence of absence.",
+  "Simulation-tagged telemetry: genuine lab telemetry produced by an ExtorQ scenario (run bcfcb726ff01)."
+ ],
+ "missing_telemetry": [],
+ "related_assets": [],
+ "relationships": [
+  {
+   "bases": [
+    "shared_resource",
+    "shared_principal",
+    "simulation_run",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "7024f3d30ccf0bbcf95b0eb78d170e14",
+   "explanation": "Shares the resource (path, unit or object) with the alert evidence (verified identifier). Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Carries the same ExtorQ simulation marker (lab scenario tag, not proof). Same service as the evidence.",
+   "relationship_type": "direct",
+   "strength": "strong",
+   "time_delta_seconds": 0.057
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "d7851c20964ddb47fbac43c610fa7618",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": 0.059
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "b9287ea61dd6c8bbcb245069977eeaf9",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.425
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "4dcb6520c1759eaf70a10dfa387266e8",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.429
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "36373917fdf1380e76ff1162c4f6ffcb",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.477
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "a3fc2c7290397413adfaf40ccb7f6b7d",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.539
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "f34e36f5739e1ccf01eda36d46960a89",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.608
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "43c838447e3f9f813154b662bc14d674",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.667
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "52ead0af62460c9b75aa5123be904b7b",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.728
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "0d99aa41caa38096c7e1801b796aac3c",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.732
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "d7ced79b7a3d757f300a30ea033dbd92",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.782
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "6aa00d1d6fe75017af2729866201cc26",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.798
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "5348b3292ac8739d42007275e11aa231",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.831
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "327899c1c00fba19b879d79e717b269f",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.849
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "d531be8562ff452ec2003cbf1b72e059",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -420.883
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "20442c0cc6e47c44410488a70edc359a",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.026
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "84d18bfdeb3076eabcfe858dd6ebe45a",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.441
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "bab824ba948b4bf963da8dbfc61a543f",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.443
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "c016288aefab005a82f9a5cbe181f400",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.496
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "3a39dd590469d4e6e211fc9971a85ef9",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.499
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "a61f7cc5cadea579026ab1a4dec295e5",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.55
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "87cb874d33e4f49de02c53b6fcd1b6c3",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.615
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "eb1d8f1c127fe3c68e698c5f1d6c8f92",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.622
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "750638ce7c8aeb717545c0616a736dda",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.655
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "1ca3016bfa66b3afea17bc323af8167b",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.721
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "08e2cb584c472f9ed6ea0c7308afd8f0",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.729
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "8bc5b681de1c53d25086399ae4eb778e",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.762
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "f544642d33e2f696729aa7b6190c4f7a",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.852
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "bc4e4a48510712b94110c357fe38658b",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.885
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "eeca0770f343c5298a0896823f08b142",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.918
+  },
+  {
+   "bases": [
+    "shared_principal",
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "1f38c34b2ae0a2476ca1f1e38fa8044f",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same principal name as the evidence. Same service as the evidence. Plausible but inferred; not a verified link.",
+   "relationship_type": "candidate",
+   "strength": "weak",
+   "time_delta_seconds": -421.953
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "1d932a8d4d24914e72c7828b8ec251cd",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": 1.097
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "3c4b802629f6a60ce25727b1ae647553",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": 1.097
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "4472a894577cc7820e32cd34e060fe71",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.614
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "5f236bc7bb47df955ae3cb872751f2ee",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.617
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "816947af0151e4819bc7bec3c989f306",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.621
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "741c5f648624c8290493b1e7a4e90a85",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.622
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "64d577bc93a0008f9a8ce21114dcf35b",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.624
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "e516ee0614dfca3cfec2c11d0359d881",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.625
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "6c99f43c0fdc7510194cbe375274abde",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.627
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "2ae4909d002e9215dcc6b423b1d27d36",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.629
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "e9551549e7b5bd190e2a9a4908d315d6",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.63
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "75096ad038778316bbd766d17be6a2a3",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.633
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "1e680a8bde349e7dba876de5f6a74d34",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.637
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "a4a916286d12bbd0e86d4c1541f6b804",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.639
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "c1d012ff9027cf72df01369e04f2961e",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.641
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "374652d4283e39f45d60c5c49c3789f5",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.645
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "bf330175858cf70a9920497d7e583829",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.648
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "559c225e1e8358abc6fda40ca53c32d6",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -1.654
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "7387e9f8ab143e7cc612cd338a7a30d3",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -8.898
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "b1cb599173bf688c6c40f6b5a4ed04af",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -8.898
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "42e7bc540481577279ae5f86c24e172b",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": 11.095
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "566c1af8a1ae42bec74e6bf26383ba3f",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": 11.095
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "16344fb110d216ef884a0a811a02378d",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -18.897
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "c53c4a0d28c667a40557aa241012bace",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -18.897
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "4049058a83be7cafe9908112965949d4",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": 21.097
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "ecae2d7d1f36ef49ce4ec32444f9d11d",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": 21.098
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "716d21ff7adc5a3db954b88f95e7e37d",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -28.905
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "abda22f16a550a48d80b148a4e0f08bc",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -28.905
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "ee71737cd79eb874009adc79fefab299",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": 31.101
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "8ec49ddfa5e29e6d2c06f80c8c7c0252",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": 31.103
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "740d1757a18fb53edd53425222e713c7",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -38.905
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "f39dc9fbef02aea66a4c86a669a7ae53",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -38.905
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "2d801b1d6e4165a7bc29b4cca304e3cd",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -48.897
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "97adec1fea58ff6b244b647dc0fcbabd",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -48.897
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "446ff898b180c10c8efedede7d66690d",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -58.905
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "76e3953f988f16779a6bc9d7074275dd",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -58.905
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "0ac416446ea1b7c7bd96214f752cef4b",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -60.735
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "981261c0ed88573bf975ccaf710f3fc7",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -60.735
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "a00d1d6dc444dfd5cf96bfd6b61061d0",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -60.741
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "47a9a49376da2afbb57169f31bcd1b23",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -68.897
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "a878786116caf2c06ab23667554ec8ce",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -68.897
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "02c43b12adfff7f8d33d379f64ae7bd3",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -78.899
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "d3b089879c5f852daa1cd730a1f22596",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -78.899
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "c2bca7311b750f9d12694f71debcc506",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -88.906
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "e1f41571d140ea79fc6bc9f8d8ead9d9",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -88.906
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "a84261b324bcd854c1b4f7a183486e5a",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -98.906
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "e85950bd641eefe37ffab92fbb8110ab",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -98.906
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "8c373b1f7b05120cc4fa71afad8c423f",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -108.891
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "6b737dcd95cfcced4430e43bbc6c297a",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -108.892
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "5ab06ae92d750872f03c4c53bde59800",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -118.902
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "5cb2dcc21a16375b26f8a8913818c309",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -118.902
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "51130d0b42c441e3dc7b71dcb6af4c4e",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -128.924
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "5a9656b4bba0fbabba99f2f395225d31",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -128.924
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "a33c95c6f0df643bb6618a70dacdd2b7",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -129.74
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "a06c13e2a249c6d5cd8f8d274b0ddde1",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -138.913
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "e01190a00f52760bff1b1c7e9e641c53",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -138.913
+  },
+  {
+   "bases": [
+    "cross_service_same_asset",
+    "same_asset_time_window"
+   ],
+   "event_id": "289013722ef83f0e90e67b781ad87d44",
+   "explanation": "Different service on the same asset. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -148.913
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "37f396e45dc19c6d51ec8b9f9b1395f8",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -360.72
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "48c3f360e0d5cc26069ab7aa4e11c06c",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -391.68
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "22dbdaa857b3befceabe35a348ccbd72",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.066
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "fa4431814d3044170f839a16e156aa90",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.072
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "e82170700e07095194ecc27ded288057",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.074
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "ab0c3bd0745c24aae7f97286c6879624",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.078
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "82210665cbec2619fe810255671be621",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.079
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "e52a45379beb46d9c202b64350e5aea3",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.081
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "debc655c7dd51ee4b9d4237b593b6a43",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.082
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "5391e922d83b4d4bdef73e4af56a2583",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.084
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "13a8edb72fff1d5b5f6b1feb54fa929e",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.086
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "097b170c271943921639df4de13d71ca",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.089
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "d7f9155a05ab374b620a3796dace3baf",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.091
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "f4105168d89723fad2044becb46e722a",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.094
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "f0e514dc836ab35e782a2c528dfdccc4",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.096
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "fa59722720c7cae3f98b7e08bebcc6cd",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.098
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "f91f3e0034d4a10165266a424448a31a",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.102
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "8a6c2b9d2b365d4acd95df5e4e6246cc",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.103
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "3844217a6009e6f523e562234e61e05d",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -402.107
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "f3841d38f938c60640d6095c8b7a2a8c",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.016
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "cc10835e71a11b5d82c83b06693bdc3a",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.021
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "e432ed1ad322f44060f175499605c303",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.026
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "af0efef1a9cdb91cae403fe7eb5ca494",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.027
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "d680d26afe7b8e2904233a0f3bde585f",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.029
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "a7bf1192de56aaeb789b5c3405d6125c",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.031
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "4bea9df159a32d60605b403cbc593c7a",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.032
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "36e5f5a0919bc2743b893062e5bddebb",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.034
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "a48023f8ed66abeafdc0a8ee29e9d56b",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.036
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "0c1dc2ce62db8aebaaa19536b64047bf",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.038
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "45c522b3ae35020c2c7a3c2dbea49587",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.04
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "6c7aa7e52f0c8bc874fe6786e2303c72",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.042
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "fcc223d5bac40cc49bf01bdfcdd4c738",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.043
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "8cb2725b9cc28a11fe482e6fb28d6258",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.047
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "e32da4c0e8493ac8248d0df14dbf78ff",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.048
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "fa92f7d887174afb453bd3fefc5ed90c",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.051
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "37c91835a05cadb75cd1c7808aed8c4e",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.126
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "ef21b689c011e72e14440296e96c6348",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.13
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "468d98bc2eb63aab583a44ec380bb6b7",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.135
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "c60406ba664200e52ea3c9acd208dfba",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.138
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "1673afe70a9256d7db3b3a15ec300b61",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.14
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "5f1b20d1e11ecb062b36dae836f591e6",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.142
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "ea133fec1b750cf12536d0e9a030556a",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.145
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "066464c7c42a1dae9009f9c8315f8c43",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.148
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "0e5ee1324a617b734d4e99784f735eea",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.15
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "ac168f04e3f43342bbd77ff592b37de8",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.154
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "671d8a2bf2257839f6849c83fef5fb9b",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.158
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "f44f23f18de62f4fc08eb0938d7a6aef",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.163
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "12ebe8b78cd5dc185ed7ff3dd02bad32",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.167
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "64632e86366312cedb35bb5cb3822630",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.181
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "6503a05370347364f645172b35657bc6",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.185
+  },
+  {
+   "bases": [
+    "shared_nat_source_ip",
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "08265196d51039edce7afc743ee3f404",
+   "explanation": "Source IP 172.18.0.1 is a shared NAT/gateway address: the match does not establish a common origin. Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -409.192
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "9b591c3aff316a96d7a3f1fe6e4df2af",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -436.702
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "7adb9242e9f2166589ebe493c5cee251",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -589.009
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "0de6184bade6cf9b129726189e59a3fb",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -613.762
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "701d7411c3536be372b8b79140571901",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -661.179
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "1b8b5bd4ff8146bbf2726d458c4f6448",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -662.679
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "025c415d1717b463fd817849a3a33fd3",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -725.762
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "3ea100dd27c4127009f2771ab3ed9f81",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -743.801
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "7f78b48b1cadcc7c0cbee73fcf72bd61",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -746.014
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "2f17e83ad8f0385f32d8505f3137548c",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -755.952
+  },
+  {
+   "bases": [
+    "same_service",
+    "same_asset_time_window"
+   ],
+   "event_id": "07b028360358cf1f1c8055806757439b",
+   "explanation": "Same service as the evidence. Only temporal proximity in the context window; no supported link.",
+   "relationship_type": "unestablished",
+   "strength": "weak",
+   "time_delta_seconds": -863.017
+  }
+ ],
+ "rule": {
+  "asset_types": [
+   "kubernetes_cluster"
+  ],
+  "blind_spots": [
+   "Privileged pods admitted in namespaces with a permissive Pod Security level (or exempted users/namespaces) are not denied and therefore not detected here.",
+   "Requests whose audit body was not logged (audit level Metadata) may lack risk flags; the rule then relies on the violation text (confidence medium).",
+   "Violations of other Pod Security controls (runAsNonRoot, seccomp, ...) alone are not in scope.",
+   "Audit pipeline outages (OTel collector, gateway) hide denials; see collector health."
+  ],
+  "dedup": {
+   "bucket_seconds": null,
+   "strategy": "event"
+  },
+  "description": "A request to create a pod (or add an ephemeral container) asking for privileged mode, host namespaces (hostNetwork/hostPID/hostIPC), hostPath volumes or dangerous added capabilities was rejected with HTTP 403 because it violates the namespace's Pod Security Standard. The control worked; the alert records who tried to run a privileged workload, where, and with which settings. Evidence is the kube-apiserver audit event (ResponseComplete stage) normalised by the OTLP audit pipeline.",
+  "false_positives": [
+   "An administrator deploying a legitimate node agent (CNI, CSI driver, log collector) into a namespace whose Pod Security level does not allow it; the fix is an exempt or privileged namespace, not a suppression.",
+   "Server-side dry runs (kubectl --dry-run=server) are denied the same way; they are alerted (reconnaissance of the admission policy) with features.dry_run = true.",
+   "Controllers retrying a privileged Deployment/DaemonSet in a restricted namespace produce one denial per retry, and therefore one alert per audit id (identity is the audit id per PLAN 5.3); the alerts share the same group (cluster|namespace|user)."
+  ],
+  "group_by": [
+   "cluster",
+   "audit_id"
+  ],
+  "mitre_techniques": [
+   "T1610",
+   "T1611"
+  ],
+  "params": {
+   "privileged_flags": [
+    "privileged",
+    "host_pid",
+    "host_network",
+    "host_ipc",
+    "host_path",
+    "host_path_root",
+    "dangerous_capabilities"
+   ],
+   "violation_pattern": "privileged \\(|host namespaces|hostPath volumes|hostPort|non-default capabilities|unrestricted capabilities"
+  },
+  "query_sha256": "adfdee051201f484593e968852b983681c6ce515fbfa2021a062c92202e9096d",
+  "references": [
+   "https://kubernetes.io/docs/concepts/security/pod-security-admission/",
+   "https://attack.mitre.org/techniques/T1611/"
+  ],
+  "requires": [
+   {
+    "event_types": [
+     "k8s.api.request"
+    ],
+    "optional": false,
+    "source_type": "k8s.audit"
+   }
+  ],
+  "rule_id": "K8S-001",
+  "schedule": {
+   "interval_seconds": 60,
+   "late_tolerance_seconds": 300,
+   "lookback_seconds": 900
+  },
+  "severity": "medium",
+  "status": "stable",
+  "title": "Privileged pod denied by Pod Security admission",
+  "version": "1.0.0"
+ },
+ "schema_version": "1.1",
+ "services": [
+  {
+   "adapter_support": "implemented",
+   "asset_id": "k8s:extorq-lab",
+   "category": "kubernetes_component",
+   "monitoring_status": "monitored",
+   "name": "kube-system/kube-apiserver-extorq-lab-control-plane",
+   "role": "evidence",
+   "service_id": "eee2545dfda34195d1064c4ebc4c14de",
+   "service_kind": "k8s_workload"
+  },
+  {
+   "adapter_support": "implemented",
+   "asset_id": "k8s:extorq-lab",
+   "category": "kubernetes_component",
+   "monitoring_status": "monitored",
+   "name": "kube-system/kindnet",
+   "role": "related",
+   "service_id": "53b796e8f9728da808003bb7836b702e",
+   "service_kind": "k8s_workload"
+  },
+  {
+   "adapter_support": "implemented",
+   "asset_id": "k8s:extorq-lab",
+   "category": "kubernetes_component",
+   "monitoring_status": "monitored",
+   "name": "kube-system/etcd-extorq-lab-control-plane",
+   "role": "related",
+   "service_id": "bfbac9d536c4207a1449b5fd2c3da46a",
+   "service_kind": "k8s_workload"
+  }
+ ],
+ "simulation_run_ids": [
+  "bcfcb726ff01"
+ ],
+ "timeline": [
+  {
+   "event_id": "07b028360358cf1f1c8055806757439b",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch -/persistentvolumeclaims/? by system:serviceaccount:local-path-storage:local-path-provisioner-service-account -> 200",
+   "time": "2026-11-21T14:47:38.886000Z"
+  },
+  {
+   "event_id": "2f17e83ad8f0385f32d8505f3137548c",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch -/pods/? by system:serviceaccount:extorq-system:extorq-otel-collector -> 200",
+   "time": "2026-11-21T14:49:25.951000Z"
+  },
+  {
+   "event_id": "7f78b48b1cadcc7c0cbee73fcf72bd61",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch -/storageclasses/? by system:serviceaccount:local-path-storage:local-path-provisioner-service-account -> 200",
+   "time": "2026-11-21T14:49:35.889000Z"
+  },
+  {
+   "event_id": "3ea100dd27c4127009f2771ab3ed9f81",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch -/nodes/extorq-lab-control-plane by system:node:extorq-lab-control-plane -> 200",
+   "time": "2026-11-21T14:49:38.102000Z"
+  },
+  {
+   "event_id": "025c415d1717b463fd817849a3a33fd3",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch -/secrets/? by system:kube-controller-manager -> 200",
+   "time": "2026-11-21T14:49:56.141000Z"
+  },
+  {
+   "event_id": "1b8b5bd4ff8146bbf2726d458c4f6448",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch kube-system/configmaps/kube-apiserver-legacy-service-account-token-tracking by system:apiserver -> 200",
+   "time": "2026-11-21T14:50:59.224000Z"
+  },
+  {
+   "event_id": "701d7411c3536be372b8b79140571901",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch kube-system/configmaps/extension-apiserver-authentication by system:kube-scheduler -> 200",
+   "time": "2026-11-21T14:51:00.724000Z"
+  },
+  {
+   "event_id": "0de6184bade6cf9b129726189e59a3fb",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch -/configmaps/? by system:kube-controller-manager -> 200",
+   "time": "2026-11-21T14:51:48.141000Z"
+  },
+  {
+   "event_id": "7adb9242e9f2166589ebe493c5cee251",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch -/persistentvolumes/? by system:serviceaccount:local-path-storage:local-path-provisioner-service-account -> 200",
+   "time": "2026-11-21T14:52:12.894000Z"
+  },
+  {
+   "event_id": "9b591c3aff316a96d7a3f1fe6e4df2af",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch -/nodes/extorq-lab-control-plane by system:node:extorq-lab-control-plane -> 200",
+   "time": "2026-11-21T14:54:45.201000Z"
+  },
+  {
+   "event_id": "1f38c34b2ae0a2476ca1f1e38fa8044f",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-system/namespaces/extorq-system by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:54:59.950000Z"
+  },
+  {
+   "event_id": "eeca0770f343c5298a0896823f08b142",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-apps/namespaces/extorq-apps by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:54:59.985000Z"
+  },
+  {
+   "event_id": "bc4e4a48510712b94110c357fe38658b",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-restricted/namespaces/extorq-restricted by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.018000Z"
+  },
+  {
+   "event_id": "f544642d33e2f696729aa7b6190c4f7a",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-posture-lab/namespaces/extorq-posture-lab by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.051000Z"
+  },
+  {
+   "event_id": "8bc5b681de1c53d25086399ae4eb778e",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-system/serviceaccounts/extorq-inventory by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.141000Z"
+  },
+  {
+   "event_id": "08e2cb584c472f9ed6ea0c7308afd8f0",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get -/clusterroles/extorq-inventory-reader by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.174000Z"
+  },
+  {
+   "event_id": "1ca3016bfa66b3afea17bc323af8167b",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get -/clusterrolebindings/extorq-inventory-reader by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.182000Z"
+  },
+  {
+   "event_id": "750638ce7c8aeb717545c0616a736dda",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-system/serviceaccounts/extorq-otel-collector by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.248000Z"
+  },
+  {
+   "event_id": "eb1d8f1c127fe3c68e698c5f1d6c8f92",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get -/clusterroles/extorq-otel-k8sattributes by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.281000Z"
+  },
+  {
+   "event_id": "87cb874d33e4f49de02c53b6fcd1b6c3",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get -/clusterrolebindings/extorq-otel-k8sattributes by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.288000Z"
+  },
+  {
+   "event_id": "a61f7cc5cadea579026ab1a4dec295e5",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-posture-lab/deployments/weak-log-reader by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.353000Z"
+  },
+  {
+   "event_id": "3a39dd590469d4e6e211fc9971a85ef9",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get -/clusterrolebindings/kubeadm:cluster-admins by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.404000Z"
+  },
+  {
+   "event_id": "c016288aefab005a82f9a5cbe181f400",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch -/clusterrolebindings/kubeadm:cluster-admins by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.407000Z"
+  },
+  {
+   "event_id": "bab824ba948b4bf963da8dbfc61a543f",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get kube-public/rolebindings/kubeadm:bootstrap-signer-clusterinfo by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.460000Z"
+  },
+  {
+   "event_id": "84d18bfdeb3076eabcfe858dd6ebe45a",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch kube-public/rolebindings/kubeadm:bootstrap-signer-clusterinfo by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.462000Z"
+  },
+  {
+   "event_id": "20442c0cc6e47c44410488a70edc359a",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch extorq-apps/secrets/lab-portal-demo-credentials by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:00.877000Z"
+  },
+  {
+   "event_id": "d531be8562ff452ec2003cbf1b72e059",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-apps/serviceaccounts/lab-portal by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.020000Z"
+  },
+  {
+   "event_id": "327899c1c00fba19b879d79e717b269f",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-apps/deployments/lab-portal by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.054000Z"
+  },
+  {
+   "event_id": "5348b3292ac8739d42007275e11aa231",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-apps/services/lab-portal by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.072000Z"
+  },
+  {
+   "event_id": "6aa00d1d6fe75017af2729866201cc26",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch extorq-apps/services/lab-portal by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.105000Z"
+  },
+  {
+   "event_id": "d7ced79b7a3d757f300a30ea033dbd92",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-apps/networkpolicies/lab-portal by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.121000Z"
+  },
+  {
+   "event_id": "0d99aa41caa38096c7e1801b796aac3c",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-apps/deployments/lab-portal by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.171000Z"
+  },
+  {
+   "event_id": "52ead0af62460c9b75aa5123be904b7b",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch extorq-apps/deployments/lab-portal by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.175000Z"
+  },
+  {
+   "event_id": "43c838447e3f9f813154b662bc14d674",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch extorq-system/configmaps/extorq-gateway-ca by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.236000Z"
+  },
+  {
+   "event_id": "f34e36f5739e1ccf01eda36d46960a89",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch extorq-system/secrets/extorq-otel-token by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.295000Z"
+  },
+  {
+   "event_id": "a3fc2c7290397413adfaf40ccb7f6b7d",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch extorq-system/configmaps/extorq-otel-config by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.364000Z"
+  },
+  {
+   "event_id": "36373917fdf1380e76ff1162c4f6ffcb",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-system/daemonsets/extorq-otel-collector by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.426000Z"
+  },
+  {
+   "event_id": "4dcb6520c1759eaf70a10dfa387266e8",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-system/daemonsets/extorq-otel-collector by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.474000Z"
+  },
+  {
+   "event_id": "b9287ea61dd6c8bbcb245069977eeaf9",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch extorq-system/daemonsets/extorq-otel-collector by kubernetes-admin -> 200",
+   "time": "2026-11-21T14:55:01.478000Z"
+  },
+  {
+   "event_id": "08265196d51039edce7afc743ee3f404",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/namespaces/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.711000Z"
+  },
+  {
+   "event_id": "6503a05370347364f645172b35657bc6",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/nodes/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.718000Z"
+  },
+  {
+   "event_id": "64632e86366312cedb35bb5cb3822630",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/pods/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.722000Z"
+  },
+  {
+   "event_id": "12ebe8b78cd5dc185ed7ff3dd02bad32",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/services/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.736000Z"
+  },
+  {
+   "event_id": "f44f23f18de62f4fc08eb0938d7a6aef",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/serviceaccounts/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.740000Z"
+  },
+  {
+   "event_id": "671d8a2bf2257839f6849c83fef5fb9b",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/deployments/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.745000Z"
+  },
+  {
+   "event_id": "ac168f04e3f43342bbd77ff592b37de8",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/daemonsets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.749000Z"
+  },
+  {
+   "event_id": "0e5ee1324a617b734d4e99784f735eea",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/statefulsets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.753000Z"
+  },
+  {
+   "event_id": "066464c7c42a1dae9009f9c8315f8c43",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/replicasets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.755000Z"
+  },
+  {
+   "event_id": "ea133fec1b750cf12536d0e9a030556a",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/jobs/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.758000Z"
+  },
+  {
+   "event_id": "5f1b20d1e11ecb062b36dae836f591e6",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/cronjobs/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.761000Z"
+  },
+  {
+   "event_id": "1673afe70a9256d7db3b3a15ec300b61",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/roles/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.763000Z"
+  },
+  {
+   "event_id": "c60406ba664200e52ea3c9acd208dfba",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/rolebindings/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.765000Z"
+  },
+  {
+   "event_id": "468d98bc2eb63aab583a44ec380bb6b7",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/clusterroles/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.768000Z"
+  },
+  {
+   "event_id": "ef21b689c011e72e14440296e96c6348",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/clusterrolebindings/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.773000Z"
+  },
+  {
+   "event_id": "37c91835a05cadb75cd1c7808aed8c4e",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/networkpolicies/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.777000Z"
+  },
+  {
+   "event_id": "fa92f7d887174afb453bd3fefc5ed90c",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/namespaces/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.852000Z"
+  },
+  {
+   "event_id": "e32da4c0e8493ac8248d0df14dbf78ff",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/nodes/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.855000Z"
+  },
+  {
+   "event_id": "8cb2725b9cc28a11fe482e6fb28d6258",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/pods/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.856000Z"
+  },
+  {
+   "event_id": "fcc223d5bac40cc49bf01bdfcdd4c738",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/services/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.860000Z"
+  },
+  {
+   "event_id": "6c7aa7e52f0c8bc874fe6786e2303c72",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/serviceaccounts/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.861000Z"
+  },
+  {
+   "event_id": "45c522b3ae35020c2c7a3c2dbea49587",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/deployments/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.863000Z"
+  },
+  {
+   "event_id": "0c1dc2ce62db8aebaaa19536b64047bf",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/daemonsets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.865000Z"
+  },
+  {
+   "event_id": "a48023f8ed66abeafdc0a8ee29e9d56b",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/statefulsets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.867000Z"
+  },
+  {
+   "event_id": "36e5f5a0919bc2743b893062e5bddebb",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/replicasets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.869000Z"
+  },
+  {
+   "event_id": "4bea9df159a32d60605b403cbc593c7a",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/jobs/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.871000Z"
+  },
+  {
+   "event_id": "a7bf1192de56aaeb789b5c3405d6125c",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/cronjobs/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.872000Z"
+  },
+  {
+   "event_id": "d680d26afe7b8e2904233a0f3bde585f",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/roles/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.874000Z"
+  },
+  {
+   "event_id": "af0efef1a9cdb91cae403fe7eb5ca494",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/rolebindings/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.876000Z"
+  },
+  {
+   "event_id": "e432ed1ad322f44060f175499605c303",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/clusterroles/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.877000Z"
+  },
+  {
+   "event_id": "cc10835e71a11b5d82c83b06693bdc3a",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/clusterrolebindings/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.882000Z"
+  },
+  {
+   "event_id": "f3841d38f938c60640d6095c8b7a2a8c",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/networkpolicies/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:12.887000Z"
+  },
+  {
+   "event_id": "3844217a6009e6f523e562234e61e05d",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/namespaces/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.796000Z"
+  },
+  {
+   "event_id": "8a6c2b9d2b365d4acd95df5e4e6246cc",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/nodes/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.800000Z"
+  },
+  {
+   "event_id": "f91f3e0034d4a10165266a424448a31a",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/pods/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.801000Z"
+  },
+  {
+   "event_id": "fa59722720c7cae3f98b7e08bebcc6cd",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/services/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.805000Z"
+  },
+  {
+   "event_id": "f0e514dc836ab35e782a2c528dfdccc4",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/serviceaccounts/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.807000Z"
+  },
+  {
+   "event_id": "f4105168d89723fad2044becb46e722a",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/deployments/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.809000Z"
+  },
+  {
+   "event_id": "d7f9155a05ab374b620a3796dace3baf",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/daemonsets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.812000Z"
+  },
+  {
+   "event_id": "097b170c271943921639df4de13d71ca",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/statefulsets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.814000Z"
+  },
+  {
+   "event_id": "13a8edb72fff1d5b5f6b1feb54fa929e",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/replicasets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.817000Z"
+  },
+  {
+   "event_id": "5391e922d83b4d4bdef73e4af56a2583",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/jobs/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.819000Z"
+  },
+  {
+   "event_id": "debc655c7dd51ee4b9d4237b593b6a43",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/cronjobs/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.821000Z"
+  },
+  {
+   "event_id": "e52a45379beb46d9c202b64350e5aea3",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/roles/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.822000Z"
+  },
+  {
+   "event_id": "82210665cbec2619fe810255671be621",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/rolebindings/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.824000Z"
+  },
+  {
+   "event_id": "ab0c3bd0745c24aae7f97286c6879624",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/clusterroles/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.825000Z"
+  },
+  {
+   "event_id": "e82170700e07095194ecc27ded288057",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/clusterrolebindings/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.829000Z"
+  },
+  {
+   "event_id": "fa4431814d3044170f839a16e156aa90",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/networkpolicies/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T14:55:19.831000Z"
+  },
+  {
+   "event_id": "22dbdaa857b3befceabe35a348ccbd72",
+   "event_type": "service.discovered",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.api_inventory",
+   "summary": "service.discovered: k8s_workload kube-system/kube-apiserver-extorq-lab-control-plane discovered (monitored)",
+   "time": "2026-11-21T14:55:19.837000Z"
+  },
+  {
+   "event_id": "48c3f360e0d5cc26069ab7aa4e11c06c",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request watch kube-system/configmaps/? by system:apiserver -> 200",
+   "time": "2026-11-21T14:55:30.223000Z"
+  },
+  {
+   "event_id": "37f396e45dc19c6d51ec8b9f9b1395f8",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 14:56:01.183646       1 cidrallocator.go:278] updated ClusterIP allocator for Service CIDR 10.96.0.0/16",
+   "time": "2026-11-21T14:56:01.183000Z"
+  },
+  {
+   "event_id": "289013722ef83f0e90e67b781ad87d44",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 14:59:32.989222       1 main.go:324] handling current node",
+   "time": "2026-11-21T14:59:32.990000Z"
+  },
+  {
+   "event_id": "a06c13e2a249c6d5cd8f8d274b0ddde1",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 14:59:42.990046       1 main.go:324] handling current node",
+   "time": "2026-11-21T14:59:42.990000Z"
+  },
+  {
+   "event_id": "e01190a00f52760bff1b1c7e9e641c53",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 14:59:42.989956       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T14:59:42.990000Z"
+  },
+  {
+   "event_id": "a33c95c6f0df643bb6618a70dacdd2b7",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request patch -/nodes/extorq-lab-control-plane by system:node:extorq-lab-control-plane -> 200",
+   "time": "2026-11-21T14:59:52.163000Z"
+  },
+  {
+   "event_id": "51130d0b42c441e3dc7b71dcb6af4c4e",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 14:59:52.979413       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T14:59:52.979000Z"
+  },
+  {
+   "event_id": "5a9656b4bba0fbabba99f2f395225d31",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 14:59:52.979648       1 main.go:324] handling current node",
+   "time": "2026-11-21T14:59:52.979000Z"
+  },
+  {
+   "event_id": "5ab06ae92d750872f03c4c53bde59800",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:03.001428       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:00:03.001000Z"
+  },
+  {
+   "event_id": "5cb2dcc21a16375b26f8a8913818c309",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:03.001611       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:00:03.001000Z"
+  },
+  {
+   "event_id": "6b737dcd95cfcced4430e43bbc6c297a",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:13.010148       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:00:13.011000Z"
+  },
+  {
+   "event_id": "8c373b1f7b05120cc4fa71afad8c423f",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:13.011266       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:00:13.012000Z"
+  },
+  {
+   "event_id": "a84261b324bcd854c1b4f7a183486e5a",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:22.997411       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:00:22.997000Z"
+  },
+  {
+   "event_id": "e85950bd641eefe37ffab92fbb8110ab",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:22.997349       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:00:22.997000Z"
+  },
+  {
+   "event_id": "c2bca7311b750f9d12694f71debcc506",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:32.997313       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:00:32.997000Z"
+  },
+  {
+   "event_id": "e1f41571d140ea79fc6bc9f8d8ead9d9",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:32.997286       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:00:32.997000Z"
+  },
+  {
+   "event_id": "02c43b12adfff7f8d33d379f64ae7bd3",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:43.004581       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:00:43.004000Z"
+  },
+  {
+   "event_id": "d3b089879c5f852daa1cd730a1f22596",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:43.004681       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:00:43.004000Z"
+  },
+  {
+   "event_id": "47a9a49376da2afbb57169f31bcd1b23",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:53.006276       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:00:53.006000Z"
+  },
+  {
+   "event_id": "a878786116caf2c06ab23667554ec8ce",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:00:53.006342       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:00:53.006000Z"
+  },
+  {
+   "event_id": "a00d1d6dc444dfd5cf96bfd6b61061d0",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: {\"level\":\"info\",\"ts\":\"2026-11-21T15:01:01.162239Z\",\"caller\":\"mvcc/index.go:207\",\"msg\":\"compact tree index\",\"revision\":24396}",
+   "time": "2026-11-21T15:01:01.162000Z"
+  },
+  {
+   "event_id": "0ac416446ea1b7c7bd96214f752cef4b",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: {\"level\":\"info\",\"ts\":\"2026-11-21T15:01:01.168764Z\",\"caller\":\"mvcc/kvstore_compaction.go:71\",\"msg\":\"finished scheduled compaction\",\"compact-revision\":24396,\"took\":\"6.24225ms\",\"number-of-keys-compacted\":424,\"hash\":499976149,\"curre\u2026[truncated]",
+   "time": "2026-11-21T15:01:01.168000Z"
+  },
+  {
+   "event_id": "981261c0ed88573bf975ccaf710f3fc7",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: {\"level\":\"info\",\"ts\":\"2026-11-21T15:01:01.168790Z\",\"caller\":\"mvcc/hash.go:157\",\"msg\":\"storing new hash\",\"hash\":499976149,\"revision\":24396,\"compact-revision\":23972}",
+   "time": "2026-11-21T15:01:01.168000Z"
+  },
+  {
+   "event_id": "446ff898b180c10c8efedede7d66690d",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:02.998491       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:01:02.998000Z"
+  },
+  {
+   "event_id": "76e3953f988f16779a6bc9d7074275dd",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:02.998433       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:01:02.998000Z"
+  },
+  {
+   "event_id": "2d801b1d6e4165a7bc29b4cca304e3cd",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:13.006650       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:01:13.006000Z"
+  },
+  {
+   "event_id": "97adec1fea58ff6b244b647dc0fcbabd",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:13.006573       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:01:13.006000Z"
+  },
+  {
+   "event_id": "740d1757a18fb53edd53425222e713c7",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:22.998173       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:01:22.998000Z"
+  },
+  {
+   "event_id": "f39dc9fbef02aea66a4c86a669a7ae53",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:22.998077       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:01:22.998000Z"
+  },
+  {
+   "event_id": "716d21ff7adc5a3db954b88f95e7e37d",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:32.998320       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:01:32.998000Z"
+  },
+  {
+   "event_id": "abda22f16a550a48d80b148a4e0f08bc",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:32.998171       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:01:32.998000Z"
+  },
+  {
+   "event_id": "16344fb110d216ef884a0a811a02378d",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:43.006766       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:01:43.006000Z"
+  },
+  {
+   "event_id": "c53c4a0d28c667a40557aa241012bace",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:43.006669       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:01:43.006000Z"
+  },
+  {
+   "event_id": "7387e9f8ab143e7cc612cd338a7a30d3",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:53.005591       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:01:53.005000Z"
+  },
+  {
+   "event_id": "b1cb599173bf688c6c40f6b5a4ed04af",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:01:53.005673       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:01:53.005000Z"
+  },
+  {
+   "event_id": "559c225e1e8358abc6fda40ca53c32d6",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/namespaces/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.249000Z"
+  },
+  {
+   "event_id": "bf330175858cf70a9920497d7e583829",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/nodes/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.255000Z"
+  },
+  {
+   "event_id": "374652d4283e39f45d60c5c49c3789f5",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/pods/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.258000Z"
+  },
+  {
+   "event_id": "c1d012ff9027cf72df01369e04f2961e",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/services/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.262000Z"
+  },
+  {
+   "event_id": "a4a916286d12bbd0e86d4c1541f6b804",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/serviceaccounts/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.264000Z"
+  },
+  {
+   "event_id": "1e680a8bde349e7dba876de5f6a74d34",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/deployments/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.266000Z"
+  },
+  {
+   "event_id": "75096ad038778316bbd766d17be6a2a3",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/daemonsets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.270000Z"
+  },
+  {
+   "event_id": "e9551549e7b5bd190e2a9a4908d315d6",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/statefulsets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.273000Z"
+  },
+  {
+   "event_id": "2ae4909d002e9215dcc6b423b1d27d36",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/replicasets/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.274000Z"
+  },
+  {
+   "event_id": "6c99f43c0fdc7510194cbe375274abde",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/jobs/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.276000Z"
+  },
+  {
+   "event_id": "e516ee0614dfca3cfec2c11d0359d881",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/cronjobs/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.278000Z"
+  },
+  {
+   "event_id": "64d577bc93a0008f9a8ce21114dcf35b",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/roles/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.279000Z"
+  },
+  {
+   "event_id": "741c5f648624c8290493b1e7a4e90a85",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/rolebindings/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.281000Z"
+  },
+  {
+   "event_id": "816947af0151e4819bc7bec3c989f306",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/clusterroles/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.282000Z"
+  },
+  {
+   "event_id": "5f236bc7bb47df955ae3cb872751f2ee",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/clusterrolebindings/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.286000Z"
+  },
+  {
+   "event_id": "4472a894577cc7820e32cd34e060fe71",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request list -/networkpolicies/? by system:serviceaccount:extorq-system:extorq-inventory -> 200",
+   "time": "2026-11-21T15:02:00.289000Z"
+  },
+  {
+   "event_id": "4ce9b3021b7b6970710e40ad034bc21c",
+   "event_type": "k8s.api.request",
+   "is_evidence": true,
+   "relationship_type": null,
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request create extorq-restricted/pods/extorq-sim-bcfcb726ff01 by kubernetes-admin -> 403",
+   "time": "2026-11-21T15:02:01.903000Z"
+  },
+  {
+   "event_id": "7024f3d30ccf0bbcf95b0eb78d170e14",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "direct",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-restricted/pods/extorq-sim-bcfcb726ff01 by kubernetes-admin -> 404",
+   "time": "2026-11-21T15:02:01.960000Z"
+  },
+  {
+   "event_id": "d7851c20964ddb47fbac43c610fa7618",
+   "event_type": "k8s.api.request",
+   "is_evidence": false,
+   "relationship_type": "candidate",
+   "source_type": "k8s.audit",
+   "summary": "k8s.api.request get extorq-restricted/namespaces/extorq-restricted by kubernetes-admin -> 200",
+   "time": "2026-11-21T15:02:01.962000Z"
+  },
+  {
+   "event_id": "1d932a8d4d24914e72c7828b8ec251cd",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:02:03.000248       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:02:03Z"
+  },
+  {
+   "event_id": "3c4b802629f6a60ce25727b1ae647553",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:02:03.000063       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:02:03Z"
+  },
+  {
+   "event_id": "42e7bc540481577279ae5f86c24e172b",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:02:12.997888       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:02:12.998000Z"
+  },
+  {
+   "event_id": "566c1af8a1ae42bec74e6bf26383ba3f",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:02:12.998031       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:02:12.998000Z"
+  },
+  {
+   "event_id": "4049058a83be7cafe9908112965949d4",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:02:22.999957       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:02:23Z"
+  },
+  {
+   "event_id": "ecae2d7d1f36ef49ce4ec32444f9d11d",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:02:23.000116       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:02:23.001000Z"
+  },
+  {
+   "event_id": "ee71737cd79eb874009adc79fefab299",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:02:32.998884       1 main.go:320] Handling node with IPs: map[172.18.0.3:{}]",
+   "time": "2026-11-21T15:02:33.004000Z"
+  },
+  {
+   "event_id": "8ec49ddfa5e29e6d2c06f80c8c7c0252",
+   "event_type": "k8s.container.log",
+   "is_evidence": false,
+   "relationship_type": "unestablished",
+   "source_type": "k8s.container_log",
+   "summary": "k8s.container.log: I1121 15:02:32.999016       1 main.go:324] handling current node",
+   "time": "2026-11-21T15:02:33.006000Z"
+  }
+ ],
+ "truncated": {
+  "evidence": false,
+  "findings": true,
+  "related": false,
+  "related_assets": false,
+  "services": false,
+  "timeline": false
+ },
+ "window_end": "2026-11-21T15:17:01.903000Z",
+ "window_start": "2026-11-21T14:47:01.903000Z"
+}

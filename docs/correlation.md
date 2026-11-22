@@ -125,6 +125,32 @@ added write scopes, write-all added, workflow runs of the changed commit, branch
 and settings changes. Persistence: changes, units, auditd corroboration and writers, unit
 state changes, package changes. Values are computed only from the events in the context.
 
+auditd corroboration (`auditd_corroborated`, `auditd_writers`) counts only **successful
+create/modify syscalls** whose written path is one of the changed unit paths (the shared
+definition in `extorq.detection.linux_audit`, identical to the VM-002 / CORR-002 rule
+parameters and checked by a unit test). Removals of those paths (for example a cleanup's
+`unlinkat` by `rm`) are counted separately as `auditd_removals` and never corroborate a
+change; failed attempts, xattr or timestamp changes and numeric (non-enriched) syscall
+values count as neither.
+
+## 3a. Correlation rule CORR-002 (ordered multi-stage pattern)
+
+CORR-002 (`rules/correlation/`, catalog entry in `docs/detection-catalog.md`) is a detection
+rule that correlates three services of one Linux host in order: HTTP probing, SSH
+authentication failures, then a systemd persistence change, all within 30 minutes. It
+states ordered co-occurrence only (`features.causation_established` is always false; never
+high confidence). Since v1.2.0 the persistence stage requires **creation or modification
+evidence**: an inventory diff (unit created, modified or enabled) or a successful auditd
+create/modify syscall on a unit file. Deletions are context only (`context_unit_removals`,
+`context_removal_events`), and the features separate units whose new content the inventory
+confirmed (`persistence_units_inventory_confirmed`) from units only auditd saw written
+(`persistence_units_audit_only`, e.g. an unchanged unit re-installed by `install`).
+Observed live: v1.0.0 counted the VM-002 simulation's cleanup (`unlinkat` by `/usr/bin/rm`)
+as the persistence stage of alert `b46da3805d1c6f17b6c1ed363b49a777`; the chain is still
+valid on the unit creation at 15:07:11Z (verified with the dry run,
+`docs/detection-engine.md`), but the stored alert keeps the evidence v1.0.0 attached
+(append-only evidence).
+
 ## 4. Hashing, identity and storage
 
 * `input_hash` = SHA-256 of the canonical JSON (`identity.canonical_json`) of the context

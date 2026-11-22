@@ -13,11 +13,11 @@ UV ?= uv
 PYTEST := $(UV) run pytest
 # Python paths checked by lint/format/typecheck (frontend has its own toolchain).
 PY_PATHS := backend/src collectors/src scanners/src tests scripts eval
-# Backend-image services of the "full" profile; frontend/grafana join once their Dockerfiles exist.
-FULL_SERVICES := detector ai-worker api \
-	$(if $(wildcard frontend/Dockerfile),frontend) \
-	$(if $(wildcard infra/grafana/Dockerfile),grafana)
+# Services of the "full" profile (frontend: frontend/Dockerfile, grafana: infra/grafana/Dockerfile).
+FULL_SERVICES := detector ai-worker api frontend grafana
 CORE_SERVICES := clickhouse migrate ingest writer
+# `up --wait` budget: the first console build and Grafana's plugin start take a while.
+WAIT := --wait --wait-timeout 600
 HEARTBEAT_CONFIG := collectors/src/extorq_collectors/sdk/examples/heartbeat.yaml
 ARGS ?=
 
@@ -52,15 +52,20 @@ rotate-apply: ## After `make rotate`: re-sync RBAC passwords and recreate servic
 	@echo "restart collectors (make collectors) and full-profile services (make up-full)"
 
 # ── stack ─────────────────────────────────────────────────────────────────────
-.PHONY: up up-full up-debug down ps logs migrate smoke build
+.PHONY: up up-full up-demo up-debug down ps logs migrate smoke build
 build: ## Build the backend image
 	$(COMPOSE) build ingest
 
 up: ## Start the core stack: clickhouse, migrate, ingest (8443), writer
 	$(COMPOSE) up -d --build --wait $(CORE_SERVICES)
 
-up-full: ## Core + detector, ai-worker, api (8000) [+ frontend 3000, grafana 3001 when buildable]
-	$(COMPOSE) --profile full up -d --build $(CORE_SERVICES) $(FULL_SERVICES)
+up-full: ## EVERYTHING: core + detector, ai-worker, api 8000, console 3000, grafana 3001 (AI flags OFF)
+	$(COMPOSE) --profile full up -d --build $(WAIT) $(CORE_SERVICES) $(FULL_SERVICES)
+
+up-demo: ## up-full with AI ON (Jev triage in ai-worker, Gemini summaries in api): live calls, daily caps
+	@# Only the two flags differ from up-full; `make up-full` switches AI off again.
+	EXTORQ_JEV_ENABLED=true EXTORQ_GEMINI_ENABLED=true \
+		$(COMPOSE) --profile full up -d --build $(WAIT) $(CORE_SERVICES) $(FULL_SERVICES)
 
 up-debug: ## Start the loopback-only ClickHouse debug proxy on 127.0.0.1:18123 (never in demos)
 	$(COMPOSE) --profile debug up -d clickhouse-debug
@@ -82,15 +87,22 @@ smoke: ## Send one SYNTHETIC event over HTTPS and read it back from ClickHouse (
 	$(UV) run python scripts/smoke_ingest.py
 
 # ── collectors / scanners ─────────────────────────────────────────────────────
-.PHONY: collectors collectors-once collectors-status collectors-flush sdk-selftest scan
+.PHONY: collectors collectors-start collectors-stop collectors-once collectors-status \
+	collectors-flush sdk-selftest scan
 collectors: ## Run every enabled collector in config/collectors/ (foreground, Ctrl-C to stop)
 	$(UV) run extorq-collect run $(ARGS)
+
+collectors-start: ## Run every enabled host collector in the BACKGROUND (ONLY=a,b to limit; var/log/collectors.log)
+	$(UV) run python scripts/collectors_ctl.py start $(if $(ONLY),--only $(ONLY))
+
+collectors-stop: ## Stop the background collectors (SIGTERM; current cycle commits; SIGKILL after 90 s)
+	$(UV) run python scripts/collectors_ctl.py stop
 
 collectors-once: ## One collection cycle per collector, deliver, exit (non-zero on failure)
 	$(UV) run extorq-collect run --once $(ARGS)
 
-collectors-status: ## Local outbox / dead-letter / last-health summary per collector
-	$(UV) run extorq-collect status
+collectors-status: ## Background runner state + per-collector outbox / dead letters / last health
+	@$(UV) run python scripts/collectors_ctl.py status || true
 
 collectors-flush: ## Deliver buffered collector records without collecting
 	$(UV) run extorq-collect flush $(ARGS)

@@ -11,7 +11,7 @@ from extorq.api import service
 from extorq.api.auth import CurrentPrincipal
 from extorq.api.repository import AlertFilters, SeriesQuery, ServiceFilters
 from extorq.api.routes.common import Clock, Repo, Settings, now_ms
-from extorq.api.routes.services import evaluate_services
+from extorq.api.routes.services import evaluate_scope, service_evaluator
 
 router = APIRouter(tags=["overview"])
 
@@ -32,7 +32,8 @@ def get_overview(
 ) -> s.OverviewResponse:
     now = now_ms(clock)
 
-    collectors = [service.collector_status(row, now) for row in repo.collectors("")]
+    evaluator = service_evaluator(repo, settings, now)  # all collectors, read once
+    collectors = evaluator.collectors
     last_by_type = {
         str(row["asset_type"]): row.get("last_event_at") for row in repo.last_event_by_asset_type()
     }
@@ -66,8 +67,7 @@ def get_overview(
     rule_items = service.rule_health(rules, repo.rule_latest_runs(), now)
     collection = service.collection_summary(collectors, pipeline, rule_items, len(rules))
 
-    evaluator = service.ServiceEvaluator(collectors, now, settings.service_stale_seconds)
-    service_items, truncated, _ = evaluate_services(repo, evaluator, ServiceFilters())
+    services_scope = evaluate_scope(repo, evaluator, ServiceFilters())
 
     recent_rows = repo.list_alerts(
         AlertFilters(
@@ -87,5 +87,5 @@ def get_overview(
         alerts_over_time=alerts_over_time,
         collection_health=collection,
         recent_important_alerts=[service.alert_item(row) for row in recent_rows],
-        service_coverage=service.services_summary(service_items, truncated=truncated),
+        service_coverage=services_scope.summary(),
     )

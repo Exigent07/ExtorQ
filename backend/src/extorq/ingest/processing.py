@@ -6,8 +6,9 @@ For every raw record of a batch, in order:
 2. ``INGEST_RECORD_ADAPTER`` validation (strict contracts)         -> quarantine
 3. producer authorization (kind / asset / source type)             -> DENY BATCH (403)
 4. event catalog semantics (``validate_event_semantics``)          -> quarantine
-5. time sanity: event_time > now+1d or < now-400d; any timestamp
-   > now+1d on other kinds                                          -> quarantine
+5. time sanity: event_time > now+1d, or older than the events
+   retention (90 d = the ``events`` TTL: ``older_than_retention``);
+   any timestamp > now+1d on other kinds                            -> quarantine
 6. secret redaction of free-text fields (count -> provenance)      -> re-validated
 7. storage compatibility (``rows.to_row`` must succeed)             -> quarantine
 8. identity (``record_identity``) for deduplication in the spool
@@ -81,10 +82,19 @@ _TIME_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: Default retention of ``extorq.events`` (``0001_core_tables.sql``:
+#: ``TTL toDateTime(event_time) + INTERVAL 90 DAY``); a test pins the two together.
+EVENTS_RETENTION = timedelta(days=90)
+#: Quarantine reason for events ClickHouse would expire immediately (PLAN §11).
+OLDER_THAN_RETENTION = "older_than_retention"
+
+
 @dataclass(frozen=True)
 class Limits:
     max_future: timedelta = timedelta(days=1)
-    max_age: timedelta = timedelta(days=400)
+    #: Events with ``event_time < now - retention`` are quarantined (``older_than_retention``):
+    #: accepting them would answer 202 for rows the ``events`` TTL deletes right away.
+    retention: timedelta = EVENTS_RETENTION
 
 
 @dataclass
@@ -267,16 +277,20 @@ def _time_problem(record: IngestRecord, now: datetime, limits: Limits) -> str | 
     data = record.data
     if isinstance(data, SecurityEvent):
         if data.event_time > now + limits.max_future:
-            return "event_time_in_future"
-        if data.event_time < now - limits.max_age:
-            return "event_time_too_old"
+            return "time: event_time_in_future"
+        if data.event_time < now - limits.retention:
+            days = limits.retention.total_seconds() / 86400
+            return (
+                f"{OLDER_THAN_RETENTION}: event_time is older than the events retention "
+                f"({days:g} days); the row would expire immediately"
+            )
         if data.observed_time is not None and data.observed_time > now + limits.max_future:
-            return "observed_time_in_future"
+            return "time: observed_time_in_future"
         return None
     for name in _TIME_FIELDS.get(record.kind, ()):
         value = getattr(data, name, None)
         if isinstance(value, datetime) and value > now + limits.max_future:
-            return f"{name}_in_future"
+            return f"time: {name}_in_future"
     return None
 
 
@@ -322,10 +336,10 @@ def _check_and_key(
         )
         if problem is not None:
             return f"semantics: {problem}"
-    # 5. time sanity
+    # 5. time sanity (future timestamps; events beyond the events retention)
     problem = _time_problem(record, now, limits)
     if problem is not None:
-        return f"time: {problem}"
+        return problem
     # 6. redaction (on the JSON form) + re-validation
     data_json = record.data.model_dump(mode="json")
     count = redact_record_data(kind, data_json)

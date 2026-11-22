@@ -24,7 +24,8 @@ document describes what is implemented; anything not yet built is marked **plann
   at merge time; every analytical query must be duplicate-safe (`uniqExact(id)`,
   `argMax(..., version)`, `FINAL`, or the `v_*` views).
 * **Versioning.** `schema_version` is `1.0` or `1.1`; 1.1 is additive (service
-  model), so 1.0 records stay valid and consumers handle both.
+  model, PLAN §10), so 1.0 records stay valid and consumers handle both. The gateway
+  accepts both on the wire and stores each record's own `schema_version`.
 
 ## 2. Contracts and where they are stored
 
@@ -68,16 +69,28 @@ table's columns (unit-tested against the DDL parsed from the migration files):
 * integers are range-checked against their ClickHouse type and every string must be
   valid UTF-8, so a record accepted by the gateway can always be inserted.
 
-Schema 1.1 additions (migration `0004_services.sql`):
+Schema 1.1 additions (migration `0004_services.sql`; views refreshed by 0005/0006):
 
 | Contract field | Column |
 |---|---|
 | `SecurityEvent.service.{service_id,name,instance_id,adapter_id}` | `events.{service_id,service_name,service_instance_id,adapter_id}` |
-| `SecurityEvent.kubernetes.container_id` | `events.k8s_container_id` |
-| `PostureFinding.service_id` | `finding_observations.service_id` |
-| `DetectionAlert.service_ids` | `alerts.service_ids` (`rows.alert_to_row`) |
-| `Service.endpoints[]` | `services.endpoints` (canonical JSON array of `ServiceEndpoint`) |
-| `ServiceInstance.user` | `service_instances.process_user` |
+| `SecurityEvent.kubernetes.container_id` | `events.k8s_container_id` (bare 64-hex runtime id, PLAN §11) |
+| `PostureFinding.service_id` | `finding_observations.service_id` (+ `v_findings_current.service_id`, 0005) |
+| `DetectionAlert.service_ids` | `alerts.service_ids` (`rows.alert_to_row`; visible in `v_alerts` since 0006) |
+| `Service` (all fields) | `services` (`endpoints` = canonical JSON array of `ServiceEndpoint`) |
+| `ServiceInstance` (all fields) | `service_instances` (`user` -> `process_user`) |
+| `InvestigationContext.services` / `related_assets` | inside the stored context body (`investigation_contexts`) |
+
+Contract 1.1 in one paragraph: a host or Kubernetes node (`AssetType.kubernetes_node`,
+asset id `k8s:<cluster>/node/<name>`) runs **services** (`ServiceKind` `host_service`,
+`application`, `k8s_workload`, `k8s_service`) that exist only with discovery evidence
+(`discovered_via`, `DiscoveryEvidence`), carry explicit coverage
+(`adapter_support` implemented/planned/none, `monitoring_status`
+monitored/degraded/unmonitored, `coverage_note`) and endpoints with a
+`PortAttribution` (confirmed/inferred/unknown); **instances** (processes, containers,
+Pods) belong to one service and one asset. Events name the PRODUCING service in
+`SecurityEvent.service` (`ServiceRef`); alerts list every evidence service in
+`service_ids`. Architecture and rules: `docs/architecture.md` section 5, PLAN §10.
 
 ## 3. Identities (`contracts/identity.py`)
 
@@ -158,7 +171,12 @@ Indexes: bloom filters on `events.event_id`, `src_ip`, `http_request_id`, `k8s_p
 | `v_inventory_current`, `v_service_instances_current` | `FINAL WHERE present = 1` (tombstones hidden) |
 | `v_collector_latest`, `v_pipeline_latest` | latest report per collector / component+instance (`argMax`, NULL-preserving `argMax(tuple(x), t).1`) |
 | `v_rule_latest_run` | latest run, 24 h runs and failures per rule |
-| `v_scan_runs_current`, `v_findings_current` (C3, 0003/0005) | finding lifecycle per `(asset, scanner, scope_hash)`: open / unverified / resolved; `service_id` of the most recent observation (0005) |
+| `v_scan_runs_current`, `v_findings_current` (C3, 0003/0005) | finding lifecycle per `(asset, scanner, scope_hash)`: open / unverified / resolved; `service_id` of the most recent observation, NULL included (0005, appended as the last column) |
+
+ClickHouse resolves `SELECT *` in a view **at CREATE time**: a view created before a
+migration added columns does not show them. Such views are re-created with
+`CREATE OR REPLACE VIEW` in a new migration (0006 refreshed `v_alerts` so
+`alerts.service_ids` is visible); grants on a view are keyed by name and survive.
 
 ## 5. Lifecycle and deduplication semantics
 
@@ -188,7 +206,13 @@ TTL is enforced by ClickHouse merges (approximate, never earlier than stated):
 events 90 days, findings 180 days, inventory/services/instances/collector health/
 quarantine/rule runs 30 days, pipeline health 14 days, ingest audit 90 days, analyst
 actions 365 days; assets, scan runs, simulation runs, alerts, evidence, contexts,
-assessments and analyst state have no TTL. Producer-side state (collector outboxes,
+assessments and analyst state have no TTL.
+
+The gateway's acceptance window is aligned with the events TTL: an event whose
+`event_time` is older than 90 days is quarantined (`older_than_retention`) instead of
+being acknowledged and then silently expired (PLAN §11; `EXTORQ_EVENT_RETENTION_DAYS`
+must equal the TTL, a unit test parses the DDL). Alert evidence therefore resolves to
+stored events for at most 90 days; alerts themselves have no TTL. Producer-side state (collector outboxes,
 the gateway spool) keeps records only until delivered; gateway dedup keys and batch
 results are pruned after 168 hours (`EXTORQ_DEDUP_RETENTION_HOURS`).
 
@@ -221,4 +245,17 @@ renders `{{password_sha256:<user>}}` / `{{password_salt:<user>}}` placeholders f
 password files (strict hex validation; rendered SQL is never logged) and re-syncs every
 service user's password on each run (rotation = `make rotate` + `make rotate-apply`).
 DDL is not transactional, so every statement is idempotent (`IF NOT EXISTS`, additive
-GRANTs, `CREATE OR REPLACE VIEW`). Applied on the live stack: 0001-0005.
+GRANTs, `CREATE OR REPLACE VIEW`). Migrations are baked into the backend image, so
+`make migrate` rebuilds it first.
+
+| Migration | Owner | Content |
+|---|---|---|
+| `0001_core_tables` | lead | every table and base view (schema 1.0) |
+| `0002_rbac` | A | roles, users (hashed passwords, `HOST IP`), profiles, quotas, grants |
+| `0003_findings_views` | C3 | `v_scan_runs_current`, `v_findings_current` (finding lifecycle) |
+| `0004_services` | lead | schema 1.1: `services`, `service_instances`, their views, service columns on events/findings/alerts, grants |
+| `0005_findings_services` | C3 | `v_findings_current` + `service_id` (latest observation wins); SELECT on `v_scan_runs_current` for detect/rules_ro/grafana |
+| `0006_refresh_views` | lead | re-creates `v_alerts` so it exposes `alerts.service_ids` |
+
+Applied on the live stack: 0001-0006 (`make demo-check` compares the applied list with
+the files).

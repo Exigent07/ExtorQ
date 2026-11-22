@@ -160,7 +160,7 @@ class Gateway:
         self.normalizer_loader = normalizer_loader
         self.limits = Limits(
             max_future=timedelta(seconds=settings.event_max_future_seconds),
-            max_age=timedelta(days=settings.event_max_age_days),
+            retention=timedelta(days=settings.event_retention_days),
         )
         self.audit_limiter = _AuditLimiter(settings.unauthenticated_audit_per_minute)
         self._lock = threading.Lock()
@@ -567,6 +567,8 @@ def create_app(
                 "limits": {
                     "max_body_bytes": MAX_BODY_BYTES,
                     "max_batch_records": MAX_BATCH_RECORDS,
+                    "max_future_seconds": int(gateway.limits.max_future.total_seconds()),
+                    "event_retention_days": gateway.settings.event_retention_days,
                 },
                 "otlp_normalizer_available": gateway.normalizer_loader() is not None,
             },

@@ -55,6 +55,10 @@ class RuleTestCase:
     entities: dict[str, str] = field(default_factory=dict)
     now: datetime | None = None
     description: str = ""
+    #: Expected alert feature values (exact JSON equality per key; lists in rule order).
+    features: dict[str, Any] = field(default_factory=dict)
+    #: Substrings every alert summary of the case must contain.
+    summary_contains: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -173,6 +177,8 @@ def _parse_tests(raw: Any, yaml_path: Path, root: Path, problems: list[str]) -> 
             "entities",
             "now",
             "description",
+            "features",
+            "summary_contains",
         }
         if unknown:
             problems.append(f"tests[{i}] has unknown keys: {sorted(unknown)}")
@@ -214,6 +220,20 @@ def _parse_tests(raw: Any, yaml_path: Path, root: Path, problems: list[str]) -> 
         if not isinstance(entities, dict) or not all(isinstance(v, str) for v in entities.values()):
             problems.append(f"tests[{i}].entities must map strings to strings")
             continue
+        features = item.get("features") or {}
+        if not isinstance(features, dict) or not all(
+            isinstance(k, str) and _is_feature_value(v) for k, v in features.items()
+        ):
+            problems.append(f"tests[{i}].features must map names to scalars or scalar lists")
+            continue
+        summary_raw = item.get("summary_contains") or []
+        if isinstance(summary_raw, str):
+            summary_raw = [summary_raw]
+        if not isinstance(summary_raw, list) or not all(
+            isinstance(x, str) and x for x in summary_raw
+        ):
+            problems.append(f"tests[{i}].summary_contains must be a string or list of strings")
+            continue
         now_raw = item.get("now")
         now: datetime | None = None
         if now_raw is not None:
@@ -240,9 +260,18 @@ def _parse_tests(raw: Any, yaml_path: Path, root: Path, problems: list[str]) -> 
                 entities={str(k): str(v) for k, v in entities.items()},
                 now=now,
                 description=str(item.get("description") or ""),
+                features=dict(features),
+                summary_contains=tuple(summary_raw),
             )
         )
     return cases
+
+
+def _is_feature_value(value: Any) -> bool:
+    scalar = (str, int, float, bool)
+    if value is None or isinstance(value, scalar):
+        return True
+    return isinstance(value, list) and all(isinstance(v, scalar) for v in value)
 
 
 def load_rule_file(yaml_path: Path, root: Path) -> tuple[LoadedRule | None, list[RuleProblem]]:

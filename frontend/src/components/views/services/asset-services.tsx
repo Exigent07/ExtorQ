@@ -8,6 +8,7 @@ import type { AssetServicesResponse } from "@/lib/api/schemas";
 import { formatCount } from "@/lib/format";
 import { groupServices, SERVICE_GROUPS, serviceKindLabel } from "@/lib/services";
 
+import { HostedServicesPanel } from "./hosted-services";
 import { ServicesTable } from "./services-table";
 
 /** True when the API answered 404 because the service endpoints are not deployed yet. */
@@ -44,10 +45,12 @@ export function AssetServices({
   }
   if (!result.ok) return <ErrorState what="the services of this asset" error={result.error} />;
 
-  const { items, summary } = result.data;
+  const { items, summary, hosted, hosted_truncated: hostedTruncated } = result.data;
   const c = summary.coverage;
   const groups = groupServices(items);
   const isCluster = assetType === "kubernetes_cluster";
+  const hostedPanel =
+    hosted.length > 0 ? <HostedServicesPanel hosted={hosted} truncated={hostedTruncated} assetType={assetType} now={now} /> : null;
   const removedToggle =
     summary.removed > 0 ? (
       <Link
@@ -61,6 +64,19 @@ export function AssetServices({
     ) : null;
 
   if (!summary.reported && items.length === 0) {
+    if (hostedPanel) {
+      // A Kubernetes node: no service of its own is reported (workloads and Kubernetes
+      // Services belong to the cluster), but the Pods scheduled on it are known.
+      return (
+        <div className="grid gap-6">
+          {hostedPanel}
+          <p className="text-xs text-muted-foreground">
+            No host service is reported for this asset itself: node-level discovery (kubelet, container runtime) is not
+            collected, so its own services are unknown, not absent.
+          </p>
+        </div>
+      );
+    }
     return (
       <EmptyState>
         Service discovery has not reported for this asset yet, so its services are unknown (not absent). Discovery lists
@@ -135,6 +151,7 @@ export function AssetServices({
           );
         })
       )}
+      {hostedPanel}
       {isCluster ? (
         <p className="text-xs text-muted-foreground">
           Nodes are assets of their own (Overview tab). Pods and containers are instances: open a workload to see them with

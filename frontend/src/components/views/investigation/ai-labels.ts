@@ -18,6 +18,16 @@ export const QUESTION_LABEL: Record<string, string> = {
   privilege_escalation_attempt: "Attempt to obtain elevated privileges",
 };
 
+/** Jev answer types (extorq.ai.jev QuestionSpec.kind): "noul" is a yes/no probability. */
+export const QUESTION_TYPE_LABEL: Record<string, string> = {
+  noul: "Yes/no",
+  choice: "Choice",
+};
+
+export function questionTypeLabel(type: string): string {
+  return QUESTION_TYPE_LABEL[type] ?? type;
+}
+
 export const AI_STATUS_TEXT: Record<string, string> = {
   ok: "Completed",
   insufficient_context: "The provider judged the context insufficient",

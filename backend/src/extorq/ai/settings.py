@@ -105,6 +105,16 @@ class AISettings(BaseSettings):
     ai_worker_max_failed_attempts: int = Field(default=3, ge=1, le=10)
     ai_worker_retry_backoff_seconds: int = Field(default=600, ge=0, le=86_400)
     ai_worker_max_context_age_hours: int = Field(default=72, ge=1, le=720)
+    #: Contexts examined per cycle while looking for ``ai_worker_batch_size`` usable ones:
+    #: unreadable contexts are skipped and the queue is paged past them.
+    ai_worker_max_scan_per_cycle: int = Field(default=50, ge=1, le=1_000)
+    #: A paid result whose write failed is kept in memory and only the write is retried, with
+    #: exponential backoff from the base to the max delay; new provider calls pause meanwhile.
+    ai_worker_write_retry_base_seconds: int = Field(default=15, ge=1, le=3_600)
+    ai_worker_write_retry_max_seconds: int = Field(default=600, ge=1, le=86_400)
+    #: After this many failed writes the result is dropped (logged, counted in health) and that
+    #: context is never sent to the provider again by this process.
+    ai_worker_write_max_attempts: int = Field(default=12, ge=1, le=1_000)
 
 
 class KeyState(StrEnum):

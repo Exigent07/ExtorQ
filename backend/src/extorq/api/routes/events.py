@@ -13,7 +13,7 @@ from extorq.api import service
 from extorq.api.auth import CurrentPrincipal
 from extorq.api.errors import ApiError, NotFound
 from extorq.api.logs import get_logger
-from extorq.api.repository import EventFilters
+from extorq.api.repository import EventFilters, Repository
 from extorq.api.routes.common import (
     EVENT_TYPE_PATTERN,
     EVENT_TYPE_PREFIX_PATTERN,
@@ -37,6 +37,14 @@ router = APIRouter(tags=["events"])
 
 MAX_EVENT_PAGE = 500
 CITING_ALERTS_LIMIT = 100
+
+
+def _service_scope(repo: Repository, service_id: str | None) -> str:
+    """Owning asset of a known service ("" for no filter or an unknown service)."""
+    if not service_id:
+        return ""
+    owner = repo.get_service(service_id)
+    return str(owner["asset_id"]) if owner else ""
 
 
 @router.get(
@@ -96,6 +104,8 @@ def list_events(
         src_ip=normalise_ip(src_ip),
         simulation_run_id=simulation_run_id or "",
         service_id=service_id or "",
+        # F-19: events attributed to a known service count only on its own asset subtree.
+        scope_asset=_service_scope(repo, service_id),
     )
     rows = repo.list_events(filters, limit + 1, offset)
     has_more = len(rows) > limit

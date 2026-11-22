@@ -5259,6 +5259,11 @@
             "type": "integer",
             "title": "Collectors Stale"
           },
+          "collectors_inherited": {
+            "type": "integer",
+            "title": "Collectors Inherited",
+            "default": 0
+          },
           "coverage_status": {
             "type": "string",
             "enum": [
@@ -5409,6 +5414,11 @@
             "type": "integer",
             "title": "Collectors Stale"
           },
+          "collectors_inherited": {
+            "type": "integer",
+            "title": "Collectors Inherited",
+            "default": 0
+          },
           "coverage_status": {
             "type": "string",
             "enum": [
@@ -5500,6 +5510,18 @@
             "type": "integer",
             "title": "Invalid Records",
             "default": 0
+          },
+          "hosted": {
+            "items": {
+              "$ref": "#/components/schemas/HostedService"
+            },
+            "type": "array",
+            "title": "Hosted"
+          },
+          "hosted_truncated": {
+            "type": "boolean",
+            "title": "Hosted Truncated",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -8200,6 +8222,33 @@
           "unknown"
         ],
         "title": "HealthStatus"
+      },
+      "HostedService": {
+        "properties": {
+          "service": {
+            "$ref": "#/components/schemas/ServiceListItem"
+          },
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceInstanceItem"
+            },
+            "type": "array",
+            "title": "Instances"
+          },
+          "instances_on_asset": {
+            "type": "integer",
+            "title": "Instances On Asset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service",
+          "instances",
+          "instances_on_asset"
+        ],
+        "title": "HostedService",
+        "description": "A service of an ANCESTOR asset with present instances on this asset.\n\nExample: a cluster workload (``k8s_workload`` of ``k8s:<cluster>``) whose Pods and\ncontainers run on the node ``k8s:<cluster>/node/<name>``. Only instances whose\n``asset_id`` is this asset are listed, and only services whose asset is an ancestor of\nit are accepted (an instance cannot attach itself to another asset's service)."
       },
       "HttpInfo": {
         "properties": {

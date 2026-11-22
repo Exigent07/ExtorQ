@@ -16,6 +16,7 @@ import {
 } from "@/components/views/health/health-sections";
 import type { HealthResponse } from "@/lib/api/schemas";
 import { DASH, formatCount, formatDuration } from "@/lib/format";
+import { spoolBacklog } from "@/lib/health";
 import { getHealth } from "@/lib/server/api";
 import { requireSession } from "@/lib/server/session";
 
@@ -26,9 +27,9 @@ function summarize(data: HealthResponse) {
   const stale = data.collectors.filter((c) => c.stale).length;
   const failing = data.collectors.filter((c) => c.status === "failed").length;
   const pipeline = data.pipeline.filter((p) => !p.superseded);
-  const queue = pipeline.length > 0 ? pipeline.reduce((sum, p) => sum + p.queue_depth, 0) : null;
-  const ages = pipeline.map((p) => p.oldest_queued_age_seconds).filter((a): a is number => typeof a === "number");
-  const oldest = ages.length > 0 ? Math.max(...ages) : null;
+  // One shared spool: gateway and writer report the same depth (not summed); other
+  // components' queues (detector backlog, AI triage) are not ingestion.
+  const { depth: queue, oldestSeconds: oldest } = spoolBacklog(data.pipeline);
   const ruleFailures = data.rules.reduce((sum, r) => sum + (r.last_run?.failures_24h ?? 0), 0);
   return { collectorsOk, stale, failing, queue, oldest, ruleFailures, pipelineCount: pipeline.length };
 }
@@ -41,7 +42,7 @@ function finding(data: HealthResponse): string {
       ? "no collector has reported"
       : `${formatCount(s.collectorsOk)} of ${formatCount(data.collectors.length)} collectors healthy and fresh`,
   );
-  if (s.queue !== null) parts.push(`ingestion queue ${formatCount(s.queue)}`);
+  if (s.queue !== null) parts.push(`${formatCount(s.queue)} record${s.queue === 1 ? "" : "s"} in the ingestion spool`);
   if (data.ingest) parts.push(`${formatCount(data.ingest.quarantined_records)} quarantined in ${data.ingest.window_hours} h`);
   parts.push(`${formatCount(s.ruleFailures)} rule failure${s.ruleFailures === 1 ? "" : "s"} in 24 h`);
   return parts.join(" · ");
@@ -84,9 +85,14 @@ export default async function HealthPage() {
             sub: `${formatCount(s.stale)} stale · ${formatCount(s.failing)} failed`,
           },
           {
-            label: "Ingestion queue",
+            label: "Ingestion spool",
             value: <span className="font-mono">{s.queue === null ? DASH : formatCount(s.queue)}</span>,
-            sub: s.oldest === null ? "oldest record: none queued" : `oldest record ${formatDuration(s.oldest)}`,
+            sub:
+              s.queue === null
+                ? "no current gateway or writer report"
+                : s.oldest === null
+                  ? "records queued; oldest: none"
+                  : `records queued; oldest ${formatDuration(s.oldest)}`,
           },
           {
             label: "Quarantined",

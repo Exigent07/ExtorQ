@@ -1,5 +1,5 @@
 rule_id: K8S-002
-version: 1.0.0
+version: 1.1.0
 title: Risky RBAC grant in Kubernetes
 description: >-
   A Role, ClusterRole, RoleBinding or ClusterRoleBinding was created or changed so that it
@@ -8,7 +8,9 @@ description: >-
   system:unauthenticated, system:authenticated, all service accounts, default service
   accounts). Evidence comes from the kube-apiserver audit log (successful write, actor
   known) and/or the API inventory diff (resulting object state); both use the same risk
-  vocabulary, and agreement of the two sources raises confidence to high.
+  vocabulary, and agreement of the two sources raises confidence to high. Annotation-only
+  writes and the documented kubeadm bootstrap objects created at cluster birth by the
+  bootstrap identity are not alerted (narrow, documented baseline exception).
 severity: high
 status: stable
 mitre_techniques: [T1098, T1078.004]
@@ -45,12 +47,35 @@ params:
   excluded_users:
     - system:serviceaccount:kube-system:clusterrole-aggregation-controller
     - system:apiserver
+  # Metadata-only writes (B2 normaliser: attributes.metadata_only_change and
+  # metadata_fields_changed) whose changed fields are ALL listed here do not change what an
+  # RBAC object grants. labels are deliberately absent: they drive ClusterRole aggregation
+  # (aggregate-to-*), so a label-only patch can grant privileges.
+  ignorable_metadata_fields: [annotations]
+  # Documented platform-bootstrap exception (kubeadm init; docs/detection-catalog.md).
+  # Every condition must hold; there is no name-prefix allowlist.
+  bootstrap_users: [kubernetes-super-admin, kubernetes-admin]
+  # Bootstrap window around the cluster birth (system:apiserver creating kube-system).
+  bootstrap_window_seconds: 600
+  # kubeadm may create cluster-scoped bindings a moment before the API server's namespace
+  # bootstrap finishes (live: 86 ms earlier).
+  bootstrap_lead_seconds: 60
+  # kind|namespace|name|roleRef|sorted subjects, exactly as kubeadm creates them.
+  bootstrap_objects:
+    - "clusterrolebindings||kubeadm:cluster-admins|ClusterRole/cluster-admin|Group:kubeadm:cluster-admins"
+    - "rolebindings|kube-public|kubeadm:bootstrap-signer-clusterinfo|Role/kubeadm:bootstrap-signer-clusterinfo|User:system:anonymous"
 false_positives:
   - Installing operators or Helm charts that legitimately ship cluster-admin bindings or
     wildcard ClusterRoles (review the actor and the chart provenance).
   - Administrators granting temporary elevated access during an incident or upgrade.
   - Re-applying an unchanged risky object produces an update event with the same risk
     signature; it extends the existing alert instead of creating a new one.
+  - >-
+    Observed live (2026-11-21): kubeadm's own bootstrap bindings (kubeadm:cluster-admins,
+    kube-public/kubeadm:bootstrap-signer-clusterinfo) alerted at cluster creation, and the
+    lab's kubectl annotate marking them as accepted risks alerted again as patches. v1.1.0
+    excepts exactly these two creates at cluster birth by the bootstrap identity, and
+    annotation-only writes; any other write to them still alerts.
 blind_spots:
   - Privileges obtained without touching RBAC objects (e.g. stolen tokens of an existing
     privileged service account, node credentials) are out of scope.
@@ -61,13 +86,21 @@ blind_spots:
     triggering label change on the source role is visible only if that role is itself risky.
   - Without the audit source (missing_sources) the actor is unknown and only the state
     diff is evaluated (confidence medium).
+  - >-
+    Bootstrap exception: an actor holding kubeadm's bootstrap credentials during the first
+    10 minutes after the cluster's birth who creates exactly the two documented kubeadm
+    objects (same names, roleRefs and subjects) is not alerted; those objects grant nothing
+    beyond what kubeadm grants by design, and the posture scan still reports them.
+  - >-
+    Annotation-only writes are trusted on B2's normaliser classification of the request
+    body (metadata_only_change); a write without that attribute is evaluated normally.
 references:
   - https://kubernetes.io/docs/concepts/security/rbac-good-practices/
   - https://attack.mitre.org/techniques/T1098/
 query: K8S-002.sql
 summary_template: >-
-  Risky RBAC {kind} {namespace}/{name} on {asset_id}: flags {risk_flags}; role_ref
-  {role_ref}; subjects {subjects}; actor(s) {actors}; sources {sources}
+  Risky RBAC {kind} {object_ref} on {asset_id}: flags {risk_flags}; role_ref {role_ref};
+  subjects {subjects}; actor(s) {actors}; sources {sources}
 tests:
   - name: crb-patch-binds-authenticated
     description: Real audit record (B2 capture) patching a ClusterRoleBinding to system:authenticated.
@@ -75,6 +108,11 @@ tests:
     expect: alert
     alerts: 1
     confidence: medium
+    features:
+      scope: cluster-scoped
+      object_ref: b2-fixture-crb (cluster-scoped)
+      documented_bootstrap_object: false
+    summary_contains: "Risky RBAC clusterrolebindings b2-fixture-crb (cluster-scoped) on k8s:extorq-lab"
   - name: role-wildcard-create
     description: Real audit record creating a Role with a full wildcard rule.
     fixture: tests/K8S-002/positive_role_wildcard.jsonl
@@ -98,3 +136,81 @@ tests:
     description: Synthetic inventory diff of a read-only Role (no risky flags) and a baseline snapshot.
     fixture: tests/K8S-002/negative_benign_state.jsonl
     expect: no_alert
+  - name: kubeadm-bootstrap-live-records
+    description: >-
+      Real records of the lab cluster's birth (2026-11-21 10:16Z, exported from ClickHouse):
+      system:apiserver creates kube-system, kubeadm's admin.conf is refused (403), the
+      super-admin creates kubeadm:cluster-admins and the admin creates the anonymous
+      cluster-info RoleBinding. Documented bootstrap: no alert.
+    fixture: tests/K8S-002/negative_kubeadm_bootstrap_live.jsonl
+    expect: no_alert
+  - name: annotation-only-patch
+    description: >-
+      Real audit record (B2 capture, current normaliser): kubectl annotate of
+      kubeadm:cluster-admins at 14:55Z (metadata_fields_changed = [annotations]).
+    fixture: tests/K8S-002/negative_annotation_only_patch.jsonl
+    expect: no_alert
+  - name: bootstrap-exception-conditions-not-met
+    description: >-
+      Variants of the live bootstrap records (synthetic, reshaped from B2's captures and
+      normalised by B2's code) around the observed cluster birth, each missing one
+      condition: the documented binding created 15 minutes after the birth, a look-alike
+      name (kubeadm:cluster-admin) by the super-admin inside the window, and the documented
+      anonymous RoleBinding created inside the window by a workload service account.
+    fixture: tests/K8S-002/positive_bootstrap_exception_not_met.jsonl
+    expect: alert
+    alerts: 3
+    confidence: medium
+  - name: bootstrap-content-differs
+    description: >-
+      kubeadm:cluster-admins created by the super-admin 80 ms before the birth record (as
+      live) but with an extra subject (User:mallory): the grant is not the documented one.
+    fixture: tests/K8S-002/positive_bootstrap_content_differs.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      subjects: ["Group:kubeadm:cluster-admins", "User:mallory"]
+      documented_bootstrap_object: true
+  - name: kubeadm-create-without-observed-birth
+    description: >-
+      The live super-admin create of kubeadm:cluster-admins without the cluster-birth record
+      (ExtorQ attached after the cluster existed): the exception cannot be established, so
+      the create alerts (fail closed).
+    fixture: tests/K8S-002/positive_kubeadm_create_no_birth.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      documented_bootstrap_object: true
+      object_ref: kubeadm:cluster-admins (cluster-scoped)
+      actors: [kubernetes-super-admin]
+    summary_contains: "kubeadm:cluster-admins (cluster-scoped)"
+  - name: label-only-patch-stays-in-scope
+    description: >-
+      B2's captured kubectl patch reshaped (synthetic) into a label-only patch
+      (metadata_fields_changed = [labels]): labels drive ClusterRole aggregation, so it alerts.
+    fixture: tests/K8S-002/positive_label_only_patch.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: bootstrap-state-view-of-excepted-create
+    description: >-
+      The genuine birth records plus the inventory's (synthetic) non-baseline view of
+      kubeadm:cluster-admins with the documented content: excepted together with the
+      audit create it mirrors. No alert.
+    fixture: tests/K8S-002/negative_kubeadm_bootstrap_with_state.jsonl
+    expect: no_alert
+  - name: bootstrap-state-without-audit-create
+    description: >-
+      The birth record and the inventory view of kubeadm:cluster-admins, but no audit create
+      that proves the bootstrap identity: the state row alone is never excepted (fails
+      closed). One alert from the state source.
+    fixture: tests/K8S-002/positive_kubeadm_state_without_audit_create.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      sources: [state]
+      documented_bootstrap_object: true
+

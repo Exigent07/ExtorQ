@@ -328,6 +328,73 @@ def test_workloads_services_and_instances_use_shared_identities() -> None:
     assert pod.asset_id == "k8s:extorq-lab/node/extorq-lab-control-plane"
 
 
+PENDING_UID = "00000000-0000-4000-8000-0000000000a1"  # synthetic uid of the derived pod
+
+
+def pending_pod() -> dict[str, Any]:
+    """The real lab-portal pod as the scheduler first sees it: no node yet (derived)."""
+    pod = copy.deepcopy(
+        next(p for p in real_view()["Pod"] if p["metadata"]["name"].startswith("lab-portal-"))
+    )
+    pod["metadata"]["uid"] = PENDING_UID
+    pod["metadata"]["name"] = "lab-portal-pending-test"
+    pod["spec"].pop("nodeName", None)
+    pod["status"] = {"phase": "Pending", "qosClass": pod["status"].get("qosClass")}
+    return pod
+
+
+def test_unscheduled_pod_instance_is_attributed_to_the_cluster_asset() -> None:
+    view = real_view()
+    view["Pod"].append({**pending_pod(), "kind": "Pod"})
+    h = hierarchy(view)
+    sid = workload_service_id("extorq-apps", "Deployment", "lab-portal")
+    pending = h.instances[pod_instance_id(sid, PENDING_UID)]
+    assert pending.asset_id == "k8s:extorq-lab"  # A-IC-2: never None, never a guessed node
+    assert pending.node_name is None and pending.state == "pending"
+    assert pending.attributes["asset_scope"] == "cluster"
+    assert pending.attributes["scheduled"] is False
+    assert not [i for i in h.instances.values() if i.parent_instance_id == pending.instance_id]
+    scheduled = h.instances[pod_instance_id(sid, "f1e96337-4cff-459a-9d1c-8e28b7a747f5")]
+    assert scheduled.asset_id == "k8s:extorq-lab/node/extorq-lab-control-plane"
+    assert "asset_scope" not in scheduled.attributes  # scheduled instances keep their form
+    assert all(i.asset_id for i in h.instances.values())
+    assert "unscheduled pod instance attributed to the cluster asset" in h.notes
+
+
+def test_every_inventory_record_passes_the_gateway_checks(harness: Any) -> None:
+    """Records of a cycle with an unscheduled pod: none denied, none quarantined (A-IC-2)."""
+    import secrets
+
+    from extorq.ingest import processing, registry
+    from extorq_collectors.kubernetes.model import KIND_BY_NAME
+
+    collector, ctx, api, db = harness
+    api.docs[KIND_BY_NAME["Pod"].path]["items"].append(pending_pod())
+    records = run_cycle(collector, ctx, db)
+    instances = [r["data"] for r in records if r["kind"] == "service_instance"]
+    assert len(instances) == 25 and all(i["asset_id"] for i in instances)
+    producer = registry.ProducerEntry(  # as registered by scripts/bootstrap.py
+        producer_id="k8s-inventory-extorq-lab",
+        token_sha256=registry.token_digest(secrets.token_hex(16)),
+        allowed_kinds=[
+            "event",
+            "asset",
+            "inventory_item",
+            "finding",
+            "scan_run",
+            "collector_health",
+            "service",
+            "service_instance",
+        ],
+        allowed_source_types=["k8s.api_inventory", "k8s.events", "k8s.posture"],
+        allowed_asset_patterns=["k8s:extorq-lab*"],
+    )
+    batch = processing.prepare_batch(records, producer, batch_id="b" * 32, now=datetime.now(UTC))
+    assert batch.denials == []
+    assert [(q.kind, q.reason) for q in batch.quarantined] == []
+    assert len(batch.candidates) == len(records)
+
+
 def test_static_pod_instance_is_keyed_by_the_kubelet_config_hash() -> None:
     h = hierarchy()
     name = "kube-controller-manager-extorq-lab-control-plane"

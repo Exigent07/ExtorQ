@@ -10,6 +10,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 import uuid
 import zlib
 from collections.abc import Iterator
@@ -23,6 +24,7 @@ from platform_samples import (
     LINUX_ASSET,
     MACOS_ASSET,
     event_data,
+    inventory_data,
     record,
     service_data,
     service_instance_data,
@@ -322,8 +324,108 @@ def test_time_sanity_quarantines_future_and_ancient_events(gw: Harness) -> None:
     ancient = record("event", event_data("a", event_time=utc_now() - timedelta(days=401)))
     body = gw.post(batch([future, ancient, fresh_event("now")])).json()
     reasons = sorted(q["reason"] for q in body["quarantined"])
-    assert reasons == ["time: event_time_in_future", "time: event_time_too_old"]
+    assert reasons[1] == "time: event_time_in_future"
+    assert reasons[0].startswith("older_than_retention: ")
     assert body["accepted"] == 1
+
+
+def test_events_older_than_the_events_retention_are_quarantined(gw: Harness) -> None:
+    """PLAN §11: 90-400 days old used to be accepted (202) and then expired by the TTL."""
+    inside = record("event", event_data("in", event_time=utc_now() - timedelta(days=89)))
+    beyond = record("event", event_data("out", event_time=utc_now() - timedelta(days=91)))
+    body = gw.post(batch([inside, beyond])).json()
+    assert body["accepted"] == 1 and body["rejected"] == 1
+    (notice,) = body["quarantined"]
+    assert notice["index"] == 1
+    assert notice["reason"].startswith("older_than_retention: ")
+    assert "90 days" in notice["reason"]
+    (q,) = gw.rows("quarantine")
+    assert q["reason"] == notice["reason"] and q["record_kind"] == "event"
+    (stored,) = gw.rows("event")
+    assert stored["data"]["event_id"] == inside["data"]["event_id"]
+
+
+def test_retention_is_configurable_and_reported_in_status(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, event_retention_days=30)
+    with harness.client:
+        body = harness.post(
+            batch([record("event", event_data("x", event_time=utc_now() - timedelta(days=31)))])
+        ).json()
+        status = harness.client.get(
+            "/v1/status", headers={"Authorization": f"Bearer {TOKENS['linux-ssh-lab-vm-01']}"}
+        ).json()
+    harness.spool.close()
+    assert body["quarantined"][0]["reason"].startswith("older_than_retention: ")
+    assert "30 days" in body["quarantined"][0]["reason"]
+    assert status["limits"]["event_retention_days"] == 30
+    assert status["limits"]["max_future_seconds"] == 86400
+
+
+def test_retention_only_applies_to_event_time(gw: Harness) -> None:
+    """Other kinds keep their own TTL columns; only future timestamps are refused there."""
+    old = utc_now() - timedelta(days=200)
+    inventory = record(
+        "inventory_item", {**inventory_data(), "observed_at": old.isoformat(), "item_key": "old"}
+    )
+    late_observed = record(
+        "event",
+        event_data(
+            "late",
+            event_time=utc_now() - timedelta(days=1),
+            observed_time=(utc_now() - timedelta(minutes=1)).isoformat(),
+        ),
+    )
+    body = gw.post(batch([inventory, late_observed])).json()
+    assert body["accepted"] == 2 and body["rejected"] == 0
+
+
+def test_default_retention_matches_the_events_ttl() -> None:
+    """The gateway window and ``extorq.events`` TTL must never drift apart."""
+    ddl = (
+        Path(__file__).resolve().parents[3]
+        / "infra"
+        / "clickhouse"
+        / "migrations"
+        / "0001_core_tables.sql"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        r"CREATE TABLE IF NOT EXISTS extorq\.events\b.*?"
+        r"TTL toDateTime\(event_time\) \+ INTERVAL (\d+) DAY",
+        ddl,
+        re.DOTALL,
+    )
+    assert match is not None, "events TTL not found in 0001_core_tables.sql"
+    ttl_days = int(match.group(1))
+    assert Settings().event_retention_days == ttl_days
+    expected = timedelta(days=ttl_days)
+    assert expected == processing.EVENTS_RETENTION == processing.Limits().retention
+
+
+def test_json_attributes_keep_booleans_numbers_and_nulls(gw: Harness) -> None:
+    """B2-IC-2: ``"automount_sa_token":false`` used to become ``[REDACTED:secret]`` and
+    turned ``attributes.request_summary`` into invalid JSON on every pod create."""
+    summary = json.dumps(
+        {
+            "kind": "Pod",
+            "automount_sa_token": False,
+            "host_network": False,
+            "secret_volumes": 0,
+            "token_ttl": None,
+            "password": "-".join(["pw", "synthetic", "123"]),  # built at runtime
+        },
+        separators=(",", ":"),
+    )
+    rec = fresh_event("summary")
+    rec["data"]["attributes"] = {"request_summary": summary, "automount_sa_token": False}
+    body = gw.post(batch([rec])).json()
+    assert body["accepted"] == 1 and body["rejected"] == 0
+    (stored,) = gw.rows("event")
+    attributes = stored["data"]["attributes"]
+    parsed = json.loads(attributes["request_summary"])  # still valid JSON
+    assert parsed["automount_sa_token"] is False and parsed["secret_volumes"] == 0
+    assert parsed["token_ttl"] is None and parsed["password"] == "[REDACTED:secret]"
+    assert attributes["automount_sa_token"] is False
+    assert stored["data"]["provenance"]["redaction_count"] == 1
 
 
 def test_secrets_are_redacted_and_counted_before_persistence(gw: Harness) -> None:

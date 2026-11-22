@@ -3,9 +3,106 @@ STACK READY 2026-11-21T10:36:49Z - gateway https://127.0.0.1:8443 (CA var/tls/ca
 
 # Agent A status (Platform & Data)
 
+## Session 3 (2026-11-22 IST = 2026-11-21 UTC): final fixes and demo readiness - DONE
+Last update: 2026-11-21T20:39Z. All seven lead tasks done and verified (table below).
+
+### Live state left behind (for the lead and other agents)
+- Compose: clickhouse, migrate (one-shot, exit 0), ingest, writer, detector, ai-worker, api,
+  frontend, grafana all up via `make up-full` (20:35Z, exit 0 in 49 s, `--wait` healthy);
+  clickhouse-debug still up (other agents use it; stop it before the demo, F-01).
+- AI flags OFF in the running containers (ai-worker reports `disabled`, api
+  `EXTORQ_GEMINI_ENABLED=false`). `make up-demo` turns both on; NOT started by A (no AI budget).
+- Background host collectors RUNNING: `make collectors-status` -> runner pid 59404 (another
+  agent restarted it at 20:31:18Z with `make collectors-stop/start`; fine), all four `ok`,
+  outbox 0, dead 0. Stop with `make collectors-stop`; never run a second `extorq-collect run`
+  for these ids in parallel (the start script refuses to).
+- Kubernetes inventory token: ~18 h left at 20:37Z (expires ~2026-11-22T14:50Z, before the
+  demo). B2 must re-mint (`infra/kind/kind.sh token`) and then
+  `make collectors-stop collectors-start`; `make demo-check` warns below 24 h.
+
+### Done
+1. Gateway: events with `event_time < now - retention` are quarantined as
+   `older_than_retention: event_time is older than the events retention (90 days); ...`
+   (`Limits.retention`, setting `EXTORQ_EVENT_RETENTION_DAYS`, default 90 = `events` TTL; a unit
+   test parses the TTL from 0001 and fails on drift). Future check kept
+   (`time: event_time_in_future`); other kinds unchanged (own TTL columns, future check only).
+   `/v1/status` reports `limits.max_future_seconds` and `limits.event_retention_days`.
+2. Redaction (B2-IC-2): key-based rules never rewrite `true/false/null/None`; after a quoted
+   key (JSON/dict) never numbers or arrays; quoted values matched escape-aware (`"ab\"cd"`
+   used to leak `cd`); numeric `"authorization": 123` no longer eats the closing `}`. Literal
+   exemption also for `FOO_TOKEN=false`. Free-text numbers stay candidates (`password=123456`).
+3. SDK: string-only config secret check with key context, error names the setting path only
+   (C1 3.1); fixed a pre-existing leak (loader embedded pydantic `str(exc)` = `input_value`, i.e.
+   the refused secret, in CLI errors); `ctx.mark_degraded(reason)` -> `degraded` + reasons in
+   `last_error`/`details.degraded_reasons`, `last_success_at` still advances (B3-IC-2, C1 3.3);
+   `ctx.committed_snapshot(name)` read-only copy (B3-IC-3). See interface-changes/A.md A-IC-4.
+4. Grafana (D1-IC-1): `var/secrets/grafana_secret_key` from `make bootstrap`;
+   `GF_SECURITY_SECRET_KEY__FILE`; grafana on a fresh `grafana-data` volume (old one held only
+   provisioned state and data keys under Grafana's public default key; backed up to a temporary
+   volume during the switch, removed after verification).
+5. Runtime: `scripts/collectors_ctl.py` + `make collectors-start|stop|status` (nohup + own
+   session, pidfile `var/run/collectors.pid`, log `var/log/collectors.log` 0600, idempotent
+   start, refuses duplicate runners, never signals a recycled pid, zombies count as dead);
+   `make up-full` = every service incl. frontend + ai-worker with `--wait` (AI off);
+   `make up-demo` = same with both AI flags true; ingest (B2-IC-1), detector (C2-IC-2), api,
+   frontend rebuilt/recreated; `scripts/demo_check.py` rewritten (see below).
+6. Ruff: no findings in A's files. Others (`uv run ruff check . --exclude frontend`):
+   14 in `lab/apps/lab-portal/app.py` (B1: E501 x3, UP032 x2, UP041 x3, RUF100 x5, S101);
+   `ruff format --check` (now also formats Markdown code blocks): `docs/correlation.md` (C2),
+   `docs/team/interface-changes/B1.md` (B1), `docs/team/interface-changes/F.md` (F),
+   `infra/vm/lib/render_cloud_init.py` (B1), `lab/apps/lab-portal/app.py` (B1).
+7. Docs: `docs/data-model.md` (contract 1.1 summary, 0005/0006, view-freezing note, retention
+   alignment, migration table), `docs/data-flow.md` (retention quarantine, JSON-safe redaction,
+   degraded status, guarantees table, demo-check), `docs/collectors.md` (config check, degraded
+   hint, committed snapshots, background runner, ruff-formatted example), `backend/AGENTS.md`.
+
+### Verified (session 3; commands and observed results)
+| Claim | Command | Result |
+|---|---|---|
+| A unit suite | `uv run pytest tests/unit/platform -q` | 194 passed (new: retention x5, JSON-safe redaction incl. a seeded 400-document property test, SDK x14, controller x11, compose/bootstrap secret consistency) |
+| security suite | `uv run pytest tests/security -q` | 296 passed, 32 deselected (gitleaks scan clean after building a synthetic test password at runtime) |
+| whole default suite | `uv run pytest -q` (20:38Z) | 1909 passed, 5 skipped, 0 failed (an earlier run had 2 failures in E's `ai/projection` and C1's `github/workflow` while they were mid-edit) |
+| live gateway (deployed code) | `uv run pytest -q -m integration tests/integration/platform` | 29 passed (new: 91-day event quarantined `older_than_retention` in `ingest_quarantine` and absent from `events`, 89-day event stored; `"automount_sa_token": false` survives in stored attributes; status reports the window) |
+| lint / types | `uv run ruff check` + `ruff format --check` on A paths; `uv run mypy` | all checks passed; mypy: no issues in 195 source files (repo-wide) |
+| B2-IC-1 | `docker exec extorq-ingest-1 python -c "...sha256(inspect.getsource(otlp_k8s))[:16]"` vs `shasum -a 256 backend/src/extorq/ingest/otlp_k8s.py` | `abc31d0c08efff94` == `abc31d0c08efff94` (after the 20:21Z recreate and again after `make up-full`) |
+| B2-IC-2 live | ClickHouse: events with `attributes.request_summary` in the last 30 min | 2 of 2 valid JSON |
+| no real traffic quarantined by the changes | `ingest_quarantine` last hour, grouped by producer/reason | only A's 2 synthetic integration probes |
+| bootstrap idempotent | `python3 scripts/bootstrap.py` | created=1 (grafana_secret_key, 0600, 43 chars) kept=5; tokens/registry/TLS kept |
+| Grafana with the new key | recreate + scratch probe (admin password read from file, never printed) | healthy in 7 s; 0 `level=error` lines; datasource "Data source is working"; query returns rows; 5 provisioned dashboards |
+| background collectors | `make collectors-start`; ClickHouse `v_collector_latest` | all four `ok`, last_success 14-21 s; `collectors-start` twice -> "already running"; `make collectors-stop` -> stopped in ~1 s (SIGTERM handled, `collectors_stop_requested` logged) |
+| `make up-full` | `make up-full` (20:35Z) | exit 0 in 48.6 s; migrate `already_applied` 0001-0006, `passwords_synced` 7; every service healthy/running |
+| `make up-demo` renders AI on | `EXTORQ_JEV_ENABLED=true EXTORQ_GEMINI_ENABLED=true docker compose --profile full config` (and `make -n up-demo`) | both flags `"true"`; default rendering both `"false"` (not started) |
+| detector on C2's code, rule runs flow | `docker logs extorq-detector-1`; demo-check rules section | late-data catch-up ran, 0 alerts duplicated; every rule ran <= 26 s before the check, 0 failed in 24 h, no missing sources |
+| readiness | `uv run python scripts/demo_check.py` (20:37Z) | exit 0 `DEMO READY`; warnings: debug proxy running, k8s token ~18 h; scenarios VM-001 76fec91ab730 (23/23 evidence stored), VM-002 5ac7d8f5a069 (3/3), K8S-001 cfbff55664cf (1/1), K8S-002 afc76864b420 (2/2), GH-001 e70639259d30 (1/1), 0 synthetic |
+| readiness without the debug proxy | `EXTORQ_CLICKHOUSE_PORT=1 uv run python scripts/demo_check.py` | queries ran inside the api container as api_ro; exit 0 |
+
+### Not verified (session 3)
+- `make up-demo` with AI actually ON (no live AI budget for A): only the rendered config.
+- Failure-injection suite (`make test-failure`) not re-run: it stops shared services, and the
+  pipeline code (spool/writer/sender) did not change this session.
+- Collector behaviour across a k8s token expiry (B2 re-mints before the demo).
+- B3/C1 adoption of `mark_degraded` / `committed_snapshot` (their code; A-IC-4 describes it).
+
+## Session 2 history
 Last update: 2026-11-21T15:15Z (session 2)
 
 ## Outage log (shared stack)
+- 2026-11-21T20:35Z: `make up-full` end-to-end verification (rebuilds backend/frontend/grafana images from
+  the current tree, re-runs `migrate`, recreates changed services; seconds per service).
+- 2026-11-21T20:26Z: backend image rebuilt with C2's current detection code (rules validate: 9 valid, 0
+  problems; `tests/unit/detection` + `tests/unit/correlation` 75 passed) and `detector` recreated
+  (C2-IC-2). C2 may recreate it again when its session-3 work lands (last writer wins).
+- 2026-11-21T20:26Z: `api` recreated on the 20:21Z backend image (D's tree at that time; `tests/unit/api`
+  green), `ai-worker` started (AI flags OFF: reports `disabled`, no provider calls), `frontend`
+  started from a fresh `frontend/Dockerfile` build (image a1ad98a6fa52). Seconds of API outage.
+- 2026-11-21T20:23Z: `grafana` recreated with `GF_SECURITY_SECRET_KEY__FILE` (D1-IC-1) on a FRESH
+  `grafana-data` volume (the old one only held provisioned state: 5 provisioned dashboards,
+  1 read-only provisioned datasource, admin user, 0 annotations; its data keys were encrypted
+  under Grafana's public default key). ~1 min Grafana outage.
+- 2026-11-21T20:20Z (session 3): building extorq/backend:0.1.0 from the current tree, then recreating
+  `ingest` + `writer` (seconds; collectors buffer and retry). `detector` NOT recreated while
+  `uv run extorq rules validate` fails on C2's in-progress VM-002 (missing fixture): C2 recreates
+  it when ready (or A does once rules validate). `api` follows after its unit tests pass.
 - 2026-11-21T15:10:56Z: compose `api` (profile full) started on 127.0.0.1:8000 for verification
   and left running (read-only API; AI providers disabled). No other service touched.
 - 2026-11-21T15:08:07Z-15:08:40Z: `make up` redeploy of migrate/ingest/writer (F-19 identity
@@ -37,7 +134,7 @@ Last update: 2026-11-21T15:15Z (session 2)
 - ClickHouse from the Mac: `extorq.storage.clickhouse.get_client("<role>")` (roles admin,
   ingest, detect, rules_ro, ai, api_ro, api_writer, grafana; password files
   `var/secrets/clickhouse/<user>_password`; default 127.0.0.1:18123). DateTime64 values come
-  back as naive datetimes that are UTC. Migrations applied live: 0001-0005.
+  back as naive datetimes that are UTC. Migrations applied live: 0001-0006.
 
 ### Producers (var/secrets/producers.json, `make bootstrap`)
 | producer | kinds | source types | assets |
@@ -75,6 +172,10 @@ class LinuxSSHCollector(Collector):
   transaction; Service/ServiceInstance models are accepted. Snapshots advance only with an emit
   (discarded after a failed cycle).
 - `uv run extorq-collect run|status|flush [--requeue-dead]`; state `var/collectors/<id>/state.db`.
+  Continuous: `make collectors-start|stop|status` (one background runner, session 3).
+- Session 3: `ctx.mark_degraded(reason)` (partial success -> `degraded`) and
+  `ctx.committed_snapshot(name)` (read-only copy of the last commit); config secret check
+  looks at string settings only (A-IC-4).
 - Delivery at least once; 401 and systemic 400/404/405/415/422 stay buffered (A-IC-3); 403
   bisects so only unauthorized records are dead-lettered.
 - sim-record: exit 0 delivered, 75 buffered locally (delivered by next sim-record/flush), 2 invalid.

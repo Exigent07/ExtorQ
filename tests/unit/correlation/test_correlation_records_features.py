@@ -212,3 +212,80 @@ def test_features_are_deterministic_and_bounded():
     assert a == b
     assert len(a["http_probe_routes"]) == 10
     assert len(a) <= 64
+
+
+def _audit_hit(seconds, path, syscall, nametype, *, success=True, exe="/usr/bin/tee", paths=None):
+    """auditd watch hit shaped like B1's parser output (SYNTHETIC)."""
+    items = paths or (
+        [f"NORMAL:{path}"]
+        if nametype == "NORMAL"
+        else ["PARENT:/etc/systemd/system/", f"{nametype}:{path}"]
+    )
+    return ev(
+        "file.audit.watch",
+        seconds,
+        source_type="linux.auditd",
+        outcome="success" if success else "failure",
+        resource_path=path,
+        process_executable=exe,
+        attributes={
+            "audit_key": "extorq_systemd",
+            "syscall": syscall,
+            "success": success,
+            "nametype": nametype,
+            "paths": items,
+        },
+    )
+
+
+def test_persistence_context_counts_only_create_or_modify_hits_as_corroboration():
+    unit = "/etc/systemd/system/beacon.service"
+    created = ev(
+        "persistence.systemd.unit_created",
+        40,
+        source_type="linux.inventory",
+        outcome="success",
+        resource_path=unit,
+        resource_name="beacon.service",
+    )
+    cleanup = _audit_hit(900, unit, "unlinkat", "DELETE", exe="/usr/bin/rm")
+    failed = _audit_hit(10, unit, "openat", "NORMAL", success=False)
+    xattr = _audit_hit(11, unit, "fsetxattr", "NORMAL", exe="/usr/bin/install")
+    f = compute_features(_alert(rule_id="VM-002"), [created], [cleanup, failed, xattr], [])
+    assert f["auditd_corroborated"] is False
+    assert f["auditd_writers"] == []
+    assert f["auditd_removals"] == 1
+
+    write = _audit_hit(0, unit, "openat", "CREATE", exe="/usr/bin/dash")
+    f = compute_features(_alert(rule_id="VM-002"), [write, created], [cleanup], [])
+    assert f["auditd_corroborated"] is True
+    assert f["auditd_writers"] == ["/usr/bin/dash"]
+    assert f["auditd_removals"] == 1
+
+
+def test_persistence_context_rename_into_place_corroborates_the_created_path():
+    unit = "/etc/systemd/system/beacon.service"
+    created = ev(
+        "persistence.systemd.unit_created",
+        40,
+        source_type="linux.inventory",
+        outcome="success",
+        resource_path=unit,
+        resource_name="beacon.service",
+    )
+    rename = _audit_hit(
+        0,
+        "/tmp/beacon.service",
+        "renameat",
+        "DELETE",
+        exe="/usr/bin/mv",
+        paths=[
+            "PARENT:/tmp/",
+            "PARENT:/etc/systemd/system/",
+            "DELETE:/tmp/beacon.service",
+            f"CREATE:{unit}",
+        ],
+    )
+    f = compute_features(_alert(rule_id="VM-002"), [created], [rename], [])
+    assert f["auditd_corroborated"] is True and f["auditd_writers"] == ["/usr/bin/mv"]
+    assert f["auditd_removals"] == 0  # the removed name (/tmp) is not a changed unit path

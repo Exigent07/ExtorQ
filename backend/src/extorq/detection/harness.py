@@ -3,8 +3,10 @@
 ``extorq rules test`` (and ``tests/rules``) use this module:
 
 1. start ``clickhouse/clickhouse-server:26.8.42.13`` as container
-   ``extorq-c2-rules-ch`` on a random 127.0.0.1 port (random throwaway admin
-   password passed through a 0600 env-file that is deleted right after start)
+   ``extorq-c2-rules-ch-<pid>-<random>`` on a random 127.0.0.1 port (random throwaway
+   admin password passed through a 0600 env-file that is deleted right after start). The
+   name is unique per run, so concurrent runs (two sessions running the suite) never touch
+   each other's container; leftovers of runs whose process is gone are removed
 2. apply ``infra/clickhouse/migrations/0001_core_tables.sql`` (and 0003 if present)
    with the official ``clickhouse-client`` inside the container
 3. create least-privilege users that mirror PLAN section 4.4: ``c2_rules_ro``
@@ -53,6 +55,8 @@ from extorq.detection.registry import LoadedRule, RuleTestCase, load_rules_repor
 IMAGE = "clickhouse/clickhouse-server:26.8.42.13"
 CONTAINER_NAME = "extorq-c2-rules-ch"
 OWNER_LABEL = "extorq.owner=c2"
+#: Label carrying the PID of the process that started the container (orphan detection).
+PID_LABEL = "extorq.harness-pid"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 #: Applied in order. 0002 (RBAC, password templating) is replaced by the c2_* users
 #: below; the roles that 0004's GRANT statements reference are created first.
@@ -167,11 +171,22 @@ def _run(args: list[str], *, timeout: float = 120, stdin: bytes | None = None) -
     return proc.stdout.decode("utf-8", "replace")
 
 
+def _process_alive(pid: int) -> bool:
+    """True if a process with ``pid`` exists on this host (signal 0 probes only)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class EphemeralClickHouse:
     """A throwaway ClickHouse server bound to 127.0.0.1 on a random port."""
 
-    def __init__(self, name: str = CONTAINER_NAME, image: str = IMAGE) -> None:
-        self.name = name
+    def __init__(self, name: str | None = None, image: str = IMAGE) -> None:
+        self.name = name or f"{CONTAINER_NAME}-{os.getpid()}-{secrets.token_hex(3)}"
         self.image = image
         self.port: int | None = None
         self._admin_password = secrets.token_urlsafe(24)
@@ -190,6 +205,11 @@ class EphemeralClickHouse:
         self.stop()
 
     def _remove_stale(self) -> None:
+        """Remove C2 harness containers whose starting process no longer exists.
+
+        Containers of live processes (another session running the suite right now) are
+        never touched; neither is anything without the C2 owner label.
+        """
         docker = _docker()
         out = _run(
             [
@@ -197,19 +217,20 @@ class EphemeralClickHouse:
                 "ps",
                 "-a",
                 "--filter",
-                f"name=^{self.name}$",
+                f"label={OWNER_LABEL}",
+                "--filter",
+                f"name=^{CONTAINER_NAME}",
                 "--format",
-                '{{.Names}} {{.Label "extorq.owner"}}',
+                '{{.Names}} {{.Label "' + PID_LABEL + '"}}',
             ]
         )
         for line in out.splitlines():
             parts = line.split()
-            if parts and parts[0] == self.name:
-                if len(parts) < 2 or parts[1] != "c2":
-                    raise HarnessError(
-                        f"container {self.name} exists but is not owned by C2; not touching it"
-                    )
-                _run([docker, "rm", "-f", self.name])
+            if not parts or not parts[0].startswith(CONTAINER_NAME):
+                continue
+            pid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            if parts[0] == self.name or (pid is not None and not _process_alive(pid)):
+                _run([docker, "rm", "-f", parts[0]])
 
     def start(self) -> None:
         docker = _docker()
@@ -230,6 +251,8 @@ class EphemeralClickHouse:
                     self.name,
                     "--label",
                     OWNER_LABEL,
+                    "--label",
+                    f"{PID_LABEL}={os.getpid()}",
                     "--env-file",
                     str(env_file),
                     "-p",
@@ -474,6 +497,22 @@ def fetch_alerts(client: ClickHouseConnectClient, rule_id: str) -> list[dict[str
     return result.dicts()
 
 
+def _feature_problems(alert: dict[str, Any], expected: dict[str, Any]) -> list[str]:
+    """Compare expected feature values with the stored alert's features (JSON text)."""
+    if not expected:
+        return []
+    raw = alert.get("features") or "{}"
+    try:
+        actual = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (TypeError, ValueError):
+        return ["alert features are not valid JSON"]
+    return [
+        f"feature {key}={actual.get(key, '<missing>')!r} != expected {value!r}"
+        for key, value in expected.items()
+        if actual.get(key, "<missing>") != value
+    ]
+
+
 def check_integrity(client: ClickHouseConnectClient, alerts: list[dict[str, Any]]) -> list[str]:
     problems: list[str] = []
     for alert in alerts:
@@ -541,6 +580,10 @@ def run_case(
                 problems.append(
                     f"entity {key}={alert['entities'].get(key)!r} != expected {value!r}"
                 )
+        problems.extend(_feature_problems(alert, case.features))
+        for text in case.summary_contains:
+            if text not in str(alert.get("summary") or ""):
+                problems.append(f"summary lacks {text!r}: {str(alert.get('summary'))[:300]!r}")
     fixture_sims = {
         m.simulation.run_id for _, m in records if isinstance(m, SecurityEvent) and m.simulation
     }

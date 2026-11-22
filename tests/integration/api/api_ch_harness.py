@@ -4,8 +4,9 @@
   publishing 8123 on a random **loopback** port only, and removes it afterwards
   (``docker rm -f``). Never touches the shared compose stack.
 * Applies the real migrations 0001 (core), the settings profiles, roles and grants of
-  0002 (RBAC; user/password/quota statements skipped), 0003 (findings lifecycle views)
-  and 0004 (service model, schema 1.1).
+  0002 (RBAC; user/password/quota statements skipped), 0003 (findings lifecycle views),
+  0004 (service model, schema 1.1), 0005 (``v_findings_current.service_id``) and 0006
+  (refreshed ``v_alerts``): the same schema the live stack runs.
 * Creates users bound to the REAL roles and settings profiles of 0002:
   ``d1_api_ro`` (extorq_role_api_ro + extorq_api_readonly), ``d1_api_writer``
   (extorq_role_api_writer) and ``d1_grafana`` (extorq_role_grafana with its column-level
@@ -135,7 +136,12 @@ class EphemeralClickHouse:
             and not statement.lstrip().upper().startswith(("CREATE QUOTA", "GRANT EXTORQ_ROLE_"))
         ]
         self.sql(";\n".join(rbac) + ";")
-        for name in ("0003_findings_views.sql", "0004_services.sql"):
+        for name in (
+            "0003_findings_views.sql",
+            "0004_services.sql",
+            "0005_findings_services.sql",
+            "0006_refresh_views.sql",
+        ):
             self.sql((MIGRATIONS / name).read_text(encoding="utf-8"))
         self.sql(
             """
@@ -340,12 +346,35 @@ def seed(admin: Any, now: datetime) -> Dataset:
         },
         attributes={},
     )
+    # F-19: another asset's producer tags its event with the VM's ssh service id. Three days
+    # old, so it stays outside every default window; scoped queries must never show it.
+    planted = _event(
+        ds,
+        "planted",
+        event_id=event_id("macos.unified_log", "macos:synthetic-01", "synthetic:planted"),
+        asset_id="macos:synthetic-01",
+        asset_type="macos_host",
+        source={
+            "source_type": "macos.unified_log",
+            "collector_id": "synthetic-macos",
+            "collector_version": "0.0.0",
+            "collection_method": "native_command",
+        },
+        event_time=n - timedelta(days=3),
+        service=ssh_ref,
+    )
     event_rows = [
         rows.event_to_row(e, producer_id=PRODUCER, batch_id=BATCH, ingested_at=n)
-        for e in (e1, e1, e2, e3, e4)
+        for e in (e1, e1, e2, e3, e4, planted)
     ]
     _insert(admin, "events", event_rows)
-    ds.event_ids = {"e1": e1.event_id, "e2": e2.event_id, "e3": e3.event_id, "e4": e4.event_id}
+    ds.event_ids = {
+        "e1": e1.event_id,
+        "e2": e2.event_id,
+        "e3": e3.event_id,
+        "e4": e4.event_id,
+        "planted": planted.event_id,
+    }
 
     # Alerts: a1 has two versions (late evidence bumped updated_at); a2 is closed later.
     def alert(
@@ -553,36 +582,77 @@ def seed(admin: Any, now: datetime) -> Dataset:
         [rows.scan_run_to_row(s, producer_id=PRODUCER, ingested_at=n) for s in scans],
     )
 
+    # A second scanner/scope (two succeeded scans) carries the service-attribution cases.
+    posture_scope = scope_hash(["/etc"], "synthetic posture")
+    posture_scans = [
+        ScanRun(
+            scan_run_id=stable_id("scan.synthetic-posture", idx),
+            scanner="synthetic-posture",
+            scanner_version="0.0.0",
+            asset_id=ds.linux,
+            scope={"targets": ["/etc"], "description": "synthetic", "scope_hash": posture_scope},
+            started_at=started,
+            finished_at=started + timedelta(minutes=1),
+            status="succeeded",
+            producer_id="scanner-runner",
+        )
+        for idx, started in enumerate((n - timedelta(hours=2), n - timedelta(hours=1)))
+    ]
+    _insert(
+        admin,
+        "scan_runs",
+        [rows.scan_run_to_row(s, producer_id=PRODUCER, ingested_at=n) for s in posture_scans],
+    )
+
     def finding(
-        check: str, scan: ScanRun, severity: str, service: str | None = None
+        check: str,
+        scan: ScanRun,
+        severity: str,
+        service: str | None = None,
+        scanner: str = "trivy",
     ) -> PostureFinding:
         return PostureFinding(
-            finding_id=finding_id(ds.linux, "trivy", check, "openssh-server"),
+            finding_id=finding_id(ds.linux, scanner, check, "openssh-server"),
             scan_run_id=scan.scan_run_id,
             asset_id=ds.linux,
-            scanner="trivy",
+            scanner=scanner,
             check_id=check,
-            category="vulnerability",
+            category="vulnerability" if scanner == "trivy" else "misconfiguration",
             severity=severity,
             title=f"synthetic {check}",
             observed_at=scan.started_at + timedelta(seconds=30),
-            cve_ids=[check],
+            cve_ids=[check] if scanner == "trivy" else [],
             service_id=service,
         )
 
+    ssh, ftp = ds.service_ids["ssh"], ds.service_ids["ftp"]
     f_old = finding("CVE-0000-0001", scans[0], "medium")
-    # The first observation is attributed, the latest is not: attribution must survive.
-    f_open_1 = finding("CVE-0000-0002", scans[0], "critical", ds.service_ids["ssh"])
+    # "cleared": the first observation is attributed to ssh, the LATEST is not. Attribution
+    # is evidence of the latest scan (v_findings_current.service_id): the link is cleared.
+    f_open_1 = finding("CVE-0000-0002", scans[0], "critical", ssh)
     f_open_2 = finding("CVE-0000-0002", scans[1], "critical")
+    posture = "synthetic-posture"
+    gained, moved = "synthetic.check.gained", "synthetic.check.moved"
+    # "gained": unattributed first, attributed to ssh by the latest scan.
+    f_gained_1 = finding(gained, posture_scans[0], "low", None, posture)
+    f_gained_2 = finding(gained, posture_scans[1], "low", ssh, posture)
+    # "moved": attributed to ssh first, to ftp by the latest scan (latest wins).
+    f_moved_1 = finding(moved, posture_scans[0], "low", ssh, posture)
+    f_moved_2 = finding(moved, posture_scans[1], "low", ftp, posture)
     _insert(
         admin,
         "finding_observations",
         [
             rows.finding_to_row(f, producer_id=PRODUCER, ingested_at=n)
-            for f in (f_old, f_open_1, f_open_2)
+            for f in (f_old, f_open_1, f_open_2, f_gained_1, f_gained_2, f_moved_1, f_moved_2)
         ],
     )
-    ds.finding_ids = {"resolved": f_old.finding_id, "open": f_open_1.finding_id}
+    ds.finding_ids = {
+        "resolved": f_old.finding_id,
+        "open": f_open_1.finding_id,
+        "gained": f_gained_1.finding_id,
+        "moved": f_moved_1.finding_id,
+    }
 
     # AI assessments (E's row format) and ingest boundary records.
     _insert(
@@ -704,6 +774,8 @@ def _seed_services(admin: Any, ds: Dataset) -> None:
         instance(ssh_id, "process", "pid:100", asset_id=ds.linux, pid=100, process_name="sshd",
                  user="root"),
         instance(ssh_id, "process", "pid:7", asset_id=ds.linux, pid=7, present=False),
+        # F-19: an instance on the GitHub asset naming the VM's ssh service (planted).
+        instance(ssh_id, "process", "pid:666", asset_id=ds.github, pid=666, process_name="sshd"),
         instance(workload_id, "pod", "synthetic-pod-uid", asset_id=ds.k8s_node,
                  namespace="extorq-apps", pod_name="lab-portal-0", pod_uid="synthetic-pod-uid",
                  node_name="extorq-lab-control-plane", workload_kind="Deployment",

@@ -155,8 +155,12 @@ class Settings(ExtorQBaseSettings):
     tls_key_file: Path = Path("var/tls/gateway.key")
     tls_ca_file: Path = Path("var/tls/ca.crt")
     producers_file: Path = Path("var/secrets/producers.json")
+    #: Events (and other records' timestamps) further in the future are quarantined.
     event_max_future_seconds: int = 86400
-    event_max_age_days: int = 400
+    #: Events older than this are quarantined as ``older_than_retention`` (PLAN §11): it must
+    #: equal the ``events`` TTL (``0001_core_tables.sql``: ``event_time + INTERVAL 90 DAY``),
+    #: otherwise the gateway would answer 202 for rows ClickHouse expires right away.
+    event_retention_days: int = Field(default=90, ge=1, le=3650)
     #: Maximum authenticated-request audit rows per minute for 401s (anti-flood).
     unauthenticated_audit_per_minute: int = 60
 

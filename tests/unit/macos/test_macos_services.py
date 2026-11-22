@@ -1,7 +1,9 @@
-"""Service discovery, adapter matching and coverage over a real, consistent host snapshot.
+"""Service discovery, adapter matching and coverage over one consistent host snapshot.
 
-services/*.txt were captured at the same moment on the reference Mac:
-``launchctl print system`` / ``gui/501``, ``ps`` and ``lsof`` (account name scrubbed).
+services/*.txt are trimmed captures from the reference Mac (``launchctl print system`` /
+``gui/501``, ``ps``, ``lsof``): Apple entries are real; every third-party entry is a
+SYNTHETIC placeholder (``com.example.thirdparty.*``, ``ExampleApp``) kept consistent across
+the four files (provenance: tests/fixtures/macos/README.md).
 """
 
 from __future__ import annotations
@@ -130,7 +132,7 @@ def test_remote_login_off_is_reported_not_hidden(discovered, src: SourceContext)
 
 
 def test_planned_adapters_via_homebrew_evidence_and_confirmed_ports(discovered, src) -> None:
-    redis = by_key(discovered, "sh.brew.redis")
+    redis = by_key(discovered, "com.example.thirdparty.redis")
     assert redis.candidate.product == "redis"
     assert redis.job is not None and redis.job.pid == 904
     ports = {(e.address, e.port, e.attribution) for e in redis.candidate.endpoints}
@@ -139,14 +141,14 @@ def test_planned_adapters_via_homebrew_evidence_and_confirmed_ports(discovered, 
         ("::1", 6379, PortAttribution.CONFIRMED),
     }
     assert {e.exposure for e in redis.candidate.endpoints} == {"loopback"}
-    mysql = by_key(discovered, "sh.brew.mysql")
+    mysql = by_key(discovered, "com.example.thirdparty.mysql")
     # mysqld (pid 1068) is a child of the job's mysqld_safe: still confirmed for the job
     assert any(e.port == 3306 for e in mysql.candidate.endpoints)
     assert len(mysql.instance_pids) >= 2
     services, _ = build_records(
         discovered, ctx=src, now=NOW, first_seen={}, coverage=coverage(), processes={}
     )
-    redis_record = next(s for s in services if s.service_key == "sh.brew.redis")
+    redis_record = next(s for s in services if s.service_key == "com.example.thirdparty.redis")
     assert redis_record.adapter_id == "redis"
     assert redis_record.adapter_support is AdapterSupport.PLANNED
     assert redis_record.monitoring_status is MonitoringStatus.UNMONITORED
@@ -183,17 +185,19 @@ def test_apple_agent_listener_maps_to_its_launchd_job(discovered) -> None:
 
 
 def test_application_listener_without_job_and_unverified_paths(discovered) -> None:
-    docker = next(
+    backend = next(
         d
         for d in discovered.services.values()
         if d.candidate.service_kind is ServiceKind.APPLICATION
-        and d.candidate.name == "com.docker.backend"
+        and d.candidate.name == "example-backend"
     )
     assert {
         DiscoveryEvidence.PROCESS,
         DiscoveryEvidence.LISTENING_SOCKET,
-    } <= docker.candidate.evidence
-    assert docker.candidate.attributes["app_bundle"] == "Docker.app"
+    } <= backend.candidate.evidence
+    assert backend.candidate.attributes["app_bundle"] == "ExampleApp.app"
+    # the GUI application's launchd instance label is never treated as the owning job
+    assert backend.job is None
     # Owners whose ps command is a bare argv[0] are not turned into services without a
     # verified path; the listener is reported as unattributed instead of guessed.
     assert "tcp:127.0.0.1:2222" in discovered.unattributed_listeners
@@ -225,12 +229,12 @@ def test_processes_are_not_assumed_to_be_network_services(discovered) -> None:
 
 
 def test_label_less_plist_uses_file_name(discovered) -> None:
-    keystone = [
+    labelless = [
         d
         for d in discovered.services.values()
-        if d.candidate.service_key.endswith("com.google.keystone.agent.plist")
+        if d.candidate.service_key.endswith("com.example.thirdparty.labelless.plist")
     ]
-    assert keystone and keystone[0].candidate.name == "com.google.keystone.agent.plist"
+    assert labelless and labelless[0].candidate.name == "com.example.thirdparty.labelless.plist"
 
 
 def test_coverage_when_remote_login_is_enabled(src: SourceContext) -> None:
@@ -308,7 +312,7 @@ def test_service_events_and_tombstones(discovered, src: SourceContext) -> None:
         processes=inputs().processes,
     )
     assert instances and all(i.asset_id == ASSET for i in instances)
-    redis = next(s for s in services if s.service_key == "sh.brew.redis")
+    redis = next(s for s in services if s.service_key == "com.example.thirdparty.redis")
     event = discovered_event(redis, src, observed_at=NOW, snapshot="s1", baseline=True)
     assert event.event_type == "service.discovered" and event.service is not None
     assert event.service.service_id == redis.service_id
@@ -364,10 +368,30 @@ def test_sshd_adapter_attaches_service_ref_via_generic_interface(src: SourceCont
         ),
     )
     assert len(events) == 1 and events[0].service == ref
+    assert events[0].event_type == "auth.ssh.login_failed"
     assert events[0].service.adapter_id == "macos-sshd"
     assert events[0].service.service_id == service_id(ASSET, "host_service", "com.openssh.sshd")
     assert "file contents" not in " ".join(adapter.collects)
     assert adapter.never_collects
+    # a binary merely named sshd (outside the sealed system volume) is not Remote Login
+    for path in ("/private/tmp/sshd", "/opt/homebrew/sbin/sshd", "/usr/sbin/sshd2"):
+        assert not adapter.accepts({**raw, "processImagePath": path})
+    assert adapter.parse({**raw, "processImagePath": "/private/tmp/sshd"}, ctx_for(ref)) == []
+    for path in ("/usr/libexec/sshd-session", "/usr/libexec/sshd-auth"):
+        assert adapter.accepts({**raw, "processImagePath": path})
+
+
+def ctx_for(ref):
+    from extorq_collectors.services import AdapterContext
+
+    return AdapterContext(
+        asset_id=ASSET,
+        asset_type="macos_host",
+        collector_id="macos-workstation-01",
+        collector_version="0.1.0",
+        service=ref,
+        observed_time=NOW,
+    )
 
 
 def test_fixture_paths_exist() -> None:
@@ -390,10 +414,10 @@ def test_running_version_only_from_a_verified_cellar_path() -> None:
     from dataclasses import replace
 
     base = inputs()
-    unverified = by_key(discover(base), "sh.brew.redis")
+    unverified = by_key(discover(base), "com.example.thirdparty.redis")
     assert unverified.candidate.product == "redis" and unverified.version is None
     paths = {904: "/opt/homebrew/Cellar/redis/8.10.1/bin/redis-server"}
     processes = {pid: replace(p, path=paths.get(pid)) for pid, p in base.processes.items()}
-    redis = by_key(discover(replace(base, processes=processes)), "sh.brew.redis")
+    redis = by_key(discover(replace(base, processes=processes)), "com.example.thirdparty.redis")
     assert redis.version == "8.10.1"
     assert redis.candidate.attributes["version_evidence"] == "running executable (proc_pidpath)"

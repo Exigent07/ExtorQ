@@ -16,7 +16,14 @@ telemetry and calls ``ctx.emit(records, checkpoints)``:
   by the next ``emit`` in the same transaction as the records describing it.
 
 Exceptions raised by ``collect`` are caught by the runner, reported in
-CollectorHealth (sanitised) and never affect other collectors.
+CollectorHealth (sanitised) and never affect other collectors. A cycle that
+succeeded only partly (one source of several failed, rate limited, a broader
+token than needed) calls ``ctx.mark_degraded(reason)``: the runner then reports
+``status=degraded`` with the reasons in ``last_error`` and ``details``, while
+``last_success_at`` still advances (the cycle did complete).
+
+``ctx.committed_snapshot(name)`` returns the last COMMITTED snapshot (read-only
+copy), e.g. to carry over items of a source that could not be read this cycle.
 """
 
 from __future__ import annotations
@@ -44,6 +51,9 @@ from extorq.contracts.service import Service, ServiceInstance
 from extorq.contracts.simulation import SimulationRun
 from extorq_collectors.sdk.config import CollectorConfig
 from extorq_collectors.sdk.state import StagedSnapshot, StateStore
+
+#: Upper bound of distinct ``mark_degraded`` reasons kept per cycle.
+MAX_DEGRADED_REASONS = 8
 
 _KIND_BY_MODEL: dict[type[BaseModel], str] = {
     SecurityEvent: "event",
@@ -172,13 +182,49 @@ class CollectorContext:
         self.lag_seconds: float | None = None
         self.checkpoint_summary: str | None = None
         self.health_details: dict[str, Any] = {}
+        self._degraded: list[str] = []
 
     def begin_cycle(self) -> None:
         self.events_emitted = 0
         self.records_emitted = 0
         self.lag_seconds = None
         self.health_details = {}
+        self._degraded = []
         self._staged.clear()
+
+    # ── health hints ──────────────────────────────────────────────────
+
+    def mark_degraded(self, reason: str) -> None:
+        """Report the CURRENT cycle as degraded (partial success) with a short reason.
+
+        Use it when ``collect`` completes but some of its work did not (one source or
+        repository failed, rate limited, a broader credential than required in use). The
+        runner reports ``HealthStatus.DEGRADED``, puts the reasons in ``last_error`` and
+        ``details.degraded_reasons``, and still advances ``last_success_at``. Reasons are
+        redacted and sanitised by the runner; never put secrets or raw telemetry in them.
+        Applies to this cycle only: call it again every cycle while the condition lasts.
+        """
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("mark_degraded needs a non-empty reason")
+        text = reason.strip()
+        if text not in self._degraded and len(self._degraded) < MAX_DEGRADED_REASONS:
+            self._degraded.append(text)
+
+    @property
+    def degraded_reasons(self) -> tuple[str, ...]:
+        """Reasons passed to :meth:`mark_degraded` during the current cycle (raw)."""
+        return tuple(self._degraded)
+
+    # ── snapshots (read side) ─────────────────────────────────────────
+
+    def committed_snapshot(self, name: str) -> dict[str, dict[str, Any]]:
+        """The last COMMITTED snapshot ``name`` as ``{item_key: item}`` (a fresh copy).
+
+        Read-only: changing the result changes nothing. Items staged by
+        :meth:`diff_snapshot` in this cycle are not included until ``emit`` commits them.
+        ``{}`` when the snapshot was never committed (see :meth:`has_snapshot`).
+        """
+        return {key: json.loads(text) for key, (text, _digest) in self.store.snapshot(name).items()}
 
     def discard_staged(self) -> list[str]:
         """Drop snapshots staged by ``diff_snapshot`` but never emitted; return their names.

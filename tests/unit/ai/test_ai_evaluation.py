@@ -173,3 +173,18 @@ def test_pre_guard_label_reads_the_raw_priority_choice() -> None:
     )
     assert pre_guard_label(insufficient) == "insufficient_context"
     assert pre_guard_label(CaseResult("Z", "k8s", "routine_review", "routine_review", 1.0)) is None
+
+
+def test_run_without_any_jev_answer_reports_no_accuracy() -> None:
+    """E.g. raw answers recorded under another question-set version are not reused."""
+    cases = load_dataset(DATASET)[:4]
+    run = run_eval(
+        cases, provider=_provider(sc=0.9), settings=enabled_settings(), max_calls=0, raw_path=None
+    )
+    assert {r.jev_status for r in run.results} == {"not_run"}
+    report = build_report(run, dataset=DATASET, max_calls=0, date="2026-11-22")
+    jev = report["metrics"]["jev"]
+    assert jev["accuracy"] is None and jev["accuracy_before_caution_guards"] is None
+    assert report["notes"][0].startswith("No Jev answer in this run")
+    assert "outperform" not in report["notes"][0]
+    assert "n/a" in render_markdown(report)

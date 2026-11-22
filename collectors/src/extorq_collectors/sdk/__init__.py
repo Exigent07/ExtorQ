@@ -18,6 +18,10 @@ Public API::
   checkpoints and staged snapshots in ONE SQLite transaction.
 * ``ctx.diff_snapshot(name, items)`` -> ``(added, changed, removed)``; the new
   snapshot is persisted by the next ``emit`` together with the diff records.
+* ``ctx.committed_snapshot(name)`` returns the last committed snapshot (a read-only
+  copy), e.g. to carry over items of a source that could not be read this cycle.
+* ``ctx.mark_degraded(reason)`` reports a cycle that completed only partly: health
+  ``status=degraded`` with the reason, while ``last_success_at`` still advances.
 * :func:`asset_upsert` builds Asset records only when content changed (or a
   refresh is due), persisted atomically with the emit.
 * The runner (``extorq-collect run``) isolates collectors in threads, emits

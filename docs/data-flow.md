@@ -34,7 +34,15 @@ retries with its own sending queue (B2, `docs/telemetry/kubernetes.md`).
 * A snapshot advances only with an explicit `emit`; after a failed cycle the runner
   discards staged snapshots, so a diff is never "consumed" without its records.
 * CollectorHealth is emitted by the runner every cycle (also when `collect` fails):
-  status, last attempt/success, lag, outbox depth, sanitised last error.
+  status, last attempt/success, lag, outbox depth, sanitised last error. Status is
+  `failed` when `collect` raised, `degraded` when it completed but called
+  `ctx.mark_degraded(reason)` (partial success, e.g. one source of several failed) or
+  delivery is failing / records were dead-lettered, else `ok`. A degraded cycle still
+  advances `last_success_at`; its reasons appear in `last_error` (`degraded: ...`) and
+  `details.degraded_reasons`.
+* Host collectors run continuously as one background process
+  (`make collectors-start | collectors-stop | collectors-status`, see
+  [collectors.md](collectors.md#4-running)).
 
 ## 2. Transport (SDK sender -> gateway)
 
@@ -81,12 +89,17 @@ Order of checks (any failure before step 6 answers without storing records):
 7. **Per record**, in order: size <= 64 KiB; contract validation; **authorization**
    (kind, asset pattern, source types; any unauthorized record -> **403 for the whole
    batch**, audited, nothing stored); catalog semantics; time sanity (`event_time`
-   more than 1 day in the future or older than 400 days, other kinds' timestamps in the
-   future -> quarantine); **secret redaction** of free-text fields (event
+   more than 1 day in the future -> `time: event_time_in_future`; `event_time` older
+   than the `events` retention of 90 days -> **`older_than_retention: ...`**, because
+   ClickHouse's TTL would delete such a row right after a 202; other kinds' timestamps in
+   the future -> quarantine); **secret redaction** of free-text fields (event
    `message`/`raw`/`process.command_line`/`http.user_agent`/`http.route`/attribute and
    label strings; finding, scan, health, simulation and service free text) with the
    count added to `provenance.redaction_count`; storage compatibility (`to_row`);
-   identity. Service and instance ids must derive from the record's own fields
+   identity. Redaction is JSON-safe: key-based rules only replace string values in
+   structured text, never `true`/`false`/`null` or (after a quoted key) numbers and
+   arrays, so a JSON document stored in an attribute (e.g. a Kubernetes
+   `request_summary` with `"automount_sa_token": false`) stays valid JSON. Service and instance ids must derive from the record's own fields
    (`identity_mismatch` otherwise, so a producer cannot publish rows under another
    asset's service id). A failure in any of these quarantines **only that record**; an unexpected
    exception in one record (identity, serialisation) is also quarantined, never a 500.
@@ -101,8 +114,14 @@ misconfigured or compromised; accepting the rest would let it probe the boundary
 silently. The SDK bisects so legitimate records still arrive.
 
 `GET /healthz` (no auth, `{"status":"ok"}` only) and `GET /v1/status` (any producer
-token; spool depth, oldest age, dead letters, counters, schema versions) support
+token; spool depth, oldest age, dead letters, counters, schema versions and the
+acceptance window `limits.max_future_seconds` / `limits.event_retention_days`) support
 operations. Every 30 s the gateway writes `PipelineHealth(component="ingest")`.
+
+The retention window is `EXTORQ_EVENT_RETENTION_DAYS` (default 90). It must equal the
+`events` TTL in `0001_core_tables.sql`; `tests/unit/platform/test_platform_gateway.py`
+parses the DDL and fails on drift. Other kinds keep their own TTL columns (`observed_at`,
+`last_seen`, `reported_at`, ...) and are only refused for future timestamps.
 
 ## 4. Spool (`extorq.pipeline.spool`)
 
@@ -141,13 +160,16 @@ transactions only (never held across network I/O). Tables: `records` (queue),
 | Ordering | Not guaranteed across batches or producers; consumers use `event_time`. |
 | Poison records | Isolated by bisection; dead-lettered after 8 attempts; visible in health. |
 | Unauthorized/forged records | Never stored; 401/403 audited in `ingest_audit`. |
+| Retention-aligned acceptance | A 202 never covers an event the `events` TTL would expire at once: events older than 90 days (and more than 1 day in the future) are quarantined with a reason visible to the producer (`IngestResult.quarantined`) and in `ingest_quarantine`. |
+| Record integrity under redaction | Redaction replaces secret string values only; JSON booleans, numbers and nulls are never rewritten, so structured attributes stay parseable. |
+| Partial collector failures | Visible as `degraded` (reasons in `last_error` and `details.degraded_reasons`), never reported as `ok`. |
 
 Verified (commands and results in `docs/team/status/A.md`):
 `tests/failure/test_failure_durability.py` (ClickHouse stopped: 100/100 buffered events
 delivered after restart; gateway and writer restarted during an 800-record stream:
 800/800 delivered), `tests/integration/platform/test_platform_live.py` (round trip,
-replay/dedup counts, 401/403 audit, RBAC matrix), and the unit suites under
-`tests/unit/platform/`.
+replay/dedup counts, 401/403 audit, RBAC matrix, retention quarantine and JSON-safe
+redaction on the deployed gateway), and the unit suites under `tests/unit/platform/`.
 
 ## 7. Downstream (owned by other teams)
 
@@ -162,5 +184,8 @@ replay/dedup counts, 401/403 audit, RBAC matrix), and the unit suites under
 
 `extorq.pipeline_health` / `v_pipeline_latest` (ingest, writer, detector, ai-worker),
 `extorq.collector_health` / `v_collector_latest`, `extorq.ingest_quarantine`,
-`extorq.ingest_audit`, `GET /v1/status`, `uv run extorq-collect status` (local outboxes,
-read-only) and `make demo-check`.
+`extorq.ingest_audit`, `GET /v1/status`, `make collectors-status` (background runner +
+local outboxes, read-only) and `make demo-check` (read-only readiness report: services,
+endpoints, the five mandatory scenarios with evidence resolved to stored events, collector
+freshness, rule runs; works without the debug proxy by querying inside the `api`
+container).

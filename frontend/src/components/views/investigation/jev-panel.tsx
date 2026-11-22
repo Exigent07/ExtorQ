@@ -6,7 +6,7 @@ import { UntrustedText } from "@/components/console/untrusted-text";
 import type { AIAssessment, JevAnswer } from "@/lib/api/schemas";
 import { formatMs, formatProbability, humanize } from "@/lib/format";
 
-import { aiStatusText, QUESTION_LABEL, RECOMMENDATION_LABEL } from "./ai-labels";
+import { aiStatusText, QUESTION_LABEL, questionTypeLabel, RECOMMENDATION_LABEL } from "./ai-labels";
 
 function answerValue(answer: JevAnswer): string {
   if (answer.type === "noul" && typeof answer.value === "number") return `P(true) ${formatProbability(answer.value)}`;
@@ -107,7 +107,7 @@ function JevBody({ assessment, currentInputHash }: { assessment: AIAssessment; c
                   <td className="py-2 pr-3 text-ink-2">
                     {QUESTION_LABEL[answer.question_id] ?? <UntrustedText value={answer.question_id} limit={48} />}
                   </td>
-                  <td className="py-2 pr-3 text-xs text-muted-foreground capitalize">{answer.type}</td>
+                  <td className="py-2 pr-3 text-xs whitespace-nowrap text-muted-foreground">{questionTypeLabel(answer.type)}</td>
                   <td className="py-2 text-right whitespace-nowrap">
                     <span className="font-mono text-xs text-ink">{answerValue(answer)}</span>
                     {answer.type === "noul" && typeof answer.value === "number" ? (

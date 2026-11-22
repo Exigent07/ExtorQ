@@ -5,6 +5,9 @@
   hang inside one collector) never stops the others.
 * Every cycle: ``collect(ctx)`` -> CollectorHealth record (status, last attempt,
   last success, lag, outbox depth, sanitised last error) -> drain the outbox.
+  Status: ``failed`` when ``collect`` raised; ``degraded`` when it completed but called
+  ``ctx.mark_degraded(reason)``, or delivery is failing / records were dead-lettered;
+  otherwise ``ok``.
 * Snapshots staged with ``diff_snapshot`` advance ONLY with an explicit
   ``ctx.emit``: after a failed cycle (or a diff that was never emitted) they are
   discarded, so the next cycle diffs against the last committed state again.
@@ -229,6 +232,12 @@ class CollectorWorker:
             self.collector.collect(ctx)
             self.status.last_success_at = utc_now()
             self.status.last_error = None
+            if ctx.degraded_reasons:
+                log.warning(
+                    "collector_cycle_degraded",
+                    collector_id=self.config.collector_id,
+                    reasons=[_clean_str(r, 256) for r in ctx.degraded_reasons],
+                )
         except Exception as exc:  # noqa: BLE001 - isolation: report, never propagate
             self.status.failures += 1
             self.status.last_error = sanitize_error(exc)
@@ -260,14 +269,18 @@ class CollectorWorker:
     def health_status(self, outcome: CycleOutcome) -> HealthStatus:
         if not outcome.ok:
             return HealthStatus.FAILED
-        if self.sender.state.last_error or self.store.dead_count():
+        if self.ctx.degraded_reasons or self.sender.state.last_error or self.store.dead_count():
             return HealthStatus.DEGRADED
         return HealthStatus.OK
 
     def build_health(self, outcome: CycleOutcome) -> CollectorHealth:
         ctx, store, sender = self.ctx, self.store, self.sender
         source_types = [str(s) for s in (getattr(self.collector, "source_types", ()) or ())]
-        last_error = self.status.last_error or sender.state.last_error
+        degraded = [_clean_str(reason, 256) for reason in ctx.degraded_reasons]
+        parts = [self.status.last_error, sender.state.last_error]
+        if degraded and outcome.ok:
+            parts.append("degraded: " + "; ".join(degraded))
+        last_error = "; ".join(part for part in parts if part)
         details: dict[str, Any] = {
             "outbox_dead": store.dead_count(),
             "sender_consecutive_failures": sender.state.consecutive_failures,
@@ -277,6 +290,8 @@ class CollectorWorker:
         if oldest is not None:
             details["outbox_oldest_age_seconds"] = round(oldest, 1)
         details.update(sanitize_details(ctx.health_details))
+        if degraded:
+            details["degraded_reasons"] = degraded
         summary = ctx.checkpoint_summary
         fields: dict[str, Any] = {
             "collector_id": self.config.collector_id,

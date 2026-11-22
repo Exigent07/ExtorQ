@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import textwrap
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,9 @@ import yaml
 
 from extorq_collectors.github import analyze
 from extorq_collectors.github.workflow import (
+    MAX_LEXICAL_BYTES,
+    MAX_WORKFLOW_BYTES,
+    MAX_YAML_ALIASES,
     PERMISSIVE_DEFAULT,
     WRITE_CAPABLE_SCOPES,
     WorkflowAnalysis,
@@ -23,6 +28,7 @@ from extorq_collectors.github.workflow import (
     analyse_workflow_document,
     compare_workflows,
     is_workflow_path,
+    lexical_scan,
     load_workflow_yaml,
     parse_uses,
     render_permissions,
@@ -449,8 +455,10 @@ def test_unparseable_after_version_is_flagged() -> None:
     after = analyse_workflow(PATH, "on: [push\n")
     d = compare_workflows(PATH, before, after, repo_default="read", change_type="modified")
     assert "workflow_unparseable" in d.risk_flags
-    assert d.permissions_after == "unparseable"
+    assert d.analysis == "lexical_fallback"
+    assert d.permissions_after == "unparseable;lexical=no permissions key"
     assert d.to_attributes()["parse_error_after"]
+    assert not d.escalation  # nothing risky in the text: no privilege increase
 
 
 def test_summary_and_inventory_attributes() -> None:
@@ -461,8 +469,262 @@ def test_summary_and_inventory_attributes() -> None:
     assert attrs["privileged_triggers"] == ["pull_request_target"]
     assert attrs["privileged_untrusted_checkout"] is True
     assert attrs["effective_write_scopes"] == []
+    assert attrs["analysis"] == "structured"
     broken = workflow_inventory_attributes(analyse_workflow(PATH, "on: [x"), None)
     assert broken["parse_ok"] is False and "triggers" not in broken
+    assert broken["analysis"] == "lexical_fallback" and broken["lexical_write_all"] is False
+    risky = workflow_inventory_attributes(analyse_workflow(PATH, "permissions: write-all\n["), None)
+    assert risky["lexical_write_all"] is True and risky["effective_permissions_unknown"] is True
+
+
+# ── Lexical fallback: an unanalysable workflow is never treated as absent ──
+
+#: The GH-001 escalation (write-all, pull_request_target, PR-head checkout) as plain YAML.
+RISKY = textwrap.dedent(
+    """
+    name: CI
+    on:
+      push:
+        branches: [main]
+      pull_request_target:
+        branches: [main]
+    permissions: write-all
+    jobs:
+      preview:
+        runs-on: ubuntu-24.04
+        steps:
+          - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+            with:
+              ref: ${{ github.event.pull_request.head.sha }}
+          - run: make preview
+    """
+)
+
+
+def _oversized(text: str) -> str:
+    """Valid YAML that exceeds the analyser's size budget (comment padding)."""
+    return "# padding\n" * (MAX_WORKFLOW_BYTES // 10 + 16) + text
+
+
+def _alias_bomb(text: str) -> str:
+    """Valid YAML with more aliases than the analyser allows (GitHub supports anchors)."""
+    reuse = "".join(f"  r{i}: *base\n" for i in range(MAX_YAML_ALIASES + 5))
+    return text + "env:\n  BASE: &base synthetic\n" + reuse.replace("  r", "  R")
+
+
+def _malformed(text: str) -> str:
+    return text + "broken: [unclosed\n"
+
+
+def _duplicate_key(text: str) -> str:
+    return text + "name: second name\n"  # `name` is already defined
+
+
+@pytest.mark.parametrize(
+    "breaker",
+    [_oversized, _alias_bomb, _malformed, _duplicate_key],
+    ids=["oversized", "alias-bomb", "malformed", "duplicate-key"],
+)
+def test_unanalysable_escalation_is_detected_lexically(breaker: Callable[[str], str]) -> None:
+    before = analyse_workflow(PATH, textwrap.dedent(BASE))
+    after = analyse_workflow(PATH, breaker(RISKY))
+    assert not after.ok and after.error and after.lexical is not None
+    d = compare_workflows(PATH, before, after, repo_default="read", change_type="modified")
+    assert d.analysis == "lexical_fallback"
+    assert d.write_all_added and set(d.added_write_scopes) == set(WRITE_CAPABLE_SCOPES)
+    assert d.dangerous_triggers_added == ("pull_request_target",)
+    assert d.triggers_added == ("pull_request_target",)
+    assert d.untrusted_checkout_added and d.escalation
+    assert d.effective_permissions_unknown
+    for flag in (
+        "analysis_lexical_fallback",
+        "write_all_added",
+        "scope_escalation:contents",
+        "dangerous_trigger_added:pull_request_target",
+        "privileged_trigger_untrusted_checkout",
+        "effective_permissions_unknown",
+        "workflow_unparseable",
+    ):
+        assert flag in d.risk_flags, flag
+    attributes = d.to_attributes()
+    assert attributes["analysis"] == "lexical_fallback"
+    assert attributes["effective_permissions_unknown"] is True
+    assert attributes["write_all_added"] is True
+    assert attributes["parse_error_after"] and attributes["parse_error_before"] is None
+    assert attributes["permissions_before"] == "workflow=contents:read"
+    assert attributes["permissions_after"] == "unparseable;lexical=write-all"
+    assert attributes["lexical_truncated"] is False
+    assert attributes["lexical_evidence"] == ["ref input uses github.event.pull_request.head.sha"]
+    # Checks the lexical scan does not cover are unknown, never "none found".
+    assert attributes["unpinned_actions_added"] is None
+    assert attributes["script_injection_added"] is None
+    assert attributes["secrets_inherit_added"] is None
+    assert "compared lexically" in d.summary() and "write-all added" in d.summary()
+    json.dumps(attributes)
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        "permissions:\n  contents: write\n  id-token: write\n",
+        "permissions: {contents: write, 'id-token': write}\n",
+        '"permissions": {"contents": "write", "id-token": "write"}\n',
+        "permissions:\n  contents: !!str write\n  ? id-token\n  : write\n",
+        "jobs:\n  release:\n    permissions:\n      contents: WRITE\n      id-token: write\n",
+    ],
+    ids=["block", "flow", "json", "tag-and-explicit-key", "job-level"],
+)
+def test_lexical_write_scopes_in_permissions_blocks(permissions: str) -> None:
+    after = analyse_workflow(PATH, "on: push\n" + permissions + "broken: [unclosed\n")
+    assert not after.ok
+    d = compare_workflows(PATH, wf(BASE), after, repo_default="read", change_type="modified")
+    assert d.analysis == "lexical_fallback"
+    assert d.added_write_scopes == ("contents", "id-token")
+    assert not d.write_all_added and d.escalation
+    assert d.permissions_after == "unparseable;lexical=write:contents,id-token"
+
+
+def test_lexical_privileged_triggers_and_untrusted_checkout() -> None:
+    text = textwrap.dedent(
+        """
+        on:
+          workflow_run:
+            workflows: [CI]
+        jobs:
+          report:
+            steps:
+              - uses: actions/checkout@v4
+                with: {ref: "${{ github.event.workflow_run.head_sha }}"}
+              - run: git fetch origin pull/${{ github.event.number }}/head
+              - run: gh pr checkout 1
+        broken: [unclosed
+        """
+    )
+    scan = lexical_scan(text)
+    assert scan.privileged_triggers == ("workflow_run",)
+    assert scan.untrusted_checkout == (
+        "ref input uses github.event.workflow_run.head_sha",
+        "run: gh pr checkout",
+        "run: git fetch of pull/${{",
+    )
+    assert scan.privileged_untrusted_checkout
+    d = compare_workflows(
+        PATH, wf(BASE), analyse_workflow(PATH, text), repo_default="read", change_type="modified"
+    )
+    assert d.dangerous_triggers_added == ("workflow_run",) and d.untrusted_checkout_added
+    assert not d.write_all_added and d.added_write_scopes == ()
+
+
+def test_lexical_scan_ignores_comments_expressions_and_lookalikes() -> None:
+    text = textwrap.dedent(
+        """
+        # permissions: write-all
+        #   contents: write
+        # on: pull_request_target
+        on: push
+        permissions:
+          contents: read
+        jobs:
+          x:
+            if: ${{ github.event_name == 'pull_request_target' }}
+            steps:
+              - uses: actions/create-github-app-token@v1
+                with:
+                  permission-contents: write
+              - run: echo "${{ github.event.workflow_run.conclusion }}"
+        """
+    )
+    scan = lexical_scan(text)
+    assert not scan.write_all and scan.write_scopes == ()
+    assert scan.privileged_triggers == () and scan.untrusted_checkout == ()
+    assert scan.has_permissions_key
+
+
+def test_lexical_scan_sees_through_escapes_and_scalar_aliases() -> None:
+    escaped = 'on: [push, "pull_request_t\\x61rget"]\npermissions: "write\\x2dall"\n'
+    scan = lexical_scan(escaped)
+    assert scan.write_all and scan.privileged_triggers == ("pull_request_target",)
+    folded = 'permissions: "write-\\\n   all"\n'
+    assert lexical_scan(folded).write_all
+    aliased = "x: &w write\ny: &s contents\npermissions:\n  *s : *w\n  id-token: *w\n"
+    assert lexical_scan(aliased).write_scopes == ("contents", "id-token")
+
+
+def test_lexical_comparison_reports_only_added_risk() -> None:
+    broken = _malformed(RISKY)
+    same_risk = analyse_workflow(PATH, broken.replace("make preview", "make preview2"))
+    unchanged = compare_workflows(
+        PATH, analyse_workflow(PATH, broken), same_risk, repo_default="read", change_type="modified"
+    )
+    assert unchanged.analysis == "lexical_fallback" and not unchanged.escalation
+    assert "baseline_unparseable" in unchanged.risk_flags
+    # Like with like: a parsed baseline with the same risk does not count as added.
+    parsed_before = compare_workflows(
+        PATH, wf(RISKY), same_risk, repo_default="read", change_type="modified"
+    )
+    assert not parsed_before.escalation
+    # Reverting to the least-privilege baseline removes the trigger and adds nothing.
+    revert = compare_workflows(
+        PATH, same_risk, wf(BASE), repo_default="read", change_type="modified"
+    )
+    assert revert.analysis == "lexical_fallback" and not revert.escalation
+    assert revert.triggers_removed == ("pull_request_target",)
+    # Added / removed unanalysable files: an absent version declares nothing.
+    added = compare_workflows(PATH, None, same_risk, repo_default="read", change_type="added")
+    assert added.write_all_added and "workflow_added" in added.risk_flags
+    removed = compare_workflows(PATH, same_risk, None, repo_default="read", change_type="removed")
+    assert not removed.escalation and removed.permissions_after == "absent"
+
+
+def test_lexical_repo_default_write_without_permissions_key() -> None:
+    after = analyse_workflow(PATH, "on: push\njobs: [unclosed\n")
+    d = compare_workflows(PATH, wf(BASE), after, repo_default="write", change_type="modified")
+    assert set(d.added_write_scopes) == set(PERMISSIVE_DEFAULT)
+    assert "relies_on_repo_default_write" in d.risk_flags and d.escalation
+    unknown = compare_workflows(PATH, wf(BASE), after, repo_default=None, change_type="modified")
+    assert unknown.added_write_scopes == () and unknown.effective_permissions_unknown
+
+
+def test_unavailable_text_is_not_treated_as_absent() -> None:
+    # An analysis without text (e.g. built elsewhere) still fails closed.
+    blind = WorkflowAnalysis(path=PATH, ok=False, error="workflow exceeds 524288 bytes")
+    d = compare_workflows(PATH, wf(BASE), blind, repo_default="read", change_type="modified")
+    assert d.analysis == "lexical_fallback" and d.effective_permissions_unknown
+    assert "workflow_lexical_unavailable" in d.risk_flags
+    assert d.permissions_after == "unparseable;lexical=unavailable"
+
+
+def test_lexical_scan_is_bounded_and_reports_truncation() -> None:
+    hidden = "#" * (MAX_LEXICAL_BYTES + 16) + "\npermissions: write-all\n"
+    scan = lexical_scan(hidden)
+    assert scan.truncated and not scan.write_all  # beyond the bound: not examined
+    assert scan.chars_scanned == MAX_LEXICAL_BYTES
+    d = compare_workflows(
+        PATH, wf(BASE), analyse_workflow(PATH, hidden), repo_default="read", change_type="modified"
+    )
+    assert d.lexical_truncated and "lexical_scan_truncated" in d.risk_flags
+    assert d.effective_permissions_unknown and not d.escalation
+    # A prefix handed over by the fetcher is never parsed and is marked truncated.
+    prefix = analyse_workflow(PATH, "on: push\npermissions: write-all\n", truncated=True)
+    assert not prefix.ok and prefix.lexical is not None and prefix.lexical.truncated
+    assert prefix.lexical.write_all
+
+
+def test_lexical_scan_stays_fast_on_hostile_input() -> None:
+    hostile = (
+        "contents: write\n" * 20_000
+        + "x: &a write\n"
+        + "*a " * 300_000
+        + "\nref: "
+        + "github.event." * 40_000
+        + "\n"
+        + "git fetch " * 30_000
+    )[:MAX_LEXICAL_BYTES]
+    start = time.monotonic()
+    scan = lexical_scan(hostile)
+    elapsed = time.monotonic() - start
+    assert scan.write_scopes == ("contents",)
+    assert elapsed < 10, f"lexical scan took {elapsed:.1f}s"
 
 
 # ── GH-001 lab files ────────────────────────────────────────────────────────
@@ -526,3 +788,16 @@ def test_analyze_cli_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert analyze.main(["--path", PATH, "--before", "none", "--after", "none"]) == 2
     missing = str(tmp_path / "missing.yml")
     assert analyze.main(["--path", PATH, "--before", missing, "--after", after]) == 2
+
+
+def test_analyze_cli_scans_oversized_files_lexically(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    big = tmp_path / "big.yml"
+    big.write_text(_oversized(GH001_TEMPLATE.read_text(encoding="utf-8")), encoding="utf-8")
+    args = ["--path", PATH, "--before", str(LAB_CI), "--after", str(big), "--repo-default", "read"]
+    assert analyze.main([*args, "--expect-escalation"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["attributes"]["analysis"] == "lexical_fallback"
+    assert output["attributes"]["write_all_added"] is True
+    assert output["attributes"]["effective_permissions_unknown"] is True

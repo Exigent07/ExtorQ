@@ -560,3 +560,156 @@ def test_requeue_dead_moves_dead_letters_back_in_order(
         "synthetic:m0",
         "synthetic:m1",
     ]
+
+
+# ── session 3: string-only config secret check, degraded hint, committed snapshots ──
+
+
+def _config_file(tmp_path: Path, settings_yaml: str) -> Path:
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        "collector_id: c1\nproducer_id: p1\nasset_id: linux:lab-vm-01\nmodule: 'a.b:C'\n"
+        f"interval_seconds: 5\nsettings:\n{settings_yaml}"
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    "settings_yaml",
+    [
+        "  allow_gh_cli_token: true\n",  # C1 3.1: a boolean flag, not a token
+        "  gh_cli_token_fallback: false\n  max_token: 4096\n  secret_count: 0\n",
+        "  token_ttl: null\n  password_min_length: 12\n  rotated_token: 2026-11-21\n",
+        "  token_file: var/secrets/github/readonly-pat\n  password_file: /run/secrets/x\n",
+        "  nested: {client_secret: false, api_key: 7, items: [1, true, null]}\n",
+    ],
+)
+def test_config_secret_check_ignores_non_string_values(tmp_path: Path, settings_yaml: str) -> None:
+    (config,) = load_collector_files([_config_file(tmp_path, settings_yaml)])
+    assert config.collector_id == "c1"
+
+
+@pytest.mark.parametrize(
+    ("settings_yaml", "path"),
+    [
+        ("  password: hunter2-synthetic\n", "password"),
+        ("  allow_gh_cli_token: 'hunter2-synthetic'\n", "allow_gh_cli_token"),
+        ("  ssh: {opts: ['-o', 'x', '--password hunter2-synthetic']}\n", "ssh.opts[2]"),
+        ("  repos:\n    - token: 'abc-synthetic'\n", "repos[0].token"),
+        ("  header: 'Authorization: Bearer synthetic-bearer-value-123'\n", "header"),
+        (f"  pat: {'ghp_' + 'Ab1' * 12}\n", "pat"),
+    ],
+)
+def test_config_secret_check_flags_string_secrets_by_path_never_value(
+    tmp_path: Path, settings_yaml: str, path: str
+) -> None:
+    with pytest.raises(ConfigLoadError) as info:
+        load_collector_files([_config_file(tmp_path, settings_yaml)])
+    message = str(info.value)
+    assert "secret" in message and f"({path})" in message
+    for fragment in ("hunter2", "abc-synthetic", "synthetic-bearer", "Ab1Ab1"):
+        assert fragment not in message
+
+
+class DegradedCollector(Collector):
+    collector_type: ClassVar[str] = "linux_ssh"
+    source_types: ClassVar[tuple[str, ...]] = ("linux.journald",)
+
+    def __init__(self) -> None:
+        self.reasons: list[str] = []
+
+    def collect(self, ctx: CollectorContext) -> None:
+        ctx.emit([record("event", event_data(f"deg{len(ctx.degraded_reasons)}"))])
+        for reason in self.reasons:
+            ctx.mark_degraded(reason)
+
+
+def test_mark_degraded_reports_degraded_but_keeps_last_success(tmp_path: Path) -> None:
+    gw = FakeGateway()
+    collector = DegradedCollector()
+    worker = CollectorWorker(
+        make_config("synthetic-degraded"),
+        _settings(tmp_path),
+        collector=collector,
+        client_factory=lambda _c: gw.client(),
+    )
+    worker.open()
+    try:
+        collector.reasons = [
+            "system_profiler timed out",
+            "repo b rate limited token=hunter2-synthetic",
+            "system_profiler timed out",  # duplicates collapse
+        ]
+        assert worker.run_cycle().ok  # partial success is still a success
+        collector.reasons = []
+        assert worker.run_cycle().ok  # the hint is per cycle
+    finally:
+        worker.close()
+    first, second = [r["data"] for r in gw.accepted_records if r["kind"] == "collector_health"]
+    assert first["status"] == "degraded"
+    assert first["last_success_at"] is not None
+    assert first["last_error"].startswith("degraded: system_profiler timed out; repo b")
+    assert "hunter2" not in first["last_error"]
+    assert first["details"]["degraded_reasons"] == [
+        "system_profiler timed out",
+        "repo b rate limited token=[REDACTED:secret]",
+    ]
+    assert second["status"] == "ok" and second["last_error"] is None
+    assert "degraded_reasons" not in second["details"]
+    assert second["last_success_at"] >= first["last_success_at"]
+    status = read_status(tmp_path / "var" / "collectors" / "synthetic-degraded" / "state.db")
+    assert status["last_health"]["status"] == "ok"
+
+
+def test_mark_degraded_validates_and_bounds_reasons(ctx: CollectorContext) -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        ctx.mark_degraded("   ")
+    for index in range(20):
+        ctx.mark_degraded(f"reason {index}")
+    assert len(ctx.degraded_reasons) == 8
+    ctx.begin_cycle()
+    assert ctx.degraded_reasons == ()
+
+
+def test_failed_cycle_stays_failed_even_when_marked_degraded(tmp_path: Path) -> None:
+    class HalfThenBoom(Collector):
+        collector_type: ClassVar[str] = "linux_ssh"
+        source_types: ClassVar[tuple[str, ...]] = ("linux.journald",)
+
+        def collect(self, ctx: CollectorContext) -> None:
+            ctx.mark_degraded("first source slow")
+            raise RuntimeError("second source failed")
+
+    gw = FakeGateway()
+    worker = CollectorWorker(
+        make_config("synthetic-boom"),
+        _settings(tmp_path),
+        collector=HalfThenBoom(),
+        client_factory=lambda _c: gw.client(),
+    )
+    worker.open()
+    try:
+        assert not worker.run_cycle().ok
+    finally:
+        worker.close()
+    (health,) = [r["data"] for r in gw.accepted_records if r["kind"] == "collector_health"]
+    assert health["status"] == "failed"
+    assert health["last_error"].startswith("RuntimeError: second source failed")
+    assert health["details"]["degraded_reasons"] == ["first source slow"]
+
+
+def test_committed_snapshot_is_a_read_only_copy_of_the_last_commit(
+    ctx: CollectorContext, store: StateStore
+) -> None:
+    assert ctx.committed_snapshot("units") == {}
+    ctx.diff_snapshot("units", {"a.service": {"state": "running", "n": 1}})
+    assert ctx.committed_snapshot("units") == {}  # staged, not committed
+    ctx.emit([])
+    snapshot = ctx.committed_snapshot("units")
+    assert snapshot == {"a.service": {"n": 1, "state": "running"}}
+    snapshot["a.service"]["state"] = "tampered"
+    snapshot["b.service"] = {}
+    assert ctx.committed_snapshot("units") == {"a.service": {"n": 1, "state": "running"}}
+    ctx.diff_snapshot("units", {"b.service": {"state": "running"}})
+    assert set(ctx.committed_snapshot("units")) == {"a.service"}  # still the committed one
+    assert ctx.discard_staged() == ["units"]

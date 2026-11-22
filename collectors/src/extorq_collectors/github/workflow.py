@@ -20,20 +20,34 @@ a job's token permissions come from ``jobs.<id>.permissions`` if present, otherw
 from the workflow-level ``permissions``, otherwise from the repository/organisation
 default (``GET /repos/{o}/{r}/actions/permissions/workflow``: ``read`` = restricted,
 ``write`` = permissive). A job-level block replaces the workflow-level block entirely.
+
+Fail closed: a workflow file that exists but cannot be analysed (size, alias or node
+budget exceeded, invalid YAML, duplicate keys, not a mapping) is never treated as
+absent. :func:`lexical_scan` examines its raw text (bounded) for the GH-001 risk
+indicators, and :func:`compare_workflows` then compares both versions lexically
+(``analysis="lexical_fallback"``, ``effective_permissions_unknown=True``).
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import yaml
 
-ANALYZER_VERSION = "1.0.0"
+ANALYZER_VERSION = "1.1.0"
 
 MAX_WORKFLOW_BYTES = 512 * 1024
+#: Characters of raw workflow text the lexical fallback examines; anything beyond is not
+#: examined and the scan reports ``truncated`` (risk flag ``lexical_scan_truncated``).
+MAX_LEXICAL_BYTES = 4 * 1024 * 1024
+#: Matches examined per lexical pattern (keeps hostile inputs linear and bounded).
+MAX_LEXICAL_MATCHES = 100_000
+#: Scalar YAML aliases substituted by the lexical scan (alias keys/values such as
+#: ``*scope: write``); further aliases are left as they are.
+MAX_LEXICAL_ALIAS_SUBSTITUTIONS = 20_000
 MAX_YAML_ALIASES = 100
 MAX_YAML_NODES = 50_000
 MAX_JOBS = 256
@@ -139,6 +153,42 @@ _UNTRUSTED_REPO_RE = re.compile(
 _RUN_CHECKOUT_RE = re.compile(r"\bgh\s+pr\s+checkout\b")
 _RUN_GIT_FETCH_RE = re.compile(r"\bgit\s+(?:fetch|checkout|switch|pull|reset)\b")
 
+# Lexical fallback patterns. They run on raw, attacker-controlled text: every pattern is
+# linear (no nested quantifiers) and every repetition is bounded.
+_LEX_COMMENT_LINE_RE = re.compile(r"^[ \t]*#[^\n]*", re.MULTILINE)
+#: YAML double-quoted escapes that could spell a keyword (``"write\x2dall"``).
+_LEX_ESCAPE_RE = re.compile(r"\\(?:x([0-9A-Fa-f]{2})|u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8}))")
+#: Escaped line break inside a double-quoted scalar (joined without a space).
+_LEX_ESCAPED_BREAK_RE = re.compile(r"\\\r?\n[ \t]*")
+#: Scalar anchors (``&name value``) whose aliases the scan substitutes.
+_LEX_SCALAR_ANCHOR_RE = re.compile(
+    r"&([A-Za-z0-9_.-]{1,64})[ \t]+([\"']?)([A-Za-z][A-Za-z0-9_-]{0,31})\2"
+    r"(?=[ \t]*(?:[\r\n,}\]:#]|$))"
+)
+_LEX_ALIAS_RE = re.compile(r"\*([A-Za-z0-9_.-]{1,64})")
+#: Expressions on one line (never across lines, so a key cannot be hidden between them).
+_LEX_EXPR_RE = re.compile(r"\$\{\{[^\n]{0,512}?\}\}")
+_LEX_WRITE_ALL_RE = re.compile(r"(?<![\w-])write-all(?![\w-])", re.IGNORECASE)
+#: ``<scope>: write`` in block, flow or JSON style, with optional quotes, tag/anchor
+#: properties and a value or ``:`` on the following line (explicit keys).
+_LEX_SCOPE_WRITE_RE = re.compile(
+    r"(?<![\w.-])[\"']?("
+    + "|".join(re.escape(s) for s in sorted(WRITE_CAPABLE_SCOPES, key=len, reverse=True))
+    + r")[\"']?[ \t]*(?:\r?\n[ \t]*)?:[ \t]*(?:\r?\n[ \t]*)?"
+    r"(?:[!&][^\s,{}\[\]]{0,64}[ \t]+){0,2}[\"']?write(?![\w-])",
+    re.IGNORECASE,
+)
+_LEX_PERMISSIONS_KEY_RE = re.compile(r"(?<![\w-])[\"']?permissions[\"']?[ \t]*:", re.IGNORECASE)
+_LEX_TRIGGER_RE = re.compile(
+    r"(?<![\w.-])(" + "|".join(sorted(PRIVILEGED_TRIGGERS)) + r")(?![\w-])", re.IGNORECASE
+)
+_LEX_REF_INPUT_RE = re.compile(
+    r"(?<![\w-])[\"']?(ref|repository)[\"']?[ \t]*:[ \t]*([^\n]{0,1024})", re.IGNORECASE
+)
+_LEX_UNSAFE_OPT_IN_RE = re.compile(
+    r"allow-unsafe-pr-checkout[\"']?[ \t]*:[ \t]*[\"']?(?:true|\$\{\{)", re.IGNORECASE
+)
+
 
 class WorkflowParseError(ValueError):
     """Workflow text is not a valid, bounded GitHub Actions workflow document."""
@@ -212,6 +262,186 @@ def load_workflow_yaml(text: str) -> dict[str, Any]:
     if not isinstance(document, dict):
         raise WorkflowParseError("workflow document is not a mapping")
     return document
+
+
+# ── Lexical fallback (fail closed) ──────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class LexicalScan:
+    """Bounded lexical risk indicators found in raw workflow text.
+
+    Used when the YAML cannot be analysed, so an unanalysable workflow is never
+    treated as absent. It is a heuristic over-approximation: it looks for the GH-001
+    indicators anywhere outside full-line comments and cannot resolve which job a
+    declaration belongs to (effective permissions stay unknown).
+    """
+
+    #: ``write-all`` appears (block, flow, quoted, anchored or escaped spelling).
+    write_all: bool = False
+    #: Write-capable scopes paired with ``write`` (``contents: write``, ``{id-token: write}``).
+    write_scopes: tuple[str, ...] = ()
+    #: A ``permissions`` key appears at all (else every job relies on the repo default).
+    has_permissions_key: bool = False
+    #: Privileged triggers named outside expressions (pull_request_target, workflow_run,
+    #: issue_comment).
+    privileged_triggers: tuple[str, ...] = ()
+    #: Evidence of checking out pull request / workflow_run head code (fixed labels only,
+    #: never attacker text).
+    untrusted_checkout: tuple[str, ...] = ()
+    #: Characters examined, and whether text beyond the bound was not examined.
+    chars_scanned: int = 0
+    truncated: bool = False
+
+    @property
+    def declared_write_scopes(self) -> tuple[str, ...]:
+        """Declared write scopes; ``write-all`` declares every write-capable scope."""
+        if self.write_all:
+            return tuple(sorted(WRITE_CAPABLE_SCOPES))
+        return self.write_scopes
+
+    def effective_write_scopes(self, repo_default: RepoDefault | None) -> tuple[str, ...]:
+        """Declared scopes plus the permissive repo default when no permissions key exists."""
+        scopes = set(self.declared_write_scopes)
+        if repo_default == "write" and not self.has_permissions_key:
+            scopes.update(PERMISSIVE_DEFAULT)
+        return tuple(sorted(scopes))
+
+    @property
+    def privileged_untrusted_checkout(self) -> bool:
+        return bool(self.privileged_triggers) and bool(self.untrusted_checkout)
+
+    def indicators(self) -> list[str]:
+        """Short labels of what the scan found (for evidence and finding text)."""
+        found: list[str] = []
+        if self.write_all:
+            found.append("write-all")
+        elif self.write_scopes:
+            found.append("write scopes: " + ",".join(self.write_scopes))
+        if self.privileged_triggers:
+            found.append("privileged triggers: " + ",".join(self.privileged_triggers))
+        if self.untrusted_checkout:
+            found.append("untrusted checkout")
+        if self.truncated:
+            found.append(f"text beyond {MAX_LEXICAL_BYTES} characters not examined")
+        return found
+
+    def render(self) -> str:
+        if self.write_all:
+            text = "write-all"
+        elif self.write_scopes:
+            text = "write:" + ",".join(self.write_scopes)
+        elif self.has_permissions_key:
+            text = "no write scope detected"
+        else:
+            text = "no permissions key"
+        return text + (";truncated" if self.truncated else "")
+
+
+#: Lexical view of an absent workflow version: declares nothing.
+ABSENT_LEXICAL = LexicalScan(has_permissions_key=True)
+
+
+def _decode_escape(match: re.Match[str]) -> str:
+    code = match.group(1) or match.group(2) or match.group(3)
+    try:
+        char = chr(int(code, 16))
+    except (ValueError, OverflowError):
+        return match.group(0)
+    # Only printable ASCII can spell a keyword; anything else stays escaped.
+    return char if 0x20 <= ord(char) < 0x7F else match.group(0)
+
+
+def _substitute_scalar_aliases(text: str) -> str:
+    """Replace ``*name`` by the scalar anchored as ``&name value`` (bounded)."""
+    anchors: dict[str, str] = {}
+    for index, match in enumerate(_LEX_SCALAR_ANCHOR_RE.finditer(text)):
+        if index >= MAX_LEXICAL_MATCHES:
+            break
+        anchors.setdefault(match.group(1), match.group(3))
+    if not anchors:
+        return text
+    budget = [MAX_LEXICAL_ALIAS_SUBSTITUTIONS]
+
+    def substitute(match: re.Match[str]) -> str:
+        value = anchors.get(match.group(1))
+        if value is None or budget[0] <= 0:
+            return match.group(0)
+        budget[0] -= 1
+        return value
+
+    return _LEX_ALIAS_RE.sub(substitute, text, count=MAX_LEXICAL_MATCHES)
+
+
+def lexical_scan(text: str, *, truncated: bool = False) -> LexicalScan:
+    """Scan raw workflow text for GH-001 risk indicators without parsing it.
+
+    Bounded: at most :data:`MAX_LEXICAL_BYTES` characters and
+    :data:`MAX_LEXICAL_MATCHES` matches per pattern are examined. ``truncated`` tells
+    the scan that ``text`` is already only a prefix of the file.
+    """
+    if len(text) > MAX_LEXICAL_BYTES:
+        text, truncated = text[:MAX_LEXICAL_BYTES], True
+    scanned = len(text)
+    # Full-line comments never carry YAML content (in block scalars and quoted strings
+    # such lines are script/string text, which cannot grant permissions either).
+    # Trailing comments are kept: over-reporting is the safe direction.
+    body = _LEX_COMMENT_LINE_RE.sub("", text)
+    body = _LEX_ESCAPED_BREAK_RE.sub("", body)
+    body = _LEX_ESCAPE_RE.sub(_decode_escape, body)
+    body = _substitute_scalar_aliases(body)
+
+    write_all = _LEX_WRITE_ALL_RE.search(body) is not None
+    scopes: set[str] = set()
+    for index, match in enumerate(_LEX_SCOPE_WRITE_RE.finditer(body)):
+        if index >= MAX_LEXICAL_MATCHES or len(scopes) == len(WRITE_CAPABLE_SCOPES):
+            break
+        scopes.add(match.group(1).lower())
+    has_permissions_key = _LEX_PERMISSIONS_KEY_RE.search(body) is not None
+
+    without_expressions = _LEX_EXPR_RE.sub(" ", body)
+    triggers: set[str] = set()
+    for index, match in enumerate(_LEX_TRIGGER_RE.finditer(without_expressions)):
+        if index >= MAX_LEXICAL_MATCHES or len(triggers) == len(PRIVILEGED_TRIGGERS):
+            break
+        triggers.add(match.group(1).lower())
+
+    evidence: list[str] = []
+    for index, match in enumerate(_LEX_REF_INPUT_RE.finditer(body)):
+        if index >= MAX_LEXICAL_MATCHES or len(evidence) >= MAX_EVIDENCE_ITEMS:
+            break
+        key, value = match.group(1).lower(), match.group(2)
+        pattern = _UNTRUSTED_REF_RE if key == "ref" else _UNTRUSTED_REPO_RE
+        untrusted = pattern.search(value)
+        if untrusted is not None:
+            label = " ".join(untrusted.group(0).split())
+            evidence.append(_clip(f"{key} input uses {label}", 120))
+    if _RUN_CHECKOUT_RE.search(body):
+        evidence.append("run: gh pr checkout")
+    checked_until = -1
+    for index, match in enumerate(_RUN_GIT_FETCH_RE.finditer(body)):
+        if index >= MAX_LEXICAL_MATCHES or len(evidence) >= MAX_EVIDENCE_ITEMS:
+            break
+        if match.start() <= checked_until:
+            continue  # same line as an earlier command: checked once (linear overall)
+        line_end = body.find("\n", match.end())
+        checked_until = line_end if line_end != -1 else len(body)
+        line = body[match.start() : checked_until][:1024]
+        untrusted = _UNTRUSTED_REF_RE.search(line)
+        if untrusted is not None:
+            label = " ".join(untrusted.group(0).split())
+            evidence.append(_clip(f"run: git {match.group(0).split()[-1]} of {label}", 120))
+    if _LEX_UNSAFE_OPT_IN_RE.search(body):
+        evidence.append("actions/checkout allow-unsafe-pr-checkout")
+    return LexicalScan(
+        write_all=write_all,
+        write_scopes=tuple(sorted(scopes)),
+        has_permissions_key=has_permissions_key,
+        privileged_triggers=tuple(sorted(triggers)),
+        untrusted_checkout=_unique(evidence)[:MAX_EVIDENCE_ITEMS],
+        chars_scanned=scanned,
+        truncated=truncated,
+    )
 
 
 # ── Model ───────────────────────────────────────────────────────────────────────
@@ -292,6 +522,9 @@ class WorkflowAnalysis:
     invalid_triggers: bool = False
     permissions: PermissionSpec = UNSET
     jobs: tuple[JobAnalysis, ...] = ()
+    #: Lexical indicators of the raw text (set by :func:`analyse_workflow`; None when
+    #: the text was not available). The fallback when ``ok`` is False.
+    lexical: LexicalScan | None = None
 
     @property
     def has_write_all(self) -> bool:
@@ -610,13 +843,23 @@ def analyse_workflow_document(path: str, document: Mapping[Any, Any]) -> Workflo
     )
 
 
-def analyse_workflow(path: str, text: str) -> WorkflowAnalysis:
-    """Parse and analyse workflow text; parse failures yield ``ok=False`` (never raise)."""
+def analyse_workflow(path: str, text: str, *, truncated: bool = False) -> WorkflowAnalysis:
+    """Parse and analyse workflow text; parse failures yield ``ok=False`` (never raise).
+
+    The bounded :func:`lexical_scan` of the raw text is always attached, so a version
+    that cannot be parsed still carries risk indicators and a comparison with it can be
+    made lexically on both sides. ``truncated`` means ``text`` is only a prefix of the
+    file (the fetch was capped); such text is never parsed as YAML.
+    """
+    lexical = lexical_scan(text, truncated=truncated)
+    if truncated:
+        error = f"workflow exceeds {MAX_WORKFLOW_BYTES} bytes"
+        return WorkflowAnalysis(path=path, ok=False, error=error, lexical=lexical)
     try:
         document = load_workflow_yaml(text)
     except WorkflowParseError as exc:
-        return WorkflowAnalysis(path=path, ok=False, error=_clip(str(exc), 300))
-    return analyse_workflow_document(path, document)
+        return WorkflowAnalysis(path=path, ok=False, error=_clip(str(exc), 300), lexical=lexical)
+    return replace(analyse_workflow_document(path, document), lexical=lexical)
 
 
 # ── Before/after comparison ─────────────────────────────────────────────────────
@@ -629,7 +872,9 @@ def render_permissions(analysis: WorkflowAnalysis | None, repo_default: RepoDefa
     if analysis is None:
         return "absent"
     if not analysis.ok:
-        return "unparseable"
+        if analysis.lexical is None:
+            return "unparseable;lexical=unavailable"
+        return f"unparseable;lexical={analysis.lexical.render()}"
     parts = [f"workflow={analysis.permissions.render()}"]
     for job in analysis.jobs:
         if job.permissions.kind != "unset":
@@ -661,13 +906,21 @@ class WorkflowDelta:
     triggers_added: tuple[str, ...]
     triggers_removed: tuple[str, ...]
     dangerous_triggers_added: tuple[str, ...]
-    unpinned_actions_added: tuple[str, ...]
-    unpinned_actions_after: tuple[str, ...]
-    secrets_inherit_added: bool
-    script_injection_added: tuple[str, ...]
+    #: None = not analysed (lexical fallback covers only the GH-001 indicators).
+    unpinned_actions_added: tuple[str, ...] | None
+    unpinned_actions_after: tuple[str, ...] | None
+    secrets_inherit_added: bool | None
+    script_injection_added: tuple[str, ...] | None
     untrusted_checkout_added: bool
     effective_permissions_unknown: bool
     risk_flags: tuple[str, ...] = field(default_factory=tuple)
+    #: "structured" (both versions parsed or absent) or "lexical_fallback" (at least one
+    #: version exists but could not be analysed; both compared with :func:`lexical_scan`).
+    analysis: Literal["structured", "lexical_fallback"] = "structured"
+    #: Lexical mode: text beyond the scan bound was not examined (None in structured mode).
+    lexical_truncated: bool | None = None
+    #: Lexical mode: untrusted-checkout evidence labels of the new version.
+    lexical_evidence: tuple[str, ...] = ()
 
     @property
     def escalation(self) -> bool:
@@ -683,6 +936,10 @@ class WorkflowDelta:
 
     def summary(self) -> str:
         bits: list[str] = []
+        if self.analysis == "lexical_fallback":
+            bits.append(
+                "not analysable as YAML, compared lexically (effective permissions unknown)"
+            )
         if self.write_all_added:
             bits.append(
                 f"permissions: write-all added ({len(self.added_write_scopes)} write scopes)"
@@ -701,7 +958,7 @@ class WorkflowDelta:
             bits.append("script injection pattern added")
         if self.secrets_inherit_added:
             bits.append("secrets: inherit added")
-        if not bits:
+        if not self.escalation:
             bits.append("no privilege increase detected")
         return f"Workflow {self.path} {self.change_type}: " + "; ".join(bits)
 
@@ -711,7 +968,13 @@ class WorkflowDelta:
         def lst(items: Iterable[str]) -> list[str]:
             return [_clip(item, 500) for item in list(items)[:MAX_EVIDENCE_ITEMS]]
 
+        def opt(items: Iterable[str] | None) -> list[str] | None:
+            return None if items is None else lst(items)
+
         return {
+            "analysis": self.analysis,
+            "lexical_truncated": self.lexical_truncated,
+            "lexical_evidence": lst(self.lexical_evidence),
             "change_type": self.change_type,
             "previous_path": self.previous_path,
             "analyzer_version": ANALYZER_VERSION,
@@ -728,10 +991,10 @@ class WorkflowDelta:
             "triggers_added": lst(self.triggers_added),
             "triggers_removed": lst(self.triggers_removed),
             "dangerous_triggers_added": lst(self.dangerous_triggers_added),
-            "unpinned_actions_added": lst(self.unpinned_actions_added),
-            "unpinned_actions_after": lst(self.unpinned_actions_after),
+            "unpinned_actions_added": opt(self.unpinned_actions_added),
+            "unpinned_actions_after": opt(self.unpinned_actions_after),
             "secrets_inherit_added": self.secrets_inherit_added,
-            "script_injection_added": lst(self.script_injection_added),
+            "script_injection_added": opt(self.script_injection_added),
             "untrusted_checkout_added": self.untrusted_checkout_added,
             "parse_error_before": self.before.error if self.before is not None else None,
             "parse_error_after": self.after.error if self.after is not None else None,
@@ -748,7 +1011,20 @@ def compare_workflows(
     change_type: ChangeType,
     previous_path: str | None = None,
 ) -> WorkflowDelta:
-    """Compare two versions of a workflow (``None`` = file absent at that version)."""
+    """Compare two versions of a workflow (``None`` = file absent at that version).
+
+    Fails closed: when a version exists but could not be analysed it is never treated
+    as absent; both versions are then compared with :func:`lexical_scan`.
+    """
+    if (before is not None and not before.ok) or (after is not None and not after.ok):
+        return _compare_lexical(
+            path,
+            before,
+            after,
+            repo_default=repo_default,
+            change_type=change_type,
+            previous_path=previous_path,
+        )
     before_ok = before if before is not None and before.ok else None
     after_ok = after if after is not None and after.ok else None
     eff_before = before_ok.effective_permissions(repo_default) if before_ok else None
@@ -855,6 +1131,98 @@ def compare_workflows(
     )
 
 
+def _compare_lexical(
+    path: str,
+    before: WorkflowAnalysis | None,
+    after: WorkflowAnalysis | None,
+    *,
+    repo_default: RepoDefault | None,
+    change_type: ChangeType,
+    previous_path: str | None,
+) -> WorkflowDelta:
+    """Fail-closed comparison when at least one existing version is unanalysable.
+
+    Both versions are compared lexically (like with like, so indicators present in both
+    cancel out). An absent version declares nothing; an existing version whose text was
+    not available is treated as declaring nothing too, so everything found in the new
+    version counts as added. Effective permissions are always unknown in this mode.
+    """
+
+    def side(analysis: WorkflowAnalysis | None) -> LexicalScan:
+        if analysis is None or analysis.lexical is None:
+            return ABSENT_LEXICAL
+        return analysis.lexical
+
+    lex_before, lex_after = side(before), side(after)
+    write_before = lex_before.effective_write_scopes(repo_default)
+    write_after = lex_after.effective_write_scopes(repo_default)
+    added_scopes = tuple(s for s in write_after if s not in write_before)
+    write_all_added = lex_after.write_all and not lex_before.write_all
+    triggers_before, triggers_after = lex_before.privileged_triggers, lex_after.privileged_triggers
+    triggers_added = tuple(t for t in triggers_after if t not in triggers_before)
+    triggers_removed = tuple(t for t in triggers_before if t not in triggers_after)
+    untrusted_added = (
+        lex_after.privileged_untrusted_checkout and not lex_before.privileged_untrusted_checkout
+    )
+
+    flags: list[str] = ["analysis_lexical_fallback"]
+    if change_type == "added":
+        flags.append("workflow_added")
+    elif change_type == "removed":
+        flags.append("workflow_removed")
+    if write_all_added:
+        flags.append("write_all_added")
+    flags.extend(f"scope_escalation:{scope}" for scope in added_scopes)
+    flags.extend(f"dangerous_trigger_added:{trigger}" for trigger in triggers_added)
+    if untrusted_added:
+        flags.append("privileged_trigger_untrusted_checkout")
+    if repo_default == "write" and after is not None and not lex_after.has_permissions_key:
+        flags.append("relies_on_repo_default_write")
+    flags.append("effective_permissions_unknown")
+    for label, analysis in (("workflow_unparseable", after), ("baseline_unparseable", before)):
+        if analysis is not None and not analysis.ok:
+            flags.append(label)
+            if analysis.lexical is None:
+                flags.append(f"{label.split('_')[0]}_lexical_unavailable")
+    truncated = any(
+        analysis is not None and analysis.lexical is not None and analysis.lexical.truncated
+        for analysis in (before, after)
+    )
+    if truncated:
+        flags.append("lexical_scan_truncated")
+
+    return WorkflowDelta(
+        path=path,
+        change_type=change_type,
+        previous_path=previous_path,
+        repo_default=repo_default,
+        before=before,
+        after=after,
+        permissions_before=render_permissions(before, repo_default),
+        permissions_after=render_permissions(after, repo_default),
+        write_scopes_before=write_before,
+        write_scopes_after=write_after,
+        write_all_added=write_all_added,
+        added_write_scopes=added_scopes,
+        triggers_before=triggers_before,
+        triggers_after=triggers_after,
+        triggers_added=triggers_added,
+        triggers_removed=triggers_removed,
+        # Only privileged triggers are looked for lexically, so every added one is dangerous.
+        dangerous_triggers_added=triggers_added,
+        unpinned_actions_added=None,
+        unpinned_actions_after=None,
+        secrets_inherit_added=None,
+        script_injection_added=None,
+        untrusted_checkout_added=untrusted_added,
+        effective_permissions_unknown=True,
+        risk_flags=tuple(flags),
+        analysis="lexical_fallback",
+        lexical_truncated=truncated,
+        lexical_evidence=lex_after.untrusted_checkout if untrusted_added else (),
+    )
+
+
 def is_workflow_path(path: str) -> bool:
     return bool(WORKFLOW_PATH_RE.match(path)) and ".." not in path.split("/")
 
@@ -879,8 +1247,21 @@ def workflow_inventory_attributes(
         "head_sha": head_sha,
         "analyzer_version": ANALYZER_VERSION,
         "repo_default_workflow_permissions": repo_default or "unknown",
+        "analysis": "structured" if analysis.ok else "lexical_fallback",
     }
     if not analysis.ok:
+        lexical = analysis.lexical
+        if lexical is not None:
+            attributes.update(
+                {
+                    "lexical_write_all": lexical.write_all,
+                    "lexical_write_scopes": lst(lexical.declared_write_scopes),
+                    "lexical_privileged_triggers": lst(lexical.privileged_triggers),
+                    "lexical_untrusted_checkout": lst(lexical.untrusted_checkout),
+                    "lexical_truncated": lexical.truncated,
+                    "effective_permissions_unknown": True,
+                }
+            )
         return attributes
     effective = analysis.effective_permissions(repo_default)
     attributes.update(

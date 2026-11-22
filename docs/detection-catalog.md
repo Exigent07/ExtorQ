@@ -12,20 +12,25 @@ ClickHouse with positive and negative fixtures (`uv run pytest tests/rules -q`).
 | Rule | Title | Severity | Status | Dedup | ATT&CK |
 |---|---|---|---|---|---|
 | VM-001 | Burst of failed SSH authentication from one source | medium | stable | window_bucket 300 s | T1110, T1110.001, T1110.003 |
-| VM-002 | New or modified systemd unit (persistence) (v1.1.0) | high | stable | event | T1543.002 |
+| VM-002 | New or modified systemd unit (persistence) (v1.2.0) | high | stable | event | T1543.002 |
 | K8S-001 | Privileged pod denied by Pod Security admission | medium | stable | event | T1610, T1611 |
-| K8S-002 | Risky RBAC grant in Kubernetes | high | stable | event | T1098, T1078.004 |
-| GH-001 | GitHub Actions workflow privilege escalation | high | stable | event | T1195.002, T1098 |
+| K8S-002 | Risky RBAC grant in Kubernetes (v1.1.0) | high | stable | event | T1098, T1078.004 |
+| GH-001 | GitHub Actions workflow privilege escalation (v1.1.0) | high | stable | event | T1195.002, T1098 |
 | HTTP-001 | Web probing from one source | low | experimental | window_bucket 300 s | T1595.003 |
 | MAC-001 | New or modified macOS LaunchAgent/LaunchDaemon | medium | experimental | event | T1543.001, T1543.004 |
 | APP-001 | Burst of failed web application logins | medium | experimental | window_bucket 300 s | T1110.001, T1110.003 |
-| CORR-002 | Ordered HTTP probing, SSH failures and systemd persistence on one host (v1.1.0) | high | experimental | window_bucket 1800 s | T1595.003, T1110, T1543.002 |
+| CORR-002 | Ordered HTTP probing, SSH failures and systemd persistence on one host (v1.2.0) | high | experimental | window_bucket 1800 s | T1595.003, T1110, T1543.002 |
 
 Shared NAT/gateway addresses used by the rules (`params.shared_nat_ips`) and by
 correlation: `10.0.2.2` (QEMU SLIRP gateway of the lab VM), `172.18.0.1` (Docker `kind`
 network gateway), `10.244.0.1` (kind pod-network gateway for NodePort traffic),
 `127.0.0.1`, `::1`. A source that is one of them is real but not attributable to one
 origin.
+
+Rule versions apply to new evaluations; stored alerts keep the evidence, summary and
+features their version wrote (evidence is append-only, `docs/detection-engine.md` section
+3). `uv run python -m extorq.detection.dryrun --rule <ID> --start <UTC> --end <UTC>` shows
+what the current version produces over any stored window, read-only.
 
 ---
 
@@ -61,10 +66,16 @@ origin.
   `previous_sha256`, `exec_start`, `vendor_unit`, `wanted_by`); optional
   `file.audit.watch` with `attributes.audit_key = extorq_systemd` (`linux.auditd`).
 * **Logic:** unit created/modified outside `params.allowlist_paths`, not part of a baseline
-  snapshot (`attributes.baseline` true is ignored). Audit watch hits on exactly the same
-  path and enable events for the same unit name are supporting evidence; audit hits that
-  delete the file (`unlink`, `unlinkat`, `rmdir`, v1.1.0) corroborate nothing. A unit that
-  is only enabled (no content change in the window) yields its own row.
+  snapshot (`attributes.baseline` true is ignored). Supporting evidence: enable events for
+  the same unit name, and auditd watch hits that **create or modify** exactly the same path
+  (v1.2.0): successful hits whose syscall is in `params.change_syscalls` (open/openat/creat/
+  truncate, rename/link/symlink into the directory, chmod/chown family) and whose written
+  path (the CREATE/NORMAL path item, or the CREATE item of a rename such as
+  `mv /tmp/x.service /etc/systemd/system/`) is the unit path. It is an allowlist: deletions
+  (`unlinkat` by a cleanup), failed attempts, xattr/timestamp changes and unknown or numeric
+  syscall values corroborate nothing (v1.1.0 used a deletion denylist and therefore let
+  `fsetxattr` or a failed `openat` raise confidence to high). A unit that is only enabled (no
+  content change in the window) yields its own row.
 * **Identity:** (asset, unit path, content sha256); enable-only rows (asset, unit,
   `enabled:<wanted_by>`).
 * **Confidence:** high when the auditd watch corroborates the inventory diff on the exact
@@ -72,9 +83,11 @@ origin.
 * **False positives:** package installs/upgrades shipping units; configuration management.
 * **Blind spots:** units created and removed between snapshots (auditd still records the
   write); other persistence mechanisms; path-based allow-listing.
-* **Tests:** created + auditd + enabled with simulation tag (high); modified with only an
-  auditd deletion on the path (medium); enabled only (medium); negative: baseline snapshot,
-  other audit keys, deleted unit, cron change.
+* **Tests:** created + auditd openat + enabled with simulation tag (high); modified with only
+  non-corroborating hits on the path (unlinkat by rm, failed openat, fsetxattr, numeric
+  syscall: medium, `audit_corroborated` false); renamed into place (renameat CREATE item:
+  high); enabled only (medium); negative: baseline snapshot, other audit keys, deleted unit,
+  cron change. Same fixture under v1.1.0: high (overstated) -> v1.2.0: medium.
 * **Verified live:** B1's VM-002 run `b7a712bc786d` -> alert confidence high (auditd
   openat + inventory unit_created on the same path).
 
@@ -112,18 +125,67 @@ origin.
   secrets access, pods/exec, non-resource wildcards, bindings to anonymous /
   unauthenticated / authenticated / all or default service accounts). Excludes the role
   aggregation controller and the API server's bootstrap reconciliation, inventory baseline
-  rows and `system:*` objects seen only in inventory.
+  rows and `system:*` objects seen only in inventory, annotation-only writes (v1.1.0, see
+  below) and the documented kubeadm bootstrap creates (v1.1.0, see below).
+* **Annotation-only writes (B2-IC-7):** B2's normaliser marks a patch/update whose body
+  touches only `metadata` (`attributes.metadata_only_change`,
+  `metadata_fields_changed`). When every changed field is in
+  `params.ignorable_metadata_fields` (`[annotations]`) the write is ignored: annotations do
+  not change what a role or binding grants. Labels stay in scope on purpose: they drive
+  ClusterRole aggregation (`aggregate-to-*`), so a label-only patch can grant privileges
+  (tested). A write without the marker (older normaliser) is evaluated normally.
+* **kubeadm bootstrap exception (decision, v1.1.0).** Every kubeadm cluster creates two
+  risky bindings at birth: `kubeadm:cluster-admins` (Group `kubeadm:cluster-admins` ->
+  `cluster-admin`) and `kube-public/kubeadm:bootstrap-signer-clusterinfo` (`system:anonymous`
+  may read the public `cluster-info` ConfigMap for node bootstrap). A create is not alerted
+  only when **all** of these hold:
+  1. the verb is `create` and the requesting user is a bootstrap identity
+     (`params.bootstrap_users`: `kubernetes-super-admin`, kubeadm >= 1.29's `super-admin.conf`,
+     and `kubernetes-admin`, its `admin.conf`);
+  2. the object signature `kind|namespace|name|roleRef|sorted subjects` equals one of
+     `params.bootstrap_objects` exactly: the documented name **and** the documented grant;
+  3. the request lies within `[birth - 60 s, birth + 600 s]` of the cluster's birth, which is
+     the API server's own successful creation of the `kube-system` namespace (user
+     `system:apiserver`, response 201). That record exists once per etcd lifetime and cannot
+     be produced by a client credential. If ExtorQ did not observe the birth (attached to an
+     existing cluster, audit gap), the exception never applies.
+  An inventory (state) row of the same object is excepted only as the view of such an
+  excepted create. Everything else alerts: later writes to these objects, a create by any
+  other identity, a create outside the window, a different grant (an extra subject), and
+  look-alike names. There is deliberately **no name-prefix allowlist**: anyone allowed to
+  create bindings can name one `kubeadm:x`.
+  *Why suppress instead of "keep alerting with low confidence and an
+  `expected_platform_bootstrap` feature":* confidence in ExtorQ states evidence completeness
+  (the contract's definition), and the evidence for these creates is complete; lowering it
+  to encode "probably benign" would make `low` ambiguous for every consumer (analysts,
+  Jev, the console). A high-severity alert on every cluster creation also trains analysts to
+  ignore K8S-002. The exception is narrow enough that what it hides is exactly what kubeadm
+  grants by design, every condition is deterministic and tested on both sides, and the two
+  bindings stay visible elsewhere: the posture scan reports them (flagged accepted risk by
+  `infra/kind/kind.sh`) and the audit events remain searchable.
+  *Residual risk (blind spot):* an actor holding kubeadm's bootstrap credentials in the first
+  ten minutes after birth who creates exactly the two documented objects.
+* **Summary:** cluster-scoped objects read `<name> (cluster-scoped)` (feature `object_ref`,
+  `scope`); v1.0.0 rendered `unknown/<name>`. `documented_bootstrap_object` is true when an
+  alerting object carries a documented kubeadm name (the exception did not apply).
 * **Identity:** (cluster, kind, namespace, name, sorted risk flags).
 * **Confidence:** high when audit and inventory state agree; medium with one source.
 * **False positives:** operators/Helm charts shipping cluster-admin bindings; temporary
-  incident access; re-applying or relabelling an unchanged risky object (an admin's
-  `kubectl patch` of kubeadm's `kubeadm:cluster-admins` / anonymous `cluster-info` bindings
-  was alerted live, medium, audit only: the rule cannot tell a metadata-only patch from a
-  grant without the previous state); cluster bootstrap by kubeadm itself.
+  incident access; re-applying an unchanged risky object (no metadata-only marker for a full
+  update). Cluster bootstrap and annotation-only writes: handled in v1.1.0 (see above and
+  "Real false-positive observations").
 * **Blind spots:** stolen tokens of existing privileged identities; excluded controllers.
 * **Tests (captured records):** ClusterRoleBinding patched to system:authenticated
-  (medium), wildcard Role (alert), escalate ClusterRole audit + state (high); negatives:
-  aggregation controller, forbidden create, delete, benign/baseline state.
+  (medium, summary `b2-fixture-crb (cluster-scoped)`), wildcard Role (alert), escalate
+  ClusterRole audit + state (high); negatives: aggregation controller, forbidden create,
+  delete, benign/baseline state. v1.1.0: the **genuine** birth records of the lab cluster
+  (10 events exported from ClickHouse, `tests/rules/captures/`) -> no alert (v1.0.0: 2);
+  B2's real `kubectl annotate` capture -> no alert (v1.0.0: 1); exception conditions not
+  met (documented binding 15 minutes after birth, look-alike `kubeadm:cluster-admin`,
+  documented RoleBinding by a workload service account) -> 3 alerts; documented name with
+  an extra subject -> alert; live create without an observed birth -> alert; label-only
+  patch -> alert; the inventory view of the excepted create -> excepted with it, the same
+  inventory row without the audit create -> alert (state alone never proves the identity).
 * **Verified live:** B2's run `c9c96ff29f33` (ServiceAccount bound to cluster-admin) ->
   alert confidence high (audit and inventory agree).
 
@@ -137,15 +199,32 @@ origin.
   (contents, actions, packages, id-token, ...), a privileged trigger (pull_request_target,
   workflow_run, issue_comment) or a checkout of untrusted code under a privileged trigger.
 * **Identity:** (repository, workflow path, commit sha).
-* **Confidence:** high when both versions parsed and effective permissions are known;
-  medium when the repository default permissions are unknown; low when a version did not
-  parse.
+* **Lexical fallback (v1.1.0):** C1's analyser 1.1.0 fails closed: when a workflow version
+  exists but cannot be parsed as YAML (duplicate keys, invalid YAML, size or alias budget),
+  both versions are compared with a bounded lexical scan (`attributes.analysis =
+  lexical_fallback`, `effective_permissions_unknown = true`) that fills the same escalation
+  attributes. GH-001 alerts on them with confidence **medium** (v1.0.0 rated them low because
+  a parse error was present). `features.analysis_methods` and `lexical_scan_truncated` tell
+  the analyst how the evidence was obtained.
+* **Confidence:** medium for a lexical-fallback comparison; otherwise high when both
+  versions parsed and effective permissions are known, medium when the repository default
+  permissions are unknown, low when a version did not parse and no lexical comparison exists
+  (analyser 1.0.0).
 * **False positives:** release/deploy workflows that need write scopes; labelling bots on
   pull_request_target.
 * **Blind spots:** org/repo default permission changes (separate event type), unpolled
   history, reusable workflows from other repositories.
 * **Tests:** write-all (high), pull_request_target with simulation tag, id-token write with
-  unknown default (medium); negative: benign edits.
+  unknown default (medium), unparseable escalation compared lexically (medium, attributes
+  computed by C1's analyser); negatives: benign edits, unparseable benign edit. C1's
+  collector-output fixtures (real collector code path over a synthetic API fake) are
+  declared cases: baseline, escalation and cleanup commits -> exactly one alert, high, for
+  the escalation commit; the lexical-fallback variant -> exactly one, medium.
+  `tests/rules/test_gh001_collector_contract.py` repeats both checks on C1's current files.
+* **Verified live:** lab repository `Exigent07/extorq-lab` (private), run `8dwz3wf6zji4`:
+  escalation commit `bf4026a` -> alert `e70639259d3044a6da955d9bc79e48cd`, high, 1 evidence
+  event (`github.api`, producer `github-collector`); baseline and cleanup commits did not
+  alert.
 
 ## HTTP-001 Web probing from one source
 
@@ -221,9 +300,14 @@ origin.
   `linux.inventory`, optional `file.audit.watch` (key `extorq_systemd`) from `linux.auditd`.
 * **Logic:** stage markers: (1) probing = >= 10 4xx incl. >= 5 distinct probe-like routes
   from one source within 300 s (sliding); (2) SSH failures = >= 3 failed connections or
-  >= 5 failed attempts from one source within 300 s; (3) a non-baseline, non-allowlisted
-  unit change (inventory diff) or auditd write to a unit path (deletions `unlink`,
-  `unlinkat`, `rmdir` never count, v1.1.0). ClickHouse `windowFunnel`
+  >= 5 failed attempts from one source within 300 s; (3) **creation or modification
+  evidence** of a unit (v1.2.0): a non-baseline, non-allowlisted inventory diff (unit
+  created, modified or enabled) or a successful auditd create/modify syscall
+  (`params.change_syscalls`, allowlist) whose written path is a unit file under
+  `params.unit_dirs` matching `params.unit_file_pattern`. Deletions are context only
+  (`context_unit_removals`, `context_removal_events`), never stage or alert evidence; failed,
+  xattr/timestamp, editor swap files, unknown and numeric syscalls never count. ClickHouse
+  `windowFunnel`
   over the markers (epoch milliseconds, window 1800 s) gates assets where the three stages
   occur in order; the concrete chains (stage 1 < stage 2 < stage 3 <= stage 1 + 30 min)
   are then materialised to collect evidence from all three stages.
@@ -232,18 +316,44 @@ origin.
   not a shared NAT address; low otherwise. Never high: the rule shows **ordered
   co-occurrence, not causation**, and `features.causation_established` is always false.
 * **Features:** stage times, probe counts/routes, SSH connections/usernames, units,
-  `same_source_ip`, `same_non_nat_source_ip`, `source_ip_shared_nat`.
+  `persistence_units_inventory_confirmed` (the inventory saw new or changed content) vs
+  `persistence_units_audit_only` (a write auditd saw, e.g. an unchanged unit re-installed),
+  `persistence_writers`, `context_unit_removals`, `same_source_ip`,
+  `same_non_nat_source_ip`, `source_ip_shared_nat`.
 * **False positives:** unrelated activity that lines up within 30 minutes; pentests followed
   by maintenance; the lab's QEMU NAT (all Mac traffic arrives from 10.0.2.2).
 * **Blind spots:** slower sequences, sub-threshold stages, other persistence mechanisms,
   stages older than the 45-minute lookback.
 * **Tests:** same external source (medium), through 10.0.2.2 with simulation tag (low),
-  different sources (low); negatives: wrong order, more than 30 minutes, baseline-only
-  persistence, below the probe threshold, deletion-only persistence.
-* **Verified live:** B1's HTTP-001, VM-001 and VM-002 runs on 2026-11-21 -> one alert,
-  confidence low (every stage arrived from 10.0.2.2; the SSH stage also contained the lab
-  operator's own failed key attempts, which illustrates why a shared NAT source is never
-  identity).
+  different sources (low), auditd-only creation with a removal of another unit in the window
+  (alert; the removal appears only in `context_unit_removals`, `persistence_events` = 1);
+  negatives: wrong order, more than 30 minutes, baseline-only persistence, below the probe
+  threshold, deletion-only persistence (an `unlinkat` by rm), non-changing audit hits (failed
+  openat, fsetxattr on `?`, editor swap file, numeric syscall, unit moved out of the
+  directory; v1.1.0 alerted on this fixture, v1.2.0 does not).
+* **Verified live:** B1's HTTP-001, VM-001 and VM-002 runs on 2026-11-21 -> one alert
+  (`b46da3805d1c6f17b6c1ed363b49a777`), confidence low (every stage arrived from 10.0.2.2;
+  the SSH stage also contained the lab operator's own failed key attempts, which illustrates
+  why a shared NAT source is never identity). That alert was created by v1.0.0 and keeps a
+  deletion in its evidence (see below).
+
+## Real false-positive observations (live lab, 2026-11-21) and how they are handled
+
+Found by the lead and C2 on genuine telemetry; each fix is tested on fixtures derived from
+the real records and checked against the stored data with the read-only dry run.
+
+| # | Rule | Observation (genuine data) | Handling | Stored alerts |
+|---|---|---|---|---|
+| 1 | CORR-002 | v1.0.0 took the VM-002 simulation's cleanup, an auditd `unlinkat` of `extorq-sim-0e49c82d82bc.service` by `/usr/bin/rm` (14:42:35Z), as the "unexpected systemd persistence change" | v1.1.0 excluded deletions with a denylist, which still let other non-changing hits count (live: `fsetxattr` with path `?` by `install`); v1.2.0 requires creation/modification evidence (allowlist of successful create/modify syscalls on a unit file, or an inventory diff); removals are context features | alert `b46da380...` (created 15:05Z by v1.0.0) keeps that event and `/usr/bin/rm` in `persistence_writers` (evidence is append-only); the dry run shows v1.2.0 still finds the chain through the unit creation at 15:07:11Z and no longer produces the deletion or the `fsetxattr` |
+| 2 | CORR-002 | B1's `vm.sh redeploy` re-installs `lab-portal.service` with `install` (unlinkat, openat CREATE, fsetxattr, fchownat, fchmodat; content unchanged, so no inventory diff), which fell inside the chain window | Counted on purpose (a genuine write to a unit file), but shown as `persistence_units_audit_only` with writer `/usr/bin/install`, separate from `persistence_units_inventory_confirmed`; the removal half is context | unchanged; visible in the dry run (`persistence_units_audit_only=lab-portal.service`) |
+| 3 | VM-002 | Same denylist weakness for corroboration: a failed `openat`, an `fsetxattr` or a numeric syscall on the unit path would have raised confidence to high | v1.2.0 uses the same allowlist; the investigation context's `auditd_corroborated` uses the same definition (`extorq.detection.linux_audit`) and reports `auditd_removals` separately | the live VM-002 alert (`5ac7d8f5...`, high) is corroborated by a genuine `openat CREATE`, unaffected |
+| 4 | K8S-002 | kubeadm's bootstrap bindings `kubeadm:cluster-admins` (by `kubernetes-super-admin`, 10:16:01.080Z) and `kube-public/kubeadm:bootstrap-signer-clusterinfo` (by `kubernetes-admin`, 10:16:03.118Z) alerted at cluster creation | v1.1.0 documented bootstrap exception (identity + exact object signature + cluster-birth window; no prefix allowlist); genuine birth records: v1.0.0 2 alerts -> v1.1.0 0 | alerts `38d0d427...` and `05678dbf...` (v1.0.0) remain; recommend closing them as benign with a note in the console |
+| 5 | K8S-002 | `infra/kind/kind.sh` marked those two bindings as accepted risks with `kubectl annotate` (14:55Z); each PATCH alerted again (the response object is still risky) | v1.1.0 ignores writes whose changed fields are only annotations (B2-IC-7; labels stay in scope); B2's real capture of that patch: v1.0.0 1 alert -> v1.1.0 0 | the stored 14:55 events predate B2's marker, so a re-evaluation of that window still matches them (dry run); new annotate patches carry the marker (the running gateway has B2's current normaliser) |
+| 6 | K8S-002 | Summaries of cluster-scoped objects read `unknown/<name>` | `object_ref` renders `<name> (cluster-scoped)` | stored summaries keep the text their version rendered (e.g. the K8S-002 scenario alert `afc76864...`) |
+| 7 | GH-001 | C1's fail-closed analyser marks unparseable workflows `lexical_fallback`; v1.0.0 would rate such an escalation low because a parse error is present | v1.1.0: medium, `analysis_methods` feature | no live lexical-fallback event yet |
+
+Detections of B2's own captured test objects (`b2-fixture-*`, created at 10:18Z to record
+audit fixtures) are genuine risky RBAC objects and stay alerted.
 
 ## Planned (not implemented)
 

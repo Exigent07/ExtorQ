@@ -200,6 +200,108 @@ def test_redaction_is_idempotent() -> None:
     assert redact_text(once) == (once, 0)
 
 
+# ── JSON-safe key-based redaction (B2-IC-2) ───────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"automount_sa_token":false}',  # the live B2 case (pod request summary)
+        '{"automount_sa_token": true, "host_network": false}',
+        '{"secret": null, "client_secret": false, "auth_token": 12, "api_key": -1.5e3}',
+        '{"password": 0, "session_secret": 3.25, "private_key": 1E+2}',
+        '{"token": [1, 2], "secret": {"rotation_days": 30}, "access_key": []}',
+        '{"spec": {"automountServiceAccountToken": false, "secret_volumes": 2}}',
+        "{'api_key': None, 'token': True, 'secret': False, 'password': 42}",  # Python repr
+        '{"authorization": 123456789}',
+        "allow_gh_cli_token=true",
+        "allow_gh_cli_token: false",
+        "token=null&page=2",
+        "GITHUB_TOKEN=false",
+        "password=None",
+    ],
+)
+def test_json_literals_and_numbers_are_never_rewritten(text: str) -> None:
+    assert redact_text(text) == (text, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ('{"token": "' + _synthetic("tok", "-syn", 3) + '"}', _synthetic("tok", "-syn", 3)),
+        ('{"password": "4096"}', "4096"),  # a numeric STRING is still a candidate
+        ('{"token":"ab\\"cd-synthetic"}', "cd-synthetic"),  # escaped quote: one value
+        ('{"secret": "x\\\\", "after": "kept"}', "x\\\\"),
+        ('{"authorization": "' + _synthetic("Tok", "1-x", 4) + '"}', _synthetic("Tok", "1-x", 4)),
+    ],
+)
+def test_json_string_values_are_redacted_and_stay_valid_json(text: str, secret: str) -> None:
+    before = json.loads(text)
+    redacted, count = redact_text(text)
+    assert count == 1 and secret not in redacted
+    after = json.loads(redacted)  # still valid JSON
+    assert after.keys() == before.keys()
+    if "after" in before:
+        assert after["after"] == "kept"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["password=12345678", "token: 4096", "secret=truex", f"passwd {chr(61)} 9876543210"],
+)
+def test_free_text_numbers_and_word_values_stay_candidates(text: str) -> None:
+    redacted, count = redact_text(text)
+    assert count == 1 and "[REDACTED:secret]" in redacted
+
+
+def test_redacting_random_json_documents_keeps_them_valid() -> None:
+    """Property (seeded): non-string values under sensitive keys are byte-identical after
+    redaction; string values under them are replaced; the document stays valid JSON."""
+    import random
+
+    rng = random.Random(20261122)
+    keys = [
+        "token",
+        "automount_sa_token",
+        "secret",
+        "client_secret",
+        "password",
+        "api_key",
+        "auth_token",
+        "authorization",
+        "session_secret",
+        "name",
+    ]
+
+    def scalar() -> object:
+        choice = rng.randrange(6)
+        if choice == 0:
+            return rng.choice([True, False])
+        if choice == 1:
+            return None
+        if choice == 2:
+            return rng.randint(-(10**12), 10**12)
+        if choice == 3:
+            return rng.uniform(-1e6, 1e6)
+        if choice == 4:
+            return [rng.randint(0, 9) for _ in range(rng.randrange(3))]
+        return {"nested_token": rng.choice([True, False, None, 7])}
+
+    for _ in range(400):
+        doc = {rng.choice(keys) + ("" if rng.random() < 0.7 else "_x"): scalar() for _ in range(4)}
+        for separators in ((",", ":"), (", ", ": ")):
+            text = json.dumps(doc, separators=separators)
+            assert redact_text(text) == (text, 0), text
+        with_string = dict(doc, token="synthetic-" + str(rng.randint(10**6, 10**7)))
+        text = json.dumps(with_string)
+        redacted, count = redact_text(text)
+        parsed = json.loads(redacted)
+        assert count >= 1 and parsed["token"] == "[REDACTED:secret]"
+        assert {k: v for k, v in parsed.items() if k != "token"} == {
+            k: v for k, v in with_string.items() if k != "token"
+        }
+
+
 def test_sanitize_strips_controls_ansi_and_invisible_characters() -> None:
     rlo, zwsp, tag_a, shy = chr(0x202E), chr(0x200B), chr(0xE0041), chr(0x00AD)
     lsep, psep, mvs, bom, nel, pua = (

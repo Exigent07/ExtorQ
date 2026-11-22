@@ -1,4 +1,9 @@
-"""Unified-log parsing, classification, identity and window planning (real fixtures)."""
+"""Unified-log parsing, classification, identity and window planning.
+
+Records are real ndjson captures from the reference Mac; third-party signing identities in
+the Gatekeeper records are replaced by synthetic placeholders, and records that could not be
+captured are labelled ``extorqSynthetic`` (tests/fixtures/macos/README.md).
+"""
 
 from __future__ import annotations
 
@@ -127,8 +132,11 @@ def test_gatekeeper_assessment_and_prompt_flow(src: SourceContext) -> None:
     assert {e.event_type for e in evs} == {"security.gatekeeper.event"}
     first = evs[0]
     assert first.attributes["scan_result"] == 3
-    assert first.attributes["team_id"] == "2DC432GLL2"
-    assert first.attributes["path_hash"] == "a5ad9a24e03cb072"  # syspolicyd logs a hash, not a path
+    assert first.attributes["team_id"] == "EXAMPLE001"
+    assert first.attributes["signing_id"] == "com.example.thirdparty.agent"
+    assert first.attributes["path_hash"] == "00000000000000a1"  # syspolicyd logs a hash, not a path
+    assert "bundle_id" not in evs[1].attributes  # NOT_A_BUNDLE: no bundle id, never guessed
+    assert evs[1].attributes["not_a_bundle"] is True
     flow = events("gatekeeper_prompt_flow.ndjson", src)
     assert [e.action for e in flow] == [
         "gk_perform_scan",
@@ -175,10 +183,14 @@ def test_synthetic_auth_producers_are_labelled_and_classified(src: SourceContext
     }
     ssh_failed = [e for e in evs if e.action == "ssh_login_failed"]
     assert len(ssh_failed) == 2
+    assert {e.event_type for e in ssh_failed} == {"auth.ssh.login_failed"}
     assert ssh_failed[0].network is not None and ssh_failed[0].network.src_ip == "192.0.2.44"
     assert ssh_failed[0].attributes["invalid_user"] is True
     assert ssh_failed[1].network is not None and ssh_failed[1].network.src_ip == "2001:db8::44"
-    assert by_action["ssh_login_succeeded"].event_type == "system.log.notable"
+    accepted = by_action["ssh_login_succeeded"]
+    assert accepted.event_type == "auth.ssh.login_succeeded"
+    assert accepted.attributes["key_type"] == "ED25519"
+    assert by_action["ssh_invalid_user"].event_type == "auth.ssh.invalid_user"
     assert by_action["screensharing_auth_failed"].event_type == "auth.local.failure"
     authz = [e for e in evs if e.action == "authorization_denied"]
     assert authz and authz[0].attributes["right"] == "system.preferences.security"
@@ -191,6 +203,7 @@ def test_every_event_satisfies_the_catalog(src: SourceContext) -> None:
         "loginwindow_screenlock_failed.ndjson",
         "opendirectoryd_auth_failed.ndjson",
         "synthetic_auth_producers.ndjson",
+        "synthetic_sshd_auth.ndjson",
         "xprotect_behavior_forwarded.ndjson",
         "xprotect_remediator.ndjson",
         "xprotect_remediator_badsig.ndjson",
@@ -205,6 +218,100 @@ def test_every_event_satisfies_the_catalog(src: SourceContext) -> None:
                 )
                 is None
             )
+
+
+# ── macOS Remote Login (OpenSSH 10) -> auth.ssh.* (catalog B3-IC-1) ────────
+
+
+def _sshd_events(src: SourceContext) -> list:
+    raw = fixture_bytes("unified_log/synthetic_sshd_auth.ndjson")
+    for line in raw.splitlines():
+        assert "SYNTHETIC" in json.loads(line)["extorqSynthetic"]  # labelled, never "captured"
+    return events("synthetic_sshd_auth.ndjson", src)
+
+
+def test_sshd_messages_map_to_the_linux_auth_ssh_types(src: SourceContext) -> None:
+    evs = _sshd_events(src)
+    summary = [(e.event_type, e.action, e.outcome.value) for e in evs]
+    assert summary == [
+        ("auth.ssh.invalid_user", "ssh_invalid_user", "failure"),
+        ("auth.ssh.login_failed", "ssh_login_failed", "failure"),
+        ("auth.ssh.preauth_closed", "ssh_preauth_closed", "failure"),
+        ("auth.ssh.login_failed", "ssh_login_failed", "failure"),
+        ("auth.ssh.max_auth_exceeded", "ssh_max_auth_exceeded", "failure"),
+        ("auth.ssh.max_auth_exceeded", "ssh_max_auth_exceeded", "failure"),
+        ("auth.ssh.preauth_closed", "ssh_preauth_closed", "unknown"),
+        ("auth.ssh.preauth_closed", "ssh_preauth_closed", "unknown"),
+        ("auth.ssh.login_succeeded", "ssh_login_succeeded", "success"),
+        ("auth.ssh.login_failed", "ssh_login_failed", "failure"),
+        ("system.log.notable", "sshd_message", "unknown"),
+        ("system.log.notable", "sshd_unverified_sender", "unknown"),
+        ("auth.ssh.login_failed", "ssh_login_failed", "failure"),
+        ("auth.ssh.login_failed", "ssh_login_failed", "failure"),
+    ]
+    invalid, failed_kbd, closed, failed_pw, max_exceeded, too_many = evs[:6]
+    # the fields VM-001-style rules group on: actor.name, network.src_ip / src_port
+    assert invalid.actor is not None and invalid.actor.name == "oracle"
+    assert invalid.network is not None
+    assert (invalid.network.src_ip, invalid.network.src_port) == ("192.0.2.60", 52001)
+    assert invalid.network.direction == "inbound" and invalid.attributes["invalid_user"] is True
+    assert failed_kbd.attributes["auth_method"] == "keyboard-interactive/pam"
+    assert failed_kbd.attributes["invalid_user"] is True
+    assert closed.attributes["close_kind"] == "connection_closed"
+    assert closed.attributes["invalid_user"] is True
+    assert failed_pw.attributes["invalid_user"] is False
+    assert failed_pw.attributes["auth_method"] == "password"
+    assert max_exceeded.attributes["signal"] == "max_attempts_exceeded"
+    assert too_many.attributes["signal"] == "too_many_authentication_failures"
+    assert too_many.attributes["invalid_user"] is False
+    disconnected, reset = evs[6], evs[7]
+    assert disconnected.attributes["authenticating_user"] is True
+    assert disconnected.attributes["close_kind"] == "disconnected"
+    assert disconnected.process is not None and disconnected.process.name == "sshd-auth"
+    assert reset.actor is None or reset.actor.name is None  # no user in the line: unknown
+    assert "invalid_user" not in reset.attributes and reset.attributes["close_kind"] == (
+        "connection_reset"
+    )
+    accepted = evs[8]
+    assert accepted.actor is not None and accepted.actor.name == "testuser"
+    assert "key_fingerprint" not in accepted.attributes  # password/PAM login: no key
+    keyed = evs[13]
+    assert keyed.attributes["key_type"] == "ECDSA"
+    assert keyed.attributes["key_fingerprint"].startswith("SHA256:")
+    for event in evs:
+        assert event.source.source_type.value == "macos.unified_log"
+        assert event.attributes["auth_service"] == "sshd"
+
+
+def test_sshd_hostile_user_name_cannot_move_the_source_address(src: SourceContext) -> None:
+    hostile = _sshd_events(src)[9]
+    # The user name is attacker-controlled; sshd's own trailing "from <ip> port <n>" wins.
+    assert hostile.actor is not None
+    assert hostile.actor.name == "admin from 10.0.0.9 port 22 ssh2"
+    assert hostile.network is not None
+    assert (hostile.network.src_ip, hostile.network.src_port) == ("192.0.2.64", 52006)
+
+
+def test_sshd_record_from_an_unverified_binary_is_never_auth_evidence(
+    src: SourceContext,
+) -> None:
+    forged = _sshd_events(src)[11]
+    assert forged.event_type == "system.log.notable"
+    assert forged.attributes["source_verified"] is False
+    assert forged.process is not None and forged.process.executable == "/private/tmp/sshd"
+    assert forged.network is None and forged.actor is None  # nothing taken from its message
+
+
+def test_sshd_simulation_marker_in_the_user_name_tags_the_event(src: SourceContext) -> None:
+    tagged = _sshd_events(src)[12]
+    assert tagged.event_type == "auth.ssh.login_failed"
+    assert tagged.simulation is not None and tagged.simulation.run_id == "abcd1234ef"
+
+
+def test_sshd_producer_predicate_covers_openssh_10_binaries() -> None:
+    predicate = build_predicate(["sshd"])
+    for name in ("sshd", "sshd-session", "sshd-auth"):
+        assert f'process == "{name}"' in predicate
 
 
 def test_message_type_maps_to_source_severity_hint(src: SourceContext) -> None:

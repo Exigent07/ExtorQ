@@ -8,19 +8,27 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
-from ai_fakes import ssh_context
+from ai_fakes import REPO_ROOT, ssh_context
 
 from extorq.ai.projection import (
+    ALLOWED_KEY_FIELDS,
     GEMINI_LIMITS,
     JEV_LIMITS,
+    LIMIT_K8S_DETAIL,
     UNRECOGNISED,
     Domain,
+    canonical_key_field,
     classify_domain,
     project_context,
 )
+from extorq.ai.sanitize import LIMIT_HTTP_PATH
 from extorq.ai.synthetic import K8S_ASSET, VM_ASSET
+from extorq.contracts.catalog import EVENT_CATALOG
 from extorq.contracts.common import AssetType, Criticality, Environment
 from extorq.contracts.context import AssetSummary, InvestigationContext, ServiceSummary
+
+#: REAL stored context (provenance and privacy review: tests/fixtures/ai/README.md).
+REAL_K8S001 = REPO_ROOT / "tests" / "fixtures" / "ai" / "context_k8s001_real.json"
 
 TOP_LEVEL_KEYS = {
     "alert",
@@ -136,7 +144,7 @@ def test_sensitive_and_unknown_key_fields_are_dropped() -> None:
         assert value not in text
     fields = projection.payload["evidence_events"][0]["fields"]
     assert "random_unlisted_field" not in fields
-    assert set(fields) <= {"auth_method", "src_port"}
+    assert set(fields) <= {"auth_method", "network_src_port"}
     assert projection.dropped_keys >= 9
 
 
@@ -278,3 +286,164 @@ def test_no_unwrapped_32_hex_except_event_and_alert_ids(
         for path, value in _strings(projection.payload):
             for token in HEX32.findall(value):
                 assert token in allowed, (path, token)
+
+
+# ── evidence key fields: canonical names (session 3 review finding, HIGH) ──
+
+
+def _real_k8s001() -> tuple[InvestigationContext, dict[str, Any]]:
+    data = json.loads(REAL_K8S001.read_text(encoding="utf-8"))
+    return InvestigationContext.model_validate(data), data
+
+
+def test_real_stored_context_keeps_every_evidence_key_field() -> None:
+    """Regression: the builder keys fields by dotted catalog path and ALL of them were dropped."""
+    from extorq.correlation.builder import compute_input_hash
+
+    ctx, data = _real_k8s001()
+    assert compute_input_hash(data) == ctx.input_hash, "fixture must stay the unmodified body"
+    (evidence,) = ctx.evidence
+    assert len(evidence.key_fields) == 10
+    assert all("." in key for key in evidence.key_fields), "builder form: dotted catalog paths"
+    for limits, marker in ((JEV_LIMITS, False), (GEMINI_LIMITS, True)):
+        projection = project_context(ctx, limits, include_simulation_marker=marker)
+        (event,) = projection.payload["evidence_events"]
+        assert event["event_id"] == evidence.event_id
+        fields = event["fields"]
+        expected = {canonical_key_field(k, evidence.event_type) for k in evidence.key_fields}
+        assert set(fields) == expected and len(fields) == 10
+        # Catalog order for k8s.api.request (most decisive first).
+        assert list(fields)[:4] == [
+            "kubernetes_verb",
+            "kubernetes_resource",
+            "kubernetes_namespace",
+            "kubernetes_object_name",
+        ]
+        assert fields["kubernetes_verb"] == {"untrusted": "create"}
+        assert fields["kubernetes_resource"] == {"untrusted": "pods"}
+        assert fields["kubernetes_response_code"] == 403
+        assert fields["kubernetes_source_ips"] == [{"untrusted": "172.18.0.1"}]
+        assert "privileged" in fields["pod_security_violation"]["untrusted"]
+        assert '"host_pid":true' in fields["request_summary"]["untrusted"]
+        assert projection.dropped_keys == 0
+
+
+def test_dataset_key_fields_all_have_canonical_names(
+    dataset_records: list[dict[str, Any]], contexts: dict[str, InvestigationContext]
+) -> None:
+    for record in dataset_records:
+        for event in contexts[record["case_id"]].evidence:
+            for key in event.key_fields:
+                assert canonical_key_field(key, event.event_type) is not None, (
+                    record["case_id"],
+                    key,
+                )
+
+
+def test_every_spelling_of_a_field_maps_to_one_canonical_name() -> None:
+    for spelling in ("http.route", "http_route", "route"):
+        assert canonical_key_field(spelling) == "http_route"
+    for spelling in ("attributes.request_summary", "attributes_request_summary", "request_summary"):
+        assert canonical_key_field(spelling) == "request_summary"
+    assert (
+        canonical_key_field("kubernetes.verb") == canonical_key_field("verb") == "kubernetes_verb"
+    )
+    assert canonical_key_field("network.src_port") == canonical_key_field("src_port")
+    assert canonical_key_field("attributes.role_ref") == "role_ref"  # documented extra
+    assert canonical_key_field("not.a.catalog.field") is None
+    # Services are referenced by alias; service ids and names never become fields.
+    assert canonical_key_field("service.service_id") is None
+    assert canonical_key_field("service.name") is None
+
+
+def test_catalog_paths_have_distinct_canonical_names() -> None:
+    paths = {p for spec in EVENT_CATALOG.values() for p in spec.key_fields}
+    paths -= {"service.service_id", "service.name"}
+    names = {canonical_key_field(p) for p in paths}
+    assert None not in names
+    assert len(names) == len(paths), "two catalog fields must never share a projected name"
+    assert names <= ALLOWED_KEY_FIELDS
+
+
+def test_ambiguous_leaves_resolved_by_event_type_never_guessed() -> None:
+    assert canonical_key_field("namespace", "k8s.api.request") == "kubernetes_namespace"
+    assert canonical_key_field("namespace", "k8s.resource.created") == "resource_namespace"
+    assert canonical_key_field("name", "auth.ssh.login_failed") == "actor_name"
+    # Without a resolving event type the leaf keeps its own (ambiguous) name.
+    assert canonical_key_field("namespace") == "namespace"
+    assert canonical_key_field("name", "no.such.event") == "name"
+
+
+def test_duplicate_spellings_keep_the_catalog_path_value() -> None:
+    ctx, _ = _real_k8s001()
+    (evidence,) = ctx.evidence
+    fields = {**evidence.key_fields, "kubernetes_verb": "dup-verb-1", "verb": "dup-verb-2"}
+    ctx = ctx.model_copy(update={"evidence": [evidence.model_copy(update={"key_fields": fields})]})
+    projection = project_context(ctx, JEV_LIMITS)
+    event_fields = projection.payload["evidence_events"][0]["fields"]
+    assert event_fields["kubernetes_verb"] == {"untrusted": "create"}
+    assert "dup-verb" not in projection.serialised()
+    assert projection.dropped_keys == 2
+
+
+def test_deny_list_applies_to_dotted_spellings() -> None:
+    ctx = ssh_context(
+        extra_fields={
+            "attributes.password": "pw-dotted-123",
+            "attributes.session_token": "tok-dotted-123",
+            "http.authorization": "Bearer dotted-abcdef",
+            "attributes.raw": "raw dotted line",
+            "attributes.payload": "{}",
+            "attributes.cookie_header": "c=dotted",
+        }
+    )
+    projection = project_context(ctx, JEV_LIMITS)
+    text = projection.serialised()
+    for value in (
+        "pw-dotted-123",
+        "tok-dotted-123",
+        "dotted-abcdef",
+        "raw dotted line",
+        "c=dotted",
+    ):
+        assert value not in text
+    assert set(projection.payload["evidence_events"][0]["fields"]) == {
+        "auth_method",
+        "network_src_port",
+    }
+
+
+def test_text_limits_apply_by_canonical_name() -> None:
+    ctx = ssh_context(
+        extra_fields={"http.route": "/" + "a" * 400, "attributes.request_summary": "r" * 400}
+    )
+    fields = project_context(ctx, JEV_LIMITS).payload["evidence_events"][0]["fields"]
+    assert len(fields["http_route"]["untrusted"]) == LIMIT_HTTP_PATH
+    assert len(fields["request_summary"]["untrusted"]) == LIMIT_K8S_DETAIL
+
+
+def test_key_field_cap_keeps_the_catalog_order() -> None:
+    ctx, _ = _real_k8s001()
+    projection = project_context(ctx, replace(JEV_LIMITS, max_key_fields=3))
+    fields = projection.payload["evidence_events"][0]["fields"]
+    assert list(fields) == ["kubernetes_verb", "kubernetes_resource", "kubernetes_namespace"]
+    assert projection.dropped_keys == 7
+
+
+def test_evidence_sample_keeps_every_event_type() -> None:
+    """SYNTHETIC CORR-002-like sequence: the middle stage must survive evidence sampling."""
+    base = ssh_context(evidence_count=20)
+    evidence = sorted(base.evidence, key=lambda e: e.event_time)
+    middle = [
+        e.model_copy(update={"event_type": "http.request", "key_fields": {"http.route": "/admin"}})
+        for e in evidence[8:12]
+    ]
+    ctx = base.model_copy(update={"evidence": evidence[:8] + middle + evidence[12:]})
+    projection = project_context(ctx, JEV_LIMITS)
+    events = projection.payload["evidence_events"]
+    assert len(events) == JEV_LIMITS.max_evidence
+    assert [e["event_type"] for e in events].count("http.request") == 1
+    assert events[0]["event_id"] == evidence[0].event_id  # earliest kept
+    assert events[-1]["event_id"] == evidence[-1].event_id  # latest kept
+    times = [e["time"] for e in events]
+    assert times == sorted(times)

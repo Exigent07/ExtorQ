@@ -21,6 +21,7 @@ from extorq.api.repository import (
     FindingFilters,
     SeriesQuery,
     ServiceFilters,
+    identity_matches,
 )
 from extorq.contracts import (
     AIAssessment,
@@ -353,7 +354,6 @@ class FakeRepository:
         self.direct_assessments: list[Row] = []
         self.services: list[Row] = []
         self.instances: list[Row] = []
-        self.finding_attribution: dict[str, str] = {}
         self.auth_summary: dict[str, Row] = {}
         self.auth_sources: dict[str, list[Row]] = {}
         self.service_sources: dict[str, list[Row]] = {}
@@ -415,6 +415,7 @@ class FakeRepository:
         return [{"asset_type": k, "last_event_at": v} for k, v in out.items()]
 
     def collectors(self, asset_id: str) -> list[Row]:
+        self.calls.append(("collectors", asset_id))
         return [c for c in self.collector_rows if not asset_id or c["asset_id"] == asset_id]
 
     def asset_children(self, asset_id: str) -> list[Row]:
@@ -440,19 +441,14 @@ class FakeRepository:
             for f in self.findings
             if (not filters.asset_id or f["asset_id"] == filters.asset_id)
             and (not filters.severities or f["severity"] in filters.severities)
-            and (
-                not filters.service_id
-                or self.finding_attribution.get(f["finding_id"]) == filters.service_id
-            )
+            # Mirrors v_findings_current.service_id: the latest observation's attribution
+            # (a row's ``service_id``), never an older one.
+            and (not filters.service_id or f.get("service_id") == filters.service_id)
         ]
         return rows[offset : offset + limit], len(rows), self.lifecycle
 
     def finding_severity_counts(self, asset_id: str) -> tuple[list[Row], bool]:
         return self.finding_counts, self.lifecycle
-
-    def finding_service_attribution(self, finding_ids: Sequence[str]) -> dict[str, str]:
-        known = self.finding_attribution
-        return {i: known[i] for i in finding_ids if i in known}
 
     # services
     def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]:
@@ -472,23 +468,57 @@ class FakeRepository:
         rows.sort(key=lambda r: (r["asset_id"], r["service_kind"], r["name"], r["service_id"]))
         return rows[:max_rows]
 
-    def get_service(self, service_id: str) -> Row | None:
-        return next((r for r in self.services if r["service_id"] == service_id), None)
+    @staticmethod
+    def _in_scope(asset_id: str | None, scope: str) -> bool:
+        """Mirror of the SQL scope predicate (F-19): the asset itself or a descendant."""
+        return not scope or asset_id == scope or (asset_id or "").startswith(scope + "/")
 
-    def service_instances(self, service_id: str, limit: int) -> tuple[list[Row], int]:
-        rows = [i for i in self.instances if i["service_id"] == service_id]
+    def get_service(self, service_id: str) -> Row | None:
+        # Mirror of ClickHouseRepository.get_service: newest row whose id matches its key.
+        rows = sorted(
+            (r for r in self.services if r["service_id"] == service_id),
+            key=lambda r: r["last_seen"],
+            reverse=True,
+        )
+        return next((r for r in rows if identity_matches(r)), None)
+
+    def service_instances(
+        self, service_id: str, limit: int, scope_asset: str = ""
+    ) -> tuple[list[Row], int]:
+        rows = [
+            i
+            for i in self.instances
+            if i["service_id"] == service_id and self._in_scope(i.get("asset_id"), scope_asset)
+        ]
         return rows[:limit], len(rows)
 
-    def service_event_sources(self, service_id: str, since: datetime, until: datetime) -> list[Row]:
+    def instances_on_asset(self, asset_id: str, limit: int) -> list[Row]:
+        rows = [i for i in self.instances if i.get("asset_id") == asset_id]
+        rows.sort(key=lambda r: (r["service_id"], -r["observed_at"].timestamp(), r["instance_id"]))
+        return rows[:limit]
+
+    def services_by_id(self, service_ids: Sequence[str], max_rows: int) -> list[Row]:
+        rows = [r for r in self.services if r["service_id"] in service_ids]
+        rows.sort(key=lambda r: (r["asset_id"], r["service_kind"], r["name"], r["service_id"]))
+        return rows[:max_rows]
+
+    def service_event_sources(
+        self, service_id: str, since: datetime, until: datetime, scope_asset: str = ""
+    ) -> list[Row]:
         self.calls.append(("service_event_sources", (service_id, since, until)))
+        self.calls.append(("service_scope", scope_asset))
         return self.service_sources.get(service_id, [])
 
-    def service_auth_summary(self, service_id: str, since: datetime, until: datetime) -> Row:
+    def service_auth_summary(
+        self, service_id: str, since: datetime, until: datetime, scope_asset: str = ""
+    ) -> Row:
+        self.calls.append(("service_scope", scope_asset))
         return self.auth_summary.get(service_id, {})
 
     def service_auth_sources(
-        self, service_id: str, since: datetime, until: datetime, limit: int
+        self, service_id: str, since: datetime, until: datetime, limit: int, scope_asset: str = ""
     ) -> list[Row]:
+        self.calls.append(("service_scope", scope_asset))
         return self.auth_sources.get(service_id, [])[:limit]
 
     # rules
@@ -621,6 +651,7 @@ class FakeRepository:
             and (not filters.asset_id or e["asset_id"] == filters.asset_id)
             and (not filters.src_ip or e["src_ip"] == filters.src_ip)
             and (not filters.service_id or e.get("service_id") == filters.service_id)
+            and self._in_scope(e.get("asset_id"), filters.scope_asset)
         ]
         rows.sort(key=lambda r: r["event_time"], reverse=True)
         return rows[offset : offset + limit]

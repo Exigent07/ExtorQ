@@ -4,10 +4,15 @@ A producer authorised for one asset must not be able to publish a ``service`` ro
 that carries another asset's ``service_id`` (ids are computable from public facts),
 nor an instance whose ``instance_id`` does not derive from its declared parts.
 
-The negative cases are marked ``xfail`` (non-strict) until the gateway recomputes
-the identities (owner A, F-IC-6): they document the expected behaviour and turn
-into XPASS when it lands. The positive case (a correctly derived record is
-accepted) must always pass. All records are SYNTHETIC.
+The gateway recomputes both identities from the record's own fields and
+quarantines a mismatch (``identity_mismatch``; owner A, F-19 gateway part,
+implemented in build session 2). The negative cases were ``xfail`` until then
+and are now hard requirements; the positive case (a correctly derived record is
+accepted) guards against over-blocking. All records are SYNTHETIC.
+
+Residual (owner D1, not covered here): the analyst API reads service instances
+and events by ``service_id`` alone, so an instance that an authorised producer
+attaches to another asset's service id is shown under that service.
 """
 
 from __future__ import annotations
@@ -27,11 +32,6 @@ NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
 NOW_ISO = NOW.isoformat()
 HOST = "linux:lab-vm-01"
 OTHER = "macos:workstation-01"
-
-F19 = (
-    "F-19 / F-IC-6 (owner A): the gateway does not yet recompute service_id/instance_id "
-    "from the record's own fields"
-)
 
 
 def _producer() -> Any:
@@ -79,9 +79,25 @@ def _instance(sid: str, iid: str) -> dict[str, Any]:
     }
 
 
+def _prepare(record: dict[str, Any]) -> Any:
+    return processing.prepare_batch([record], _producer(), batch_id="b" * 32, now=NOW)
+
+
 def _accepted(record: dict[str, Any]) -> bool:
-    batch = processing.prepare_batch([record], _producer(), batch_id="b" * 32, now=NOW)
+    batch = _prepare(record)
     return bool(batch.candidates) and not batch.denials
+
+
+def _quarantined_for_identity(record: dict[str, Any]) -> bool:
+    """Rejected for the right reason: quarantined as an identity mismatch, not denied."""
+    batch = _prepare(record)
+    reasons = [entry.reason for entry in batch.quarantined]
+    return (
+        not batch.candidates
+        and not batch.denials
+        and len(reasons) == 1
+        and reasons[0].startswith("identity_mismatch")
+    )
 
 
 def test_correctly_derived_service_and_instance_are_accepted() -> None:
@@ -90,14 +106,14 @@ def test_correctly_derived_service_and_instance_are_accepted() -> None:
     assert _accepted(_instance(sid, instance_id(sid, "process", "4242:1")))
 
 
-@pytest.mark.xfail(reason=F19, strict=False)
 def test_service_carrying_another_assets_id_is_rejected() -> None:
     foreign = service_id(OTHER, "host_service", "com.openssh.sshd")
     assert not _accepted(_service(foreign))
+    assert _quarantined_for_identity(_service(foreign))
 
 
-@pytest.mark.xfail(reason=F19, strict=False)
 def test_instance_with_underived_id_is_rejected() -> None:
     sid = service_id(HOST, "host_service", "ssh.service")
     forged = instance_id(sid, "process", "9999:1")  # does not match instance_key 4242:1
     assert not _accepted(_instance(sid, forged))
+    assert _quarantined_for_identity(_instance(sid, forged))

@@ -65,12 +65,16 @@ query fails.
 | Symptom | Likely cause | Action |
 |---|---|---|
 | Collector `buffered` (exit 75) | gateway down or unreachable | records are safe in the outbox; restore the gateway, then `uv run extorq-collect flush` |
+| Every host collector stale | the background runner is not running | `make collectors-status`; `make collectors-start` (log `var/log/collectors.log`) |
+| API answers 503 for up to a minute | the `extorq_api_ro` quota (1200 queries per minute) is exhausted, for example by smoke or test runs | wait for the next minute; do not run load-heavy checks while presenting |
 | Gateway `401` | wrong or rotated token | re-run `scripts/bootstrap.py`; restart the collector |
 | Gateway `403` | producer not allowed this kind, asset or source type | read `ingest_audit`; fix the collector or request a registry change (A) |
 | `202` but nothing stored | records quarantined or writer failing | read `ingest_quarantine`; `docker compose ps`; writer health |
 | `503` with `Retry-After` | spool full or unavailable | the gateway sheds load; check writer and ClickHouse health |
 | Linux collector errors | VM down, host key changed, dispatcher denial (exit 77) | `infra/vm/vm.sh status`; host-key and authentication failures are never retried automatically |
 | Kubernetes events missing | OTel DaemonSet down or cannot reach the gateway | `infra/kind/kind.sh status`, `infra/kind/kind.sh netcheck` |
+| `k8s-inventory` collector fails with 401; K8S-002 alerts only medium | the 24-hour inventory token expired | `infra/kind/kind.sh token`, then restart the collector |
+| GitHub collector health shows warnings or gaps | token source and plan limits: the gh CLI token is broader than read-only; branch protection, rules and rulesets on a private free-plan repository answer 403 | expected for the lab ([known limitations](known-limitations.md) C6 to C8); a fine-grained read-only token removes the breadth warning |
 | Rule never fires | missing sources or no matching telemetry | `rule_runs.missing_sources`; `uv run extorq rules test --only <ID>` |
 | Service shows `unmonitored` | no adapter, planned adapter, adapter disabled | read its `coverage_note`; see [known limitations](known-limitations.md) S1 |
 | Service shows `degraded` | source failing, no telemetry yet, or stale | check the adapter's collector health and source |
@@ -91,6 +95,15 @@ query fails.
 
 ## 5. Readiness check
 
-`make demo-check` (`scripts/demo_check.py`, owner A, being added) prints a read-only
-readiness report: stack health, gateway, collectors and data freshness. Run it
-before any demonstration together with `make test-security`.
+`make demo-check` (`scripts/demo_check.py`, owner A) prints a read-only
+readiness report and exits 1 when a check fails: compose services, gateway
+health, spool and acceptance window, API, console and Grafana (including the
+datasource), applied migrations, the five mandatory scenarios with all evidence
+stored, fresh host collectors, rule runs, plus informational freshness,
+pipeline, services, simulations and the Kubernetes token lifetime. Its
+ClickHouse queries use the debug proxy when it is up and otherwise run inside
+the `api` container, so the proxy can stay off. It prints names, counts, ids and
+timestamps only. Run it before any demonstration together with
+`make test-security`, not while presenting (it issues many queries against the
+API identity's per-minute quota); the full pre-flight list is in
+[demo-runbook.md section 2](demo-runbook.md#2-pre-flight-checklist).

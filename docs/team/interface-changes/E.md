@@ -78,3 +78,56 @@ and maps anything else to `"unrecognised"`.
   Vertex switch and the SDK record/replay mode are pinned in code, so `TYPESAFE_BASE_URL`,
   `GOOGLE_GEMINI_BASE_URL`, `GOOGLE_GENAI_API_VERSION`, `GOOGLE_GENAI_USE_VERTEXAI` and
   `GOOGLE_GENAI_CLIENT_MODE` cannot redirect keys or write prompts to disk.
+
+## E-IC-6 Compose: pass the AI daily caps through (owner: A, `compose.yaml`) - session 3
+
+**What.** `compose.yaml` passes `EXTORQ_JEV_ENABLED` / `EXTORQ_GEMINI_ENABLED` (E-IC-1, done)
+but not the caps, so a container with a provider enabled always runs with the defaults (Jev
+300, Gemini 50 calls per UTC day). Proposal (defaults unchanged, operator can lower them for the
+demo):
+
+```yaml
+ai-worker:
+  environment:
+    EXTORQ_JEV_DAILY_CAP: ${EXTORQ_JEV_DAILY_CAP:-300}
+api:
+  environment:
+    EXTORQ_GEMINI_DAILY_CAP: ${EXTORQ_GEMINI_DAILY_CAP:-50}
+    EXTORQ_GEMINI_ALERT_COOLDOWN_SECONDS: ${EXTORQ_GEMINI_ALERT_COOLDOWN_SECONDS:-120}
+```
+
+**Why.** Enabling Jev in the compose `ai-worker` makes it triage every new or changed context
+automatically; a per-demo cap is the only spend bound an operator can set without editing
+compose. The cap counts attempts already stored that UTC day (fail closed if unreadable).
+**Affected.** A (compose). No code change in E (the settings already exist).
+
+## Session-3 notes for other owners (informational)
+
+* **F (F-22, owner E: done).** `tests/unit/ai/test_ai_sanitize.py` now assembles the
+  `api_key: '...'` sample at runtime (`_credential_pair_samples`). Verified with the pinned
+  gitleaks image and a copy of `tests/security/gitleaks.toml` without the F-22 `[[allowlists]]`
+  block: 0 findings for the new file (positive control: the HEAD version of the file is flagged
+  at line 75 with `generic-api-key`). F can remove the F-22 allowlist entry.
+* **F (docs/security.md, threat model).** Provider HTTP clients no longer trust the
+  environment: `extorq.ai.transport` injects `httpx2` clients (`trust_env=False`, certifi-only TLS
+  context with key logging off, no redirects) into both SDKs; `HTTPS_PROXY`, `SSL_CERT_FILE`,
+  `SSL_CERT_DIR`, `SSLKEYLOGFILE` and `GOOGLE_GENAI_HTTP_CLIENT` cannot redirect or expose
+  requests carrying the API keys. Residual: importing google-genai imports aiohttp, which creates
+  an (empty, header-only) `SSLKEYLOGFILE`; `OPENSSL_CONF` is process-wide. Details:
+  `docs/ai-integrations.md` section 3.
+* **D1 / lead (api container).** The running `api` container image predates session 3 (it
+  still has `summary-v2` and the projection that drops every evidence key field). Before
+  analysts request summaries from the console, rebuild/recreate `api` with the current tree.
+  The two session-3 summaries (GH-001, CORR-002) are already stored and are served by any API
+  version.
+* **B2 / C2 (Kubernetes coverage).** All 12 K8S-001/K8S-002 contexts report `k8s.audit` with
+  status `unknown`, stale and with a gap ("No collector has reported health for this source
+  type."), because the OTel audit path reports no `CollectorHealth`. Jev therefore answers
+  `sufficient_context` 0.42-0.64 and every Kubernetes triage is `uncertain`. A health record for
+  the OTel audit pipeline would make the coverage signal (and the AI) more accurate.
+* **B2 / A (redaction false positive, already addressed; no action requested).** Stored K8S-001
+  audit events from 2026-11-21 contain `"automount_sa_token":[REDACTED:secret]` in
+  `attributes.request_summary` (a boolean redacted because of the key name). The current working
+  tree already fixes both sides (A: literal `true`/`false`/`null` are never redacted; B2: the
+  key is now `automount_service_account`); events stored before the fix keep the redacted value,
+  so the real-context fixture `tests/fixtures/ai/context_k8s001_real.json` shows it.

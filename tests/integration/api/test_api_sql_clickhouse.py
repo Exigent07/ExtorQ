@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from api_ch_harness import Dataset, EphemeralClickHouse, seed, unavailable_reason
@@ -214,19 +215,23 @@ def test_findings_lifecycle_view_and_fallback(
     repo: ClickHouseRepository, dataset: Dataset, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert repo.findings_lifecycle_available() is True
-    rows, total, lifecycle = repo.list_findings(FindingFilters(), 50, 0)
+    trivy = FindingFilters(scanner="trivy")
+    rows, total, lifecycle = repo.list_findings(trivy, 50, 0)
     assert lifecycle is True and total == 2
     states = {r["finding_id"]: r["state"] for r in rows}
     assert states == {
         dataset.finding_ids["open"]: "open",
         dataset.finding_ids["resolved"]: "resolved",
     }
-    open_only, open_total, _ = repo.list_findings(FindingFilters(states=("open",)), 50, 0)
+    open_only, open_total, _ = repo.list_findings(
+        FindingFilters(scanner="trivy", states=("open",)), 50, 0
+    )
     assert open_total == 1 and open_only[0]["severity"] == "critical"
     counts, lc = repo.finding_severity_counts(dataset.linux)
     assert lc is True
     assert sorted((c["severity"], c["state"], c["findings"]) for c in counts) == [
         ("critical", "open", 1),
+        ("low", "open", 2),  # synthetic-posture attribution cases
         ("medium", "resolved", 1),
     ]
     monkeypatch.setattr(repo, "findings_lifecycle_available", lambda: False)
@@ -237,6 +242,7 @@ def test_findings_lifecycle_view_and_fallback(
     assert lc is False
     assert sorted((c["severity"], c["findings"]) for c in fallback_counts) == [
         ("critical", 1),
+        ("low", 2),
         ("medium", 1),
     ]
 
@@ -398,9 +404,14 @@ def test_services_final_dedup_present_and_filters(
 def test_service_instances_latest_and_present_only(
     repo: ClickHouseRepository, dataset: Dataset
 ) -> None:
-    rows, total = repo.service_instances(dataset.service_ids["ssh"], 50)
-    assert total == 1  # pid:7 is a tombstone; pid:100 has two versions
+    ssh = dataset.service_ids["ssh"]
+    rows, total = repo.service_instances(ssh, 50, scope_asset=dataset.linux)
+    assert total == 1  # pid:7 is a tombstone; pid:100 has two versions; pid:666 is planted
     assert rows[0]["pid"] == 100 and rows[0]["process_user"] == "root"
+    # F-19: the planted instance (GitHub asset naming the VM's ssh service) is in storage,
+    # but the scope of the service's asset keeps it out.
+    _, unscoped = repo.service_instances(ssh, 50)
+    assert unscoped == 2
     assert rows[0]["observed_at"] >= dataset.now - timedelta(seconds=1)
     pods, _ = repo.service_instances(dataset.service_ids["workload"], 50)
     assert pods[0]["asset_id"] == dataset.k8s_node and pods[0]["pod_uid"] == "synthetic-pod-uid"
@@ -411,12 +422,31 @@ def test_service_telemetry_auth_and_events_are_duplicate_safe(
 ) -> None:
     since, until = _window(dataset)
     ssh = dataset.service_ids["ssh"]
-    sources = repo.service_event_sources(ssh, since, until)
+    sources = repo.service_event_sources(ssh, since, until, scope_asset=dataset.linux)
     assert [(r["source_type"], r["events"]) for r in sources] == [("linux.journald", 2)]
-    summary = repo.service_auth_summary(ssh, since, until)
+    # F-19: over a window that contains the planted event (3 days old, macOS asset, VM ssh
+    # service id) only the scoped aggregates and listings leave it out.
+    wide = dataset.now - timedelta(days=4)
+    unscoped = repo.service_event_sources(ssh, wide, until)
+    assert sorted((r["source_type"], r["events"]) for r in unscoped) == [
+        ("linux.journald", 2),
+        ("macos.unified_log", 1),
+    ]
+    scoped = repo.service_event_sources(ssh, wide, until, scope_asset=dataset.linux)
+    assert [(r["source_type"], r["events"]) for r in scoped] == [("linux.journald", 2)]
+    assert repo.service_auth_summary(ssh, wide, until, scope_asset=dataset.linux)["total"] == 2
+    assert repo.service_auth_summary(ssh, wide, until)["total"] == 3
+    top_scoped = repo.service_auth_sources(ssh, wide, until, 10, scope_asset=dataset.linux)
+    assert [(r["source_ip"], r["events"]) for r in top_scoped] == [("10.0.2.2", 2)]
+    listed = repo.list_events(
+        EventFilters(since=wide, until=until, service_id=ssh, scope_asset=dataset.linux), 50, 0
+    )
+    assert dataset.event_ids["planted"] not in {e["event_id"] for e in listed}
+    assert len(listed) == 2
+    summary = repo.service_auth_summary(ssh, since, until, scope_asset=dataset.linux)
     assert (summary["total"], summary["failure"], summary["success"]) == (2, 2, 0)
     assert (summary["distinct_actors"], summary["distinct_sources"]) == (2, 1)
-    top = repo.service_auth_sources(ssh, since, until, 10)
+    top = repo.service_auth_sources(ssh, since, until, 10, scope_asset=dataset.linux)
     assert [(r["source_ip"], r["events"], r["failures"]) for r in top] == [("10.0.2.2", 2, 2)]
     events = repo.list_events(EventFilters(since=since, until=until, service_id=ssh), 50, 0)
     assert sorted(e["event_id"] for e in events) == sorted(
@@ -429,20 +459,35 @@ def test_service_telemetry_auth_and_events_are_duplicate_safe(
     assert empty["total"] == 0
 
 
-def test_finding_service_attribution_and_filter(
-    repo: ClickHouseRepository, dataset: Dataset, monkeypatch: pytest.MonkeyPatch
+def _expected_attribution(dataset: Dataset) -> dict[str, str | None]:
+    f, sid = dataset.finding_ids, dataset.service_ids
+    return {
+        f["resolved"]: None,  # never attributed
+        f["open"]: None,  # attributed by an OLDER scan only: cleared by the latest
+        f["gained"]: sid["ssh"],  # attributed by the latest scan
+        f["moved"]: sid["ftp"],  # ssh earlier, ftp latest: latest wins
+    }
+
+
+@pytest.mark.parametrize("lifecycle", [True, False])
+def test_finding_service_attribution_follows_the_latest_observation(
+    repo: ClickHouseRepository,
+    dataset: Dataset,
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle: bool,
 ) -> None:
-    ssh = dataset.service_ids["ssh"]
-    attribution = repo.finding_service_attribution(list(dataset.finding_ids.values()))
-    # Latest observation is unattributed; the earlier attribution survives (argMax skips NULL).
-    assert attribution == {dataset.finding_ids["open"]: ssh}
-    rows, total, lifecycle = repo.list_findings(FindingFilters(service_id=ssh), 50, 0)
-    assert lifecycle is True and total == 1
-    assert rows[0]["finding_id"] == dataset.finding_ids["open"]
-    monkeypatch.setattr(repo, "findings_lifecycle_available", lambda: False)
-    rows, total, lifecycle = repo.list_findings(FindingFilters(service_id=ssh), 50, 0)
-    assert lifecycle is False and total == 1
-    assert rows[0]["finding_id"] == dataset.finding_ids["open"]
+    """v_findings_current.service_id semantics (C3, migration 0005): the attribution of the
+    finding's latest observation, NULL included. The observation fallback agrees."""
+    if not lifecycle:
+        monkeypatch.setattr(repo, "findings_lifecycle_available", lambda: False)
+    rows, total, used = repo.list_findings(FindingFilters(asset_id=dataset.linux), 50, 0)
+    assert used is lifecycle and total == 4
+    assert {r["finding_id"]: r["service_id"] for r in rows} == _expected_attribution(dataset)
+    f, sid = dataset.finding_ids, dataset.service_ids
+    for name, want in (("ssh", [f["gained"]]), ("ftp", [f["moved"]]), ("gone", [])):
+        got, count, _ = repo.list_findings(FindingFilters(service_id=sid[name]), 50, 0)
+        assert [r["finding_id"] for r in got] == want, name
+        assert count == len(want), name
 
 
 def test_alert_service_filter_and_children(repo: ClickHouseRepository, dataset: Dataset) -> None:
@@ -485,13 +530,64 @@ def test_service_endpoints_end_to_end(
     detail = client.get(f"/api/v1/services/{sid['ssh']}", headers=viewer)
     assert detail.status_code == 200, detail.text[:500]
     d = detail.json()
+    # F-19 end to end: a window containing the planted event and the planted instance.
+    wide = client.get(
+        f"/api/v1/services/{sid['ssh']}",
+        headers=viewer,
+        params={"since": (dataset.now - timedelta(days=4)).isoformat()},
+    ).json()
+    assert dataset.event_ids["planted"] not in {e["event_id"] for e in wide["recent_events"]}
+    assert {i["asset_id"] for i in wide["instances"]} == {dataset.linux}
+    assert sum(t["events"] for t in wide["telemetry"]) == 2
+    planted_listing = client.get(
+        "/api/v1/events",
+        headers=viewer,
+        params={"service_id": sid["ssh"], "since": (dataset.now - timedelta(days=4)).isoformat()},
+    ).json()
+    assert dataset.event_ids["planted"] not in {e["event_id"] for e in planted_listing["items"]}
     assert d["service"]["endpoints"][0]["attribution"] == "confirmed"
     assert d["instances_total"] == 1
     assert d["telemetry"][0]["source_type"] == "linux.journald"
     assert d["telemetry"][0]["events"] == 2
     assert d["auth_activity"]["by_outcome"] == {"failure": 2}
-    assert [f["finding_id"] for f in d["findings"]] == [dataset.finding_ids["open"]]
+    assert [f["finding_id"] for f in d["findings"]] == [dataset.finding_ids["gained"]]
+    assert d["findings_total"] == 1
     assert [a["alert_id"] for a in d["alerts"]] == [dataset.alert_ids["a1"]]
+
+    # Finding attribution is identical in every endpoint (latest observation wins).
+    expected = _expected_attribution(dataset)
+
+    def attribution(items: list[dict[str, Any]]) -> dict[str, str | None]:
+        return {i["finding_id"]: i["service_id"] for i in items}
+
+    findings = client.get("/api/v1/findings", headers=viewer, params={"asset_id": dataset.linux})
+    assert attribution(findings.json()["items"]) == expected
+    asset = client.get(f"/api/v1/assets/{dataset.linux}", headers=viewer).json()
+    assert attribution(asset["findings"]) == expected
+    for name, finding in (("ssh", "gained"), ("ftp", "moved")):
+        filtered = client.get(
+            "/api/v1/findings", headers=viewer, params={"service_id": sid[name]}
+        ).json()
+        assert [i["finding_id"] for i in filtered["items"]] == [dataset.finding_ids[finding]]
+        assert filtered["page"]["total"] == 1
+        one = client.get(f"/api/v1/services/{sid[name]}", headers=viewer).json()
+        assert attribution(one["findings"]) == {dataset.finding_ids[finding]: sid[name]}
+
+    # One shared coverage function: the asset detail summary equals the services endpoint's.
+    for asset_id in (dataset.linux, dataset.k8s, dataset.k8s_node, dataset.github):
+        encoded = quote(asset_id, safe="")
+        summary = client.get(f"/api/v1/assets/{encoded}", headers=viewer).json()
+        listing = client.get(f"/api/v1/assets/{encoded}/services", headers=viewer).json()
+        assert summary["services_summary"] == listing["summary"], asset_id
+
+    # The node hosts the cluster workload's Pod (real SQL: instances on an asset + services by
+    # id, ancestor and identity checks); the node's own inventory stays empty.
+    node = quote(dataset.k8s_node, safe="")
+    on_node = client.get(f"/api/v1/assets/{node}/services", headers=viewer).json()
+    assert on_node["items"] == []
+    assert [h["service"]["service_id"] for h in on_node["hosted"]] == [sid["workload"]]
+    assert [i["pod_uid"] for i in on_node["hosted"][0]["instances"]] == ["synthetic-pod-uid"]
+    assert on_node["hosted"][0]["instances_on_asset"] == 1
 
     on_cluster = client.get(f"/api/v1/assets/{dataset.k8s}/services", headers=viewer).json()
     assert {i["service_id"] for i in on_cluster["items"]} == {sid["workload"], sid["k8s_service"]}

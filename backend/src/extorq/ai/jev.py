@@ -2,7 +2,7 @@
 
 Jev answers narrow, atomic questions about a JSON state. It returns
 probabilities (Noul) and option distributions (Choice); it never produces free
-text. ExtorQ asks question set ``triage-v1`` (one variant per domain) and turns
+text. ExtorQ asks question set ``triage-v2`` (one variant per domain) and turns
 the answers into a recommendation with a fixed, deterministic procedure:
 
 * ``sufficient_context < 0.3``  -> ``insufficient_context`` (status
@@ -35,6 +35,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal, Protocol, cast
 
+from extorq.ai import transport
 from extorq.ai._compat import get_logger
 from extorq.ai.projection import JEV_LIMITS, Domain, Projection, project_context
 from extorq.ai.sanitize import clean_token, redact_secrets
@@ -52,7 +53,11 @@ from extorq.contracts.common import utc_now
 from extorq.contracts.context import InvestigationContext
 from extorq.contracts.identity import assessment_id
 
-TRIAGE_PROMPT_VERSION = "triage-v1"
+#: Identifies what the provider saw: the question set AND the projection format.
+#: v2 (2026-11-22): evidence key fields reach Jev under canonical names and the evidence
+#: sample covers every event type. On real contexts the v1 projection carried no evidence
+#: key fields, so v1 assessments are never reused for a v2 request.
+TRIAGE_PROMPT_VERSION = "triage-v2"
 INSUFFICIENT_BELOW = 0.3
 CONFIDENT_ABOVE = 0.7
 #: HTTP statuses retried by the SDK (bounded by retries and the total retry budget).
@@ -166,7 +171,7 @@ def _priority(name: str, domain: Domain, order: tuple[str, ...]) -> QuestionSpec
 
 
 def question_set(domain: Domain) -> QuestionSet:
-    """Question set ``triage-v1`` for ``domain`` (common questions + domain Noul)."""
+    """Question set ``triage-v2`` for ``domain`` (common questions + domain Noul)."""
     lead = _DOMAIN_CONTEXT[domain]
     questions: list[QuestionSpec] = [
         _noul(
@@ -397,6 +402,12 @@ ClientFactory = Callable[[str, AISettings], JevClient]
 
 
 def _default_client_factory(api_key: str, settings: AISettings) -> JevClient:
+    """TypeSafe client pinned to the official endpoint with an environment-independent HTTP client.
+
+    ``base_url`` is explicit (``TYPESAFE_BASE_URL`` cannot redirect), the key is explicit
+    (``TYPESAFE_API_KEY`` is never consulted) and ``http_client`` ignores proxy / CA / key-log
+    environment variables and never follows redirects (:mod:`extorq.ai.transport`).
+    """
     from typesafe_sdk import RetryPolicy, TypeSafeClient
 
     # The SDK logs request/response bodies at DEBUG; prompt state must never be logged.
@@ -412,6 +423,7 @@ def _default_client_factory(api_key: str, settings: AISettings) -> JevClient:
         retry=retry,
         timeout=settings.jev_timeout_seconds,
         base_url=JEV_BASE_URL,
+        http_client=transport.sync_client(settings.jev_timeout_seconds),
     )
     return cast(JevClient, client)
 

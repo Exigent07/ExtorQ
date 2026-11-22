@@ -11,7 +11,9 @@ service token is a random per-run value in a temp file (the real token is not us
 
 from __future__ import annotations
 
+import os
 import secrets
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -65,8 +67,15 @@ def client(
         yield test_client, headers
 
 
+#: Seconds between API requests. The ``extorq_api_ro`` quota (1200 ClickHouse queries per
+#: minute) is SHARED with the compose API and every console user; one request costs about
+#: 3-15 queries, so an unpaced run could starve them (observed in session 3).
+LIVE_PACE_SECONDS = float(os.environ.get("EXTORQ_LIVE_PACE_SECONDS", "0.8"))
+
+
 def _get(client: tuple[TestClient, dict[str, str]], path: str, **params: Any) -> Any:
     test_client, headers = client
+    time.sleep(LIVE_PACE_SECONDS)
     response = test_client.get(path, headers=headers, params=params or None)
     assert response.status_code == 200, (path, response.status_code, response.text[:500])
     return response.json()
@@ -123,10 +132,17 @@ def test_assets_and_their_services(
         assert detail["asset"]["asset_id"] == asset["asset_id"]
         summary = detail["services_summary"]
         services = _get(client, f"/api/v1/assets/{encoded}/services", limit=200)
+        # One shared coverage function (session 3 review fix): identical summaries.
         assert services["summary"] == summary
         assert services["page"]["total"] == summary["coverage"]["total"]
         if not summary["reported"]:
             assert summary["note"] and services["items"] == []
+        for hosted in services["hosted"]:
+            # Workloads of an ANCESTOR asset; only instances reported on this asset.
+            assert asset["asset_id"].startswith(hosted["service"]["asset_id"] + "/")
+            assert all(i["asset_id"] == asset["asset_id"] for i in hosted["instances"])
+        if asset["asset_type"] == "kubernetes_node":
+            assert detail["asset"]["collectors_inherited"] == detail["asset"]["collectors_total"]
 
 
 def test_service_inventory_matches_storage_and_details_resolve(

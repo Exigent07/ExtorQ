@@ -10,11 +10,18 @@ Coverage is evaluated at request time (``service.effective_coverage``): an imple
 adapter reported ``monitored`` is shown as ``degraded`` when its discovery record is no
 longer refreshed or every collector of one of its declared sources is stale. Planned and
 unsupported services are always listed (never hidden).
+
+Every endpoint that reports service coverage (these three, ``GET /assets/{asset_id}``
+``services_summary`` and ``GET /overview`` ``service_coverage``) goes through
+:func:`evaluate_scope`, which always evaluates against ALL collectors: collectors of an
+ancestor asset cover its children (``k8s:<cluster>`` covers ``k8s:<cluster>/node/<name>``),
+so the same service has the same coverage state in every view at the same instant.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 
@@ -34,7 +41,9 @@ from extorq.api.repository import (
     EventFilters,
     FindingFilters,
     Repository,
+    Row,
     ServiceFilters,
+    identity_matches,
 )
 from extorq.api.routes.common import (
     HEX_ID_PATTERN,
@@ -62,6 +71,9 @@ SERVICE_FINDINGS_LIMIT = 100
 SERVICE_ALERTS_LIMIT = 50
 AUTH_SOURCES_LIMIT = 20
 ALERTS_WINDOW = timedelta(days=30)
+#: Instances read for ``hosted`` (Pods/containers on a node) and listed per service.
+HOSTED_INSTANCES_LIMIT = 500
+HOSTED_INSTANCES_PER_SERVICE = 50
 
 ServiceIdPath = Annotated[str, Path(pattern=HEX_ID_PATTERN, description="32-hex service id.")]
 CoverageFilter = Literal["monitored", "degraded", "unmonitored", "planned", "unsupported"]
@@ -98,20 +110,40 @@ _NOT_FOUND: dict[int | str, dict[str, Any]] = {
 }
 
 
-def _evaluator(repo: Repository, settings: ApiSettings, now: datetime) -> service.ServiceEvaluator:
+def service_evaluator(
+    repo: Repository, settings: ApiSettings, now: datetime
+) -> service.ServiceEvaluator:
+    """The evaluator of every coverage view: built from ALL collectors, never a subset.
+
+    Restricting it to the asset's own collectors (as ``GET /assets/{id}`` once did) hides the
+    cluster collectors that cover a Kubernetes node, so the node's services looked
+    ``monitored`` there and ``degraded`` in ``GET /assets/{id}/services`` at the same instant.
+    """
     collectors = [service.collector_status(row, now) for row in repo.collectors("")]
     return service.ServiceEvaluator(collectors, now, settings.service_stale_seconds)
 
 
-def evaluate_services(
-    repo: Repository,
-    evaluator: service.ServiceEvaluator,
-    filters: ServiceFilters,
-) -> tuple[list[s.ServiceListItem], bool, int]:
-    """All services matching ``filters`` (tombstones included), truncation flag, invalid rows.
+@dataclass(frozen=True)
+class ServiceScope:
+    """Evaluated services of one filter scope (tombstones included)."""
 
-    Pagination and the coverage filter run on the evaluated items because the effective
-    coverage depends on collector health at request time (bounded by SERVICE_SCAN_CAP).
+    items: list[s.ServiceListItem]
+    truncated: bool
+    invalid: int
+
+    def summary(self) -> s.ServicesSummary:
+        return service.services_summary(self.items, truncated=self.truncated)
+
+
+def evaluate_scope(
+    repo: Repository, evaluator: service.ServiceEvaluator, filters: ServiceFilters
+) -> ServiceScope:
+    """All services matching ``filters`` evaluated by ``evaluator`` (the single shared path).
+
+    ``evaluator`` comes from :func:`service_evaluator` (all collectors), built once per
+    request. Pagination and the coverage filter run on the evaluated items because the
+    effective coverage depends on collector health at request time (bounded by
+    SERVICE_SCAN_CAP).
     """
     scan = ServiceFilters(
         asset_id=filters.asset_id,
@@ -122,9 +154,65 @@ def evaluate_services(
         include_removed=True,
     )
     rows = repo.list_services(scan, SERVICE_SCAN_CAP + 1)
-    truncated = len(rows) > SERVICE_SCAN_CAP
-    items, invalid = evaluator.items(rows[:SERVICE_SCAN_CAP])
-    return items, truncated, invalid
+    scanned = rows[:SERVICE_SCAN_CAP]
+    # F-19: a stored row whose id does not match its natural key is never shown as a service.
+    genuine = [row for row in scanned if identity_matches(row)]
+    if len(genuine) < len(scanned):
+        log.warning("service_rows_identity_mismatch", count=len(scanned) - len(genuine))
+    items, invalid = evaluator.items(genuine)
+    return ServiceScope(
+        items=items,
+        truncated=len(rows) > SERVICE_SCAN_CAP,
+        invalid=invalid + len(scanned) - len(genuine),
+    )
+
+
+def hosted_services(
+    repo: Repository, evaluator: service.ServiceEvaluator, asset_id: str
+) -> tuple[list[s.HostedService], bool]:
+    """Services of ANCESTOR assets with present instances on ``asset_id`` (node -> Pods).
+
+    An instance is listed only under a service whose asset is a strict ancestor of
+    ``asset_id`` and whose stored id matches its natural key, so a producer of another asset
+    cannot attach instances to a service it does not own (F-19).
+    """
+    rows = repo.instances_on_asset(asset_id, HOSTED_INSTANCES_LIMIT + 1)
+    truncated = len(rows) > HOSTED_INSTANCES_LIMIT
+    by_service: dict[str, list[Row]] = {}
+    for row in rows[:HOSTED_INSTANCES_LIMIT]:
+        by_service.setdefault(str(row["service_id"]), []).append(row)
+    if not by_service:
+        return [], truncated
+    owners: dict[str, Row] = {}
+    for row in repo.services_by_id(sorted(by_service), 4 * len(by_service) + 10):
+        sid = str(row["service_id"])
+        if (
+            sid in by_service
+            and sid not in owners
+            and service.is_ancestor_asset(str(row["asset_id"]), asset_id)
+            and identity_matches(row)
+        ):
+            owners[sid] = row
+    skipped = len(by_service) - len(owners)
+    if skipped:
+        log.warning("hosted_instances_without_owner", asset_id=asset_id, services=skipped)
+    hosted: list[s.HostedService] = []
+    for sid, owner in owners.items():
+        try:
+            item = evaluator.item(owner)
+            instances = [
+                evaluator.instance(r) for r in by_service[sid][:HOSTED_INSTANCES_PER_SERVICE]
+            ]
+        except (ValidationError, KeyError, TypeError, ValueError):
+            log.warning("hosted_service_invalid", service_id=sid)
+            continue
+        hosted.append(
+            s.HostedService(
+                service=item, instances=instances, instances_on_asset=len(by_service[sid])
+            )
+        )
+    hosted.sort(key=lambda h: (h.service.service_kind, h.service.name, h.service.service_id))
+    return hosted, truncated
 
 
 def _page(
@@ -200,20 +288,24 @@ def list_asset_services(
         adapter_support=adapter_support.value if adapter_support else "",
         monitoring_status=monitoring_status.value if monitoring_status else "",
     )
-    items, truncated, invalid = evaluate_services(repo, _evaluator(repo, settings, now), filters)
-    if asset_row is None and not items:
+    evaluator = service_evaluator(repo, settings, now)
+    scope = evaluate_scope(repo, evaluator, filters)
+    hosted, hosted_truncated = hosted_services(repo, evaluator, asset_id)
+    if asset_row is None and not scope.items and not hosted:
         # Neither an asset record nor any service record: unknown asset id.
         raise NotFound("asset not found")
     page, info = _page(
-        items, include_removed=include_removed, coverage=coverage, limit=limit, offset=offset
+        scope.items, include_removed=include_removed, coverage=coverage, limit=limit, offset=offset
     )
     return s.AssetServicesResponse(
         asset_id=asset_id,
         asset=service.asset_brief(asset_row) if asset_row else None,
         items=page,
         page=info,
-        summary=service.services_summary(items, truncated=truncated),
-        invalid_records=invalid,
+        summary=scope.summary(),
+        invalid_records=scope.invalid,
+        hosted=hosted,
+        hosted_truncated=hosted_truncated,
     )
 
 
@@ -245,15 +337,15 @@ def list_services(
         adapter_support=adapter_support.value if adapter_support else "",
         monitoring_status=monitoring_status.value if monitoring_status else "",
     )
-    items, truncated, invalid = evaluate_services(repo, _evaluator(repo, settings, now), filters)
+    scope = evaluate_scope(repo, service_evaluator(repo, settings, now), filters)
     page, info = _page(
-        items, include_removed=include_removed, coverage=coverage, limit=limit, offset=offset
+        scope.items, include_removed=include_removed, coverage=coverage, limit=limit, offset=offset
     )
     return s.ServiceListResponse(
         items=page,
         page=info,
-        summary=service.services_summary(items, truncated=truncated),
-        invalid_records=invalid,
+        summary=scope.summary(),
+        invalid_records=scope.invalid,
     )
 
 
@@ -276,7 +368,7 @@ def get_service(
     row = repo.get_service(service_id)
     if row is None:
         raise NotFound("service not found")
-    evaluator = _evaluator(repo, settings, now)
+    evaluator = service_evaluator(repo, settings, now)
     try:
         record = evaluator.record(row)
     except (ValidationError, KeyError, TypeError, ValueError) as exc:
@@ -292,7 +384,12 @@ def get_service(
     if asset_row is None:
         notes.append("the parent asset record has not been reported")
 
-    instance_rows, instances_total = repo.service_instances(service_id, INSTANCES_LIMIT)
+    # F-19: instances and events count only on the service's own asset and its descendants
+    # (a cluster's nodes): a producer of another asset cannot appear under this service.
+    scope = record.asset_id
+    instance_rows, instances_total = repo.service_instances(
+        service_id, INSTANCES_LIMIT, scope_asset=scope
+    )
     instances: list[s.ServiceInstanceItem] = []
     for instance_row in instance_rows:
         try:
@@ -313,7 +410,10 @@ def get_service(
         future_tolerance=timedelta(days=1),
     )
     telemetry = evaluator.telemetry(
-        record, repo.service_event_sources(service_id, time_range.since, time_range.until)
+        record,
+        repo.service_event_sources(
+            service_id, time_range.since, time_range.until, scope_asset=scope
+        ),
     )
     if record.telemetry_sources and all(
         t.collection == "no_collector_health" for t in telemetry if t.declared
@@ -324,21 +424,28 @@ def get_service(
         )
     auth = service.auth_activity(
         time_range,
-        repo.service_auth_summary(service_id, time_range.since, time_range.until),
+        repo.service_auth_summary(
+            service_id, time_range.since, time_range.until, scope_asset=scope
+        ),
         repo.service_auth_sources(
-            service_id, time_range.since, time_range.until, AUTH_SOURCES_LIMIT
+            service_id, time_range.since, time_range.until, AUTH_SOURCES_LIMIT, scope_asset=scope
         ),
     )
     event_rows = repo.list_events(
-        EventFilters(since=time_range.since, until=time_range.until, service_id=service_id),
+        EventFilters(
+            since=time_range.since,
+            until=time_range.until,
+            service_id=service_id,
+            scope_asset=scope,
+        ),
         RECENT_EVENTS_LIMIT,
         0,
     )
 
+    # Same attribution rule as GET /findings?service_id= (latest observation wins).
     finding_rows, findings_total, lifecycle = repo.list_findings(
         FindingFilters(service_id=service_id), SERVICE_FINDINGS_LIMIT, 0
     )
-    attribution = repo.finding_service_attribution([str(r["finding_id"]) for r in finding_rows])
 
     alerts_range = s.TimeRange(since=now - ALERTS_WINDOW, until=now + timedelta(days=1))
     alert_filters = AlertFilters(
@@ -355,7 +462,7 @@ def get_service(
         auth_activity=auth,
         recent_events=[service.event_item(r) for r in event_rows],
         findings_lifecycle_available=lifecycle,
-        findings=[service.finding_item(r, lifecycle, attribution) for r in finding_rows],
+        findings=[service.finding_item(r, lifecycle) for r in finding_rows],
         findings_total=findings_total,
         alerts=[service.alert_item(r) for r in alert_rows],
         alerts_total=repo.count_alerts(alert_filters),

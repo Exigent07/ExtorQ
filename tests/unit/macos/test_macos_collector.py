@@ -132,7 +132,7 @@ class Harness:
             asset_id=ASSET,
             module="extorq_collectors.macos.collector:MacOSCollector",
             interval_seconds=60,
-            settings=settings or {"launchd": {"allowlist": ["sh.brew.*"]}},
+            settings=settings or {"launchd": {"allowlist": ["com.example.thirdparty.redis"]}},
         )
         self.store = StateStore(tmp_path / "state.db")
         self.ctx = CollectorContext(config, self.store, collector_version="0.1.0")
@@ -163,10 +163,11 @@ def test_first_cycle_is_a_baseline_with_complete_records(tmp_path: Path) -> None
     records = h.cycle()
     k, types = kinds(records), event_types(records)
     assert k["scan_run"] == 2 and k["asset"] == 1 and k["finding"] >= 1
-    assert k["service"] > 20 and k["service_instance"] > 5
+    # exact counts of the minimised snapshot (tests/fixtures/macos/README.md)
+    assert k["service"] == 13 and k["service_instance"] == 10
     items = Counter(d["item_type"] for kind, d in records if kind == "inventory_item")
-    assert items["process"] > 500 and items["user"] > 100 and items["launch_item"] == 9
-    assert items["listener"] > 20 and items["software"] > 10
+    assert items["process"] == 19 and items["user"] == 8 and items["launch_item"] == 5
+    assert items["listener"] == 14 and items["software"] == 6
     assert types["security.gatekeeper.event"] == 5
     assert types["service.discovered"] == k["service"]  # baseline: flagged discoveries
     assert not any(
@@ -221,9 +222,9 @@ def test_persistence_changes_after_baseline(tmp_path: Path) -> None:
             }
         )
     )
-    redis = h.agents / "sh.brew.redis.plist"
+    redis = h.agents / "com.example.thirdparty.redis.plist"
     redis.write_bytes(redis.read_bytes().replace(b"redis.conf", b"redis-other.conf"))
-    (h.agents / "sh.brew.php.plist").unlink()
+    (h.agents / "com.example.thirdparty.php.plist").unlink()
     records = h.cycle()
     events = {
         (d["event_type"], d["resource"]["path"].rsplit("/", 1)[-1]): d
@@ -236,17 +237,19 @@ def test_persistence_changes_after_baseline(tmp_path: Path) -> None:
     )
     assert created["simulation"]["run_id"] == "abcd1234ef"
     assert created["service"]["name"] == "com.extorq.sim.abcd1234ef"
-    modified = events[("persistence.launchd.item_modified", "sh.brew.redis.plist")]
+    modified = events[("persistence.launchd.item_modified", "com.example.thirdparty.redis.plist")]
     assert (
         modified["attributes"]["allowlisted"] is True and modified["attributes"]["previous_sha256"]
     )
-    assert ("persistence.launchd.item_deleted", "sh.brew.php.plist") in events
+    assert ("persistence.launchd.item_deleted", "com.example.thirdparty.php.plist") in events
     tombstones = [
         d
         for kind, d in records
         if kind == "inventory_item" and not d["present"] and d["item_type"] == "launch_item"
     ]
-    assert [t["item_key"].rsplit("/", 1)[-1] for t in tombstones] == ["sh.brew.php.plist"]
+    assert [t["item_key"].rsplit("/", 1)[-1] for t in tombstones] == [
+        "com.example.thirdparty.php.plist"
+    ]
     services = event_types(records)
     assert services["service.discovered"] == 1  # the new (not loaded) job
     third = h.cycle()
@@ -258,7 +261,7 @@ def test_failing_source_is_isolated_and_never_advances_its_snapshot(
 ) -> None:
     h = Harness(tmp_path)
     h.cycle()
-    (h.agents / "sh.brew.mysql.plist").unlink()
+    (h.agents / "com.example.thirdparty.mysql.plist").unlink()
 
     def broken(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("simulated failure after the diff was staged")
@@ -321,12 +324,68 @@ def test_second_instance_on_the_same_state_is_refused(tmp_path: Path) -> None:
     second.close()
 
 
+def test_sshd_records_become_auth_ssh_events_bound_to_remote_login(tmp_path: Path) -> None:
+    from extorq.contracts.identity import service_id
+
+    h = Harness(
+        tmp_path,
+        settings={
+            n: {"enabled": False}
+            for n in ("launchd", "inventory", "posture", "applications", "asset")
+        },
+    )
+    h.runner.prefixes.clear()
+    h.runner.add_prefix(
+        ["/usr/bin/log", "show"],
+        ok(
+            ["/usr/bin/log"],
+            fixture_bytes("unified_log/synthetic_sshd_auth.ndjson")
+            + b'{"count":14,"finished":1}\n',
+        ),
+    )
+    records = h.cycle()
+    events = [d for kind, d in records if kind == "event"]
+    assert len(events) == 14
+    ssh_service = service_id(ASSET, "host_service", "com.openssh.sshd")
+    bound = [e for e in events if e["service"] is not None]
+    assert len(bound) == 13 and all(
+        e["service"]["service_id"] == ssh_service and e["service"]["adapter_id"] == "macos-sshd"
+        for e in bound
+    )
+    unbound = [e for e in events if e["service"] is None]
+    assert [e["attributes"]["source_verified"] for e in unbound] == [False]
+    types = Counter(e["event_type"] for e in events)
+    assert types == {
+        "auth.ssh.login_failed": 5,
+        "auth.ssh.preauth_closed": 3,
+        "auth.ssh.max_auth_exceeded": 2,
+        "auth.ssh.invalid_user": 1,
+        "auth.ssh.login_succeeded": 1,
+        "system.log.notable": 2,
+    }
+    # the adapter's newest event time feeds the Remote Login service's last_telemetry_at
+    last = h.ctx.state.get(collector_mod.KV_ADAPTER_LAST_EVENT)
+    assert last == {"macos-sshd": "2026-11-21T11:00:13.000Z"}
+
+
+def test_generated_uid_is_resolved_with_dscl_search() -> None:
+    guid = "A1B2C3D4-0000-4000-8000-000000000001"
+    argv = ["/usr/bin/dscl", ".", "-search", "/Users", "GeneratedUID", guid]
+    runner = FakeRunner()
+    runner.add(argv, ok(argv, fixture_bytes("posture/dscl_search_generateduid.txt")))
+    collector = MacOSCollector(runner=runner, path_resolver=no_paths, uid=501, require_macos=False)
+    assert collector._resolve_guid(guid.lower()) == "testuser"
+    assert collector._resolve_guid(guid) == "testuser"  # cached
+    assert collector._resolve_guid("not-a-guid; rm -rf /") is None  # never reaches dscl
+    assert runner.calls == [tuple(argv)]
+
+
 def test_label_less_plist_events_reference_the_path_keyed_service(tmp_path: Path) -> None:
     from extorq.contracts.identity import service_id
 
     h = Harness(tmp_path)
     h.cycle()
-    path = h.agents / "com.google.keystone.agent.plist"  # real plist without a Label
+    path = h.agents / "com.example.thirdparty.labelless.plist"  # plist without a Label
     path.write_bytes(path.read_bytes() + b"\n")
     records = h.cycle()
     modified = [
@@ -336,4 +395,4 @@ def test_label_less_plist_events_reference_the_path_keyed_service(tmp_path: Path
     ]
     assert len(modified) == 1
     assert modified[0]["service"]["service_id"] == service_id(ASSET, "host_service", str(path))
-    assert modified[0]["service"]["name"] == "com.google.keystone.agent.plist"
+    assert modified[0]["service"]["name"] == "com.example.thirdparty.labelless.plist"

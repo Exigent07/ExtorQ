@@ -47,7 +47,7 @@ from extorq_collectors.github.client import (
     GitHubForbidden,
     GitHubNotFound,
     GitHubRateLimited,
-    GitHubResponseError,
+    GitHubTransientError,
     GitHubUnauthorized,
 )
 from extorq_collectors.github.config import GitHubCollectorConfig, RepoConfig, valid_branch_name
@@ -72,8 +72,9 @@ from extorq_collectors.github.records import (
     repo_asset,
     simulation_run_id,
 )
-from extorq_collectors.github.state import RepoState
+from extorq_collectors.github.state import MAX_COMMIT_RETRIES, RepoState
 from extorq_collectors.github.workflow import (
+    MAX_LEXICAL_BYTES,
     MAX_WORKFLOW_BYTES,
     WorkflowAnalysis,
     analyse_workflow,
@@ -89,6 +90,10 @@ COMMIT_CHUNK = 20
 MAX_FILE_PAGES = 10
 MAX_WORKFLOW_FILES = 100
 MAX_RAW_DIFF_CHARS = 8000
+#: Polls in which a commit whose detail failed transiently (5xx, timeout, network) is
+#: tried before it is given up with a ``commit_unavailable`` gap event. Permanent
+#: failures (4xx, oversized or malformed responses) become a gap at once.
+MAX_COMMIT_ATTEMPTS = 3
 ACTIONS_WORKFLOW_KEYS = (
     "actions.default_workflow_permissions",
     "actions.can_approve_pull_request_reviews",
@@ -144,6 +149,34 @@ class _Push:
     activity_type: str
 
 
+def _push_to_json(push: _Push | None) -> dict[str, Any] | None:
+    """Checkpoint form of a push attribution (retry entries keep the genuine push time)."""
+    if push is None:
+        return None
+    return {
+        "pushed_at": iso(push.pushed_at),
+        "login": push.login,
+        "user_id": push.user_id,
+        "user_type": push.user_type,
+        "activity_type": push.activity_type,
+    }
+
+
+def _push_from_json(value: object) -> _Push | None:
+    data = as_dict(value)
+    pushed_at = parse_time(data.get("pushed_at"))
+    if pushed_at is None:
+        return None
+    login, user_id, user_type = data.get("login"), data.get("user_id"), data.get("user_type")
+    return _Push(
+        pushed_at=pushed_at,
+        login=login if isinstance(login, str) else None,
+        user_id=user_id if isinstance(user_id, int) else None,
+        user_type=user_type if isinstance(user_type, str) else None,
+        activity_type=clean_text(data.get("activity_type"), 40) or "push",
+    )
+
+
 class RepoPoller:
     def __init__(
         self,
@@ -181,6 +214,8 @@ class RepoPoller:
         #: workflow path -> blob sha at the default-branch head (posture inspection).
         self.workflow_blobs: dict[str, str] = {}
         self.changed = False
+        #: Commits whose records were attempted in this poll (a retry waits for a later poll).
+        self.commits_attempted: set[str] = set()
         self.now = clock()
 
     # ── plumbing ────────────────────────────────────────────────────────────
@@ -240,20 +275,36 @@ class RepoPoller:
     # ── entry point ─────────────────────────────────────────────────────────
 
     def poll(self) -> PollReport:
-        """Run all phases. Raises only GitHubUnauthorized / GitHubRateLimited."""
+        """Run all phases. Raises only GitHubUnauthorized / GitHubRateLimited.
+
+        One failing branch or commit never blinds the repository: a commit-listing
+        failure leaves that branch's checkpoint in place (retried next poll) while the
+        other branches and the runs / posture / alerts phases still run; a commit whose
+        detail cannot be read is skipped with a gap event (``_commit_records_isolated``).
+        """
         self.now = self.clock()
+        incomplete = False
         try:
             if not self._phase_repository():
                 return self.report
             self._phase_branches()
             for branch, head in list(self.heads.items()):
-                self._phase_commits(branch, head)
+                try:
+                    self._phase_commits(branch, head)
+                except (GitHubUnauthorized, GitHubRateLimited):
+                    raise
+                except GitHubApiError as exc:
+                    incomplete = True
+                    self.report.errors.append(
+                        clean_text(f"commits on {branch} not listed: {exc.gap_reason}", 400)
+                    )
+            self._phase_commit_retries()
             self._phase_runs()
             self._phase_posture()
             self._phase_alerts()
             self.state.last_poll_at = iso(self.now)
             self.emit([])
-            self.report.completed = True
+            self.report.completed = not incomplete
         except (GitHubUnauthorized, GitHubRateLimited):
             raise
         except GitHubApiError as exc:
@@ -696,7 +747,9 @@ class RepoPoller:
                     # The history flags describe what happened *before* this commit.
                     commit_flags["history_gap"] = bool(flags.get("history_gap"))
                     commit_flags["history_rewritten"] = bool(flags.get("history_rewritten"))
-                records.extend(self._commit_records(branch, sha, push_for.get(sha), commit_flags))
+                records.extend(
+                    self._commit_records_isolated(branch, sha, push_for.get(sha), commit_flags)
+                )
             last_sha = chunk[-1]["sha"]
             final = start + COMMIT_CHUNK >= len(to_process)
             st.branch_heads[branch] = head if (final and not remaining) else last_sha
@@ -796,6 +849,7 @@ class RepoPoller:
         *,
         key: str,
         ref: str | None = None,
+        commit_sha: str | None = None,
         attributes: Mapping[str, Any] | None = None,
     ) -> EventRecord:
         """A genuine telemetry gap observed by this collector (deterministic identity)."""
@@ -818,6 +872,7 @@ class RepoPoller:
                 github=GitHubInfo(
                     repository=self.meta.get("full_name") or self.repo.full_name,
                     ref=clean_text(ref, 256) if ref else None,
+                    commit_sha=commit_sha,
                 ),
                 message=f"Telemetry gap ({reason}): {detail}",
                 attributes=attrs,
@@ -869,6 +924,108 @@ class RepoPoller:
                     assigned[sha] = push
                 pending = []
         return assigned
+
+    # ── per-commit isolation ───────────────────────────────────────────────
+
+    def _commit_records_isolated(
+        self,
+        branch: str,
+        sha: str,
+        push: _Push | None,
+        flags: Mapping[str, Any],
+        *,
+        attempts_before: int = 0,
+    ) -> list[IngestRecord]:
+        """Records of one commit; a failure for this commit never blinds the repository.
+
+        Auth and rate-limit errors propagate (they concern every request). Any other API
+        error affects only this commit: a transient one (5xx, timeout, network) puts the
+        commit in the bounded retry set and the branch checkpoint moves on; a permanent
+        one, or the last allowed attempt, becomes a ``commit_unavailable`` gap event.
+        The commit's records are all-or-nothing, so a retry never duplicates part of it.
+        """
+        self.commits_attempted.add(sha)
+        try:
+            records = self._commit_records(branch, sha, push, flags)
+        except (GitHubUnauthorized, GitHubRateLimited):
+            raise
+        except GitHubApiError as exc:
+            attempts = attempts_before + 1
+            retries = self.state.commit_retries
+            room = sha in retries or len(retries) < MAX_COMMIT_RETRIES
+            if isinstance(exc, GitHubTransientError) and attempts < MAX_COMMIT_ATTEMPTS and room:
+                retries[sha] = {
+                    "branch": branch,
+                    "attempts": attempts,
+                    "initial_backfill": bool(flags.get("initial_backfill")),
+                    "last_failed_at": iso(self.now),
+                    "last_error": clean_text(exc.gap_reason, 300),
+                    "push": _push_to_json(push),
+                }
+                self.report.errors.append(
+                    clean_text(
+                        f"commit {sha[:12]} on {branch}: {exc.gap_reason} (attempt {attempts} "
+                        f"of {MAX_COMMIT_ATTEMPTS}; retried next poll)",
+                        400,
+                    )
+                )
+                return []
+            retries.pop(sha, None)
+            return [self._commit_unavailable_gap(branch, sha, exc, attempts)]
+        self.state.commit_retries.pop(sha, None)
+        return records
+
+    def _phase_commit_retries(self) -> None:
+        """Retry commits whose detail failed transiently in an earlier poll."""
+        due = [
+            (sha, entry)
+            for sha, entry in self.state.commit_retries.items()
+            if sha not in self.commits_attempted  # at most one attempt per poll
+        ]
+        if not due:
+            return
+        records: list[IngestRecord] = []
+        for sha, entry in due:
+            records.extend(
+                self._commit_records_isolated(
+                    str(entry["branch"]),
+                    sha,
+                    _push_from_json(entry.get("push")),
+                    {"initial_backfill": bool(entry.get("initial_backfill"))},
+                    attempts_before=int(entry["attempts"]),
+                )
+            )
+        self.emit(records)
+
+    def _commit_unavailable_gap(
+        self, branch: str, sha: str, exc: GitHubApiError, attempts: int
+    ) -> EventRecord:
+        """Gap event naming the repository, commit and HTTP status of an unreadable commit."""
+        status = f"HTTP {exc.status}" if exc.status is not None else type(exc).__name__
+        detail = (
+            f"commit {sha[:12]} on {branch} of {self.repo.full_name} could not be read "
+            f"({status}: {exc.message}; {attempts} attempt(s)); it was skipped, so its "
+            "files and workflow changes were not analysed"
+        )
+        self.report.errors.append(
+            clean_text(f"commit {sha[:12]} on {branch} skipped ({status}); gap event emitted", 300)
+        )
+        return self._gap_event(
+            "commit_unavailable",
+            detail,
+            key=sha,
+            ref=f"refs/heads/{branch}",
+            commit_sha=sha,
+            attributes={
+                "branch": clean_text(branch, 255),
+                "commit_sha": sha,
+                "http_status": exc.status,
+                "error_type": type(exc).__name__,
+                "endpoint": clean_text(exc.endpoint, 300),
+                "attempts": attempts,
+                "transient": isinstance(exc, GitHubTransientError),
+            },
+        )
 
     def _commit_detail(self, sha: str) -> dict[str, Any]:
         response = self.client.get(f"{self.api}/commits/{sha}", params={"per_page": 300})
@@ -1044,22 +1201,21 @@ class RepoPoller:
             attributes={"record_kind": kind, "record_key": clean_text(key, 300)},
         )
 
-    def _workflow_content(self, path: str, ref: str) -> str | WorkflowAnalysis | None:
-        """Raw workflow text at ``ref``; None when absent; an error analysis when too large."""
+    def _workflow_content(self, path: str, ref: str) -> tuple[str, bool] | None:
+        """Raw workflow text at ``ref`` (at most MAX_LEXICAL_BYTES) and whether it was cut;
+        None when the file is absent at ``ref``.
+
+        An oversized file is still read (prefix) so it can be scanned lexically: a file
+        that exists is never treated as absent (fail closed).
+        """
         try:
-            return self.client.get_text(
+            return self.client.get_text_prefix(
                 f"{self.api}/contents/{quote(path, safe='/')}",
                 params={"ref": ref},
-                max_bytes=MAX_WORKFLOW_BYTES + 1,
+                max_bytes=MAX_LEXICAL_BYTES,
             )
         except GitHubNotFound:
             return None
-        except GitHubResponseError as exc:
-            if "exceeds" in exc.message:
-                return WorkflowAnalysis(
-                    path=path, ok=False, error=f"workflow exceeds {MAX_WORKFLOW_BYTES} bytes"
-                )
-            raise
 
     def _workflow_event(
         self,
@@ -1103,18 +1259,19 @@ class RepoPoller:
             if change_type in ("modified", "renamed"):
                 change_type = "added"
 
-        def load(p: str | None, ref: str | None) -> tuple[WorkflowAnalysis | None, str | None]:
+        def load(
+            p: str | None, ref: str | None
+        ) -> tuple[WorkflowAnalysis | None, str | None, bool]:
             if p is None or ref is None:
-                return None, None
+                return None, None, False
             content = self._workflow_content(p, ref)
             if content is None:
-                return None, None
-            if isinstance(content, WorkflowAnalysis):
-                return content, None
-            return analyse_workflow(p, content), content
+                return None, None, False
+            text, cut = content
+            return analyse_workflow(p, text, truncated=cut), text, cut
 
-        before, before_text = load(before_path, parent)
-        after, after_text = load(after_path, sha)
+        before, before_text, before_cut = load(before_path, parent)
+        after, after_text, after_cut = load(after_path, sha)
         repo_default = self.settings.get("actions.default_workflow_permissions")
         delta = compare_workflows(
             after_path or before_path or path,
@@ -1124,24 +1281,36 @@ class RepoPoller:
             change_type=change_type,  # type: ignore[arg-type]
             previous_path=before_path if change_type == "renamed" else None,
         )
-        diff = "\n".join(
-            difflib.unified_diff(
-                (before_text or "").splitlines(),
-                (after_text or "").splitlines(),
-                fromfile=f"a/{before_path or '/dev/null'}",
-                tofile=f"b/{after_path or '/dev/null'}",
-                lineterm="",
-                n=2,
+        if max(len(before_text or ""), len(after_text or "")) > MAX_WORKFLOW_BYTES:
+            # difflib is superlinear: never diff text larger than the YAML analysis bound.
+            diff = (
+                f"diff omitted: a version of {after_path or before_path} exceeds "
+                f"{MAX_WORKFLOW_BYTES} bytes (analysed lexically)"
             )
-        )
+        else:
+            diff = "\n".join(
+                difflib.unified_diff(
+                    (before_text or "").splitlines(),
+                    (after_text or "").splitlines(),
+                    fromfile=f"a/{before_path or '/dev/null'}",
+                    tofile=f"b/{after_path or '/dev/null'}",
+                    lineterm="",
+                    n=2,
+                )
+            )
         redacted_diff, redactions = redact(diff)
         raw = clean_text(redacted_diff, MAX_RAW_DIFF_CHARS, single_line=False)
+
+        def digest(text: str | None, cut: bool) -> str | None:
+            # A hash of a prefix is not the file's hash: unknown stays unknown.
+            return sha256_hex(text) if text is not None and not cut else None
+
         attributes = delta.to_attributes() | {
             "time_basis": time_basis,
             "initial_backfill": initial_backfill,
             "parent_sha": parent,
-            "workflow_sha256_after": sha256_hex(after_text) if after_text is not None else None,
-            "workflow_sha256_before": sha256_hex(before_text) if before_text is not None else None,
+            "workflow_sha256_after": digest(after_text, after_cut),
+            "workflow_sha256_before": digest(before_text, before_cut),
         }
         name = (after.name if after and after.name else None) or (
             before.name if before and before.name else None
@@ -1562,7 +1731,6 @@ class RepoPoller:
                 )
                 break
             blob = entry.get("sha")
-            size = entry.get("size")
             if not isinstance(blob, str) or not _SHA_RE.match(blob):
                 continue
             self.workflow_blobs[path] = blob
@@ -1570,22 +1738,18 @@ class RepoPoller:
             if cached is not None and cached.path == path:
                 workflows.append(cached)
                 continue
-            if isinstance(size, int) and size > MAX_WORKFLOW_BYTES:
-                analysis = WorkflowAnalysis(
-                    path=path, ok=False, error=f"workflow exceeds {MAX_WORKFLOW_BYTES} bytes"
+            try:
+                # Oversized blobs are read as a bounded prefix and scanned lexically.
+                text, cut = self.client.get_text_prefix(
+                    f"{self.api}/git/blobs/{blob}", max_bytes=MAX_LEXICAL_BYTES
                 )
-            else:
-                try:
-                    text = self.client.get_text(
-                        f"{self.api}/git/blobs/{blob}", max_bytes=MAX_WORKFLOW_BYTES + 1
-                    )
-                except (GitHubUnauthorized, GitHubRateLimited):
-                    raise
-                except GitHubApiError as exc:
-                    gap = self._gap("workflows", exc)
-                    snapshot.gaps["workflows"] = gap
-                    return
-                analysis = analyse_workflow(path, text)
+            except (GitHubUnauthorized, GitHubRateLimited):
+                raise
+            except GitHubApiError as exc:
+                gap = self._gap("workflows", exc)
+                snapshot.gaps["workflows"] = gap
+                return
+            analysis = analyse_workflow(path, text, truncated=cut)
             if len(self.cache) > 512:
                 self.cache.clear()
             self.cache[blob] = analysis

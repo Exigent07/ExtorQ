@@ -413,6 +413,31 @@ def test_raw_content_and_204() -> None:
         oversized.get_text("/raw", max_bytes=100)
 
 
+def test_text_prefix_reads_at_most_the_bound_and_reports_truncation() -> None:
+    body = b"permissions: write-all\n" + b"#" * 5000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept"] == "application/vnd.github.raw+json"
+        # Declared length larger than the bound must not fail a prefix read.
+        return httpx.Response(200, content=body, headers={"content-length": str(len(body))})
+
+    client = make_client(handler)
+    text, truncated = client.get_text_prefix("/raw", max_bytes=100)
+    assert truncated is True and text == body[:100].decode()
+    small, cut = client.get_text_prefix("/raw", max_bytes=len(body))
+    assert cut is False and small == body.decode()
+    # Error bodies keep the strict cap and typed errors.
+    missing = make_client(lambda r: httpx.Response(404, json={"message": "Not Found"}))
+    with pytest.raises(GitHubNotFound):
+        missing.get_text_prefix("/raw", max_bytes=100)
+    with pytest.raises(ValueError):
+        client.get_text_prefix("https://evil.example/raw", max_bytes=100)
+    # Non-raw requests never silently truncate JSON.
+    big_json = make_client(lambda r: httpx.Response(200, content=body), max_response_bytes=100)
+    with pytest.raises(GitHubResponseError, match="exceeds"):
+        big_json.get("/raw")
+
+
 def test_rate_limit_and_token_metadata_headers_are_recorded() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return json_response(

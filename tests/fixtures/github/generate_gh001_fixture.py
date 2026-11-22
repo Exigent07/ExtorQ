@@ -1,13 +1,18 @@
-"""Generate tests/fixtures/github/gh001_collector_output.jsonl (SYNTHETIC fixture).
+"""Generate the SYNTHETIC GH-001 collector fixtures in tests/fixtures/github/.
+
+* ``gh001_collector_output.jsonl``: baseline commit, escalation commit
+  (``[extorq-sim gh001fixture]``) and cleanup commit, all parseable (structured analysis).
+* ``gh001_lexical_fallback.jsonl``: the same scenario, but the escalation version of the
+  workflow is padded beyond the analyser's 512 KiB budget, so the collector cannot parse it
+  and compares it lexically (``attributes.analysis = "lexical_fallback"``,
+  ``effective_permissions_unknown = true``; run marker ``[extorq-sim gh001lexical]``).
 
 The GitHub API is the synthetic fake from tests/unit/github/github_fakes.py (owner
 ``example-org``, logins ``synthetic-*``); the workflow files are the real lab baseline
 (lab/github-repo/.github/workflows/ci.yml) and the GH-001 template
 (simulations/github/templates/ci-gh001.yml). The events are produced by the real
-collector code path (RepoPoller -> workflow analyser -> EventBuilder), so the fixture shows
-exactly what the GitHub collector emits for the GH-001 scenario: a baseline commit, the
-escalation commit (``[extorq-sim gh001fixture]``) and the cleanup commit. Every event is
-labelled ``extorq.fixture=synthetic``.
+collector code path (RepoPoller -> workflow analyser -> EventBuilder), so the fixtures show
+exactly what the GitHub collector emits. Every event is labelled ``extorq.fixture=synthetic``.
 
 Run from the repository root:
     uv run python tests/fixtures/github/generate_gh001_fixture.py
@@ -30,15 +35,17 @@ from extorq_collectors.github.client import GitHubClient  # noqa: E402
 from extorq_collectors.github.config import GitHubCollectorConfig  # noqa: E402
 from extorq_collectors.github.poller import RepoPoller  # noqa: E402
 from extorq_collectors.github.state import RepoState  # noqa: E402
+from extorq_collectors.github.workflow import MAX_WORKFLOW_BYTES  # noqa: E402
 
 CI = ".github/workflows/ci.yml"
-OUT = Path(__file__).with_name("gh001_collector_output.jsonl")
+HERE = Path(__file__).parent
+#: Comment padding that makes a valid workflow exceed the analyser's size budget.
+PADDING = "# synthetic padding beyond the analyser budget\n" * (MAX_WORKFLOW_BYTES // 47 + 64)
 
 
-def main() -> int:
+def scenario(escalated: str, marker: str, *, sha_salt: str = "") -> list[SecurityEvent]:
     lab = (ROOT / "lab/github-repo" / CI).read_text(encoding="utf-8")
-    gh001 = (ROOT / "simulations/github/templates/ci-gh001.yml").read_text(encoding="utf-8")
-    fake = FakeGitHub()
+    fake = FakeGitHub(sha_salt=sha_salt)
     cfg = GitHubCollectorConfig.from_mapping({"repos": [fake.full_name]})
     client = GitHubClient("ghp_" + "F" * 36, transport=fake.transport(), sleep=lambda _s: None)
     state_json: list[str | None] = [None]
@@ -64,23 +71,35 @@ def main() -> int:
     fake.commit("Initial commit: ExtorQ lab inventory service", {CI: lab, "README.md": "lab\n"})
     poll()
     fake.commit(
-        "ci: add PR preview job and broaden token permissions [extorq-sim gh001fixture]",
-        {CI: gh001},
+        f"ci: add PR preview job and broaden token permissions [extorq-sim {marker}]",
+        {CI: escalated},
         pusher="synthetic-operator",
     )
     poll()
-    fake.commit(
-        "ci: restore least-privilege CI workflow [extorq-sim gh001fixture cleanup]", {CI: lab}
-    )
+    fake.commit(f"ci: restore least-privilege CI workflow [extorq-sim {marker} cleanup]", {CI: lab})
     poll()
+    return events
+
+
+def write(events: list[SecurityEvent], name: str) -> None:
     wanted = {"github.commit.observed", "github.workflow.modified"}
     lines = []
     for event in events:
         if event.event_type in wanted:
             labelled = event.model_copy(update={"labels": {"extorq.fixture": "synthetic"}})
             lines.append(json.dumps(labelled.model_dump(mode="json"), sort_keys=True))
-    OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {len(lines)} events to {OUT.relative_to(ROOT)}")
+    out = HERE / name
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"wrote {len(lines)} events to {out.relative_to(ROOT)}")
+
+
+def main() -> int:
+    gh001 = (ROOT / "simulations/github/templates/ci-gh001.yml").read_text(encoding="utf-8")
+    write(scenario(gh001, "gh001fixture"), "gh001_collector_output.jsonl")
+    write(
+        scenario(PADDING + gh001, "gh001lexical", sha_salt="lexical-"),
+        "gh001_lexical_fallback.jsonl",
+    )
     return 0
 
 

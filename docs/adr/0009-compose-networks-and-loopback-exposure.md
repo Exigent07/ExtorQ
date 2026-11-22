@@ -27,6 +27,10 @@ should not have a direct path to the database.
   `10.0.2.2` and kind pods through `host.docker.internal` (F-01, threat model
   T18), so every published service authenticates and the debug profile stays
   off during demos.
+* "Where possible" excludes `api` and `ai-worker`: compose copies the AI keys
+  (`environment:`-sourced secrets from `.env`) into `/run/secrets`, which a
+  read-only root filesystem refuses, so both run with a writable root filesystem
+  (code root-owned, uid 10001, tmpfs `/tmp`; known limitations P10).
 
 ## Alternatives considered
 * A single network: simpler, but gives the gateway and every service a path to

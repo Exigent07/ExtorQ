@@ -15,6 +15,14 @@ Trust model of the projected payload:
   :func:`extorq.ai.sanitize.clean_untrusted`, truncated, and wrapped as
   ``{"untrusted": "<text>"}`` so it is unmistakably delimited data.
 * Raw evidence excerpts are dropped unless ``ai_include_excerpts`` is enabled.
+* Evidence ``key_fields`` are normalised before any allow-list, deny-list or size
+  limit is applied: the correlation builder keys them by dotted catalog path
+  (``kubernetes.verb``, ``attributes.request_summary``, ``http.route``), synthetic
+  contexts by flattened or leaf names (``http_route``, ``verb``). Every accepted
+  spelling maps to ONE canonical name (:func:`canonical_key_field`), so the same
+  field is never projected twice and real evidence reaches the providers. Keys
+  that map to no catalog field or documented correlation extra are dropped and
+  counted.
 * Services (contract 1.1, ``InvestigationContext.services``) are projected as
   name (untrusted text), kind, category, adapter support, monitoring status,
   role and parent asset id only: never service attributes, configuration paths,
@@ -163,47 +171,146 @@ class Projection:
         return json.dumps(self.payload, ensure_ascii=False, separators=(",", ":"))
 
 
-# ── key_fields allow-list ─────────────────────────────────────────────
+# ── key_fields: canonical names and allow-list ────────────────────────
+#
+# Spellings accepted for one catalog key field (example ``kubernetes.verb``):
+#
+# * the dotted catalog path, as keyed by the correlation builder;
+# * the canonical name: ``<group>_<leaf>`` (``kubernetes_verb``, ``http_route``,
+#   ``network_src_ip``), or the bare leaf for ``attributes.*`` paths (``request_summary``,
+#   ``risk_flags``) and for leaves that already carry their group prefix;
+# * the fully flattened path (``attributes_request_summary``);
+# * the bare leaf (``verb``) when exactly one catalog path ends in it, or when the evidence
+#   event's own catalog entry resolves it (``namespace`` of a ``k8s.api.request`` is
+#   ``kubernetes_namespace``). A leaf that stays ambiguous keeps its own name: never guessed.
+#
+# Documented non-catalog correlation keys (below) keep their name; ``attributes.<key>`` maps
+# to it. Everything else is dropped and counted.
+
+#: Catalog key fields not projected as fields: the evidence item already carries the
+#: service as a local alias (``service_ref``) or as untrusted ``service_name``, and service
+#: ids never reach providers.
+_NOT_PROJECTED_PATHS = frozenset({"service.service_id", "service.name"})
+
+#: Documented non-catalog correlation keys (synthetic contexts, correlation extras).
+EXTRA_KEY_FIELDS: frozenset[str] = frozenset(
+    {
+        "message",
+        "commit_message",
+        "annotations",
+        "labels",
+        "role_ref",
+        "subjects",
+        "rules_summary",
+        "risk_signature",
+        "committer_login",
+        "author_login",
+        "merged_via_pull_request",
+        "pull_request_number",
+        "pull_request_approvals",
+        "default_branch",
+        "unit_path",
+        "status",
+        "http_status",
+        "user_name",
+        "kubernetes_user_agent",
+    }
+)
 
 
-def _catalog_field_names() -> frozenset[str]:
-    names: set[str] = set()
-    for spec in EVENT_CATALOG.values():
-        for path in spec.key_fields:
-            parts = path.split(".")
-            names.add(parts[-1])
-            names.add("_".join(parts))
-            if parts[0] != "attributes":
-                names.add(f"{parts[0]}_{parts[-1]}")
-    return frozenset(names)
+def _canonical_name(path: str) -> str:
+    group, _, leaf = path.partition(".")
+    if group == "attributes" or leaf.startswith(f"{group}_"):
+        return leaf
+    return f"{group}_{leaf}"
 
 
-#: Keys allowed in EventSummary.key_fields: every documented catalog key field
-#: (leaf name and flattened form) plus a few documented correlation extras.
-ALLOWED_KEY_FIELDS: frozenset[str] = _catalog_field_names() | {
-    "message",
-    "commit_message",
-    "annotations",
-    "labels",
-    "role_ref",
-    "subjects",
-    "rules_summary",
-    "risk_signature",
-    "committer_login",
-    "author_login",
-    "merged_via_pull_request",
-    "pull_request_number",
-    "pull_request_approvals",
-    "default_branch",
-    "unit_path",
-    "status",
-    "http_status",
-    "src_port",
-    "dst_port",
-    "user_name",
-    "kubernetes_user_agent",
-    "reason",
-}
+def _leaf(path: str) -> str:
+    return path.rsplit(".", 1)[-1]
+
+
+@dataclass(frozen=True)
+class _KeyTables:
+    #: dotted catalog path -> canonical name (projected paths only)
+    canonical: Mapping[str, str]
+    #: every accepted spelling -> canonical name
+    aliases: Mapping[str, str]
+    #: leaves shared by several catalog paths (kept under their own name when unresolved)
+    ambiguous_leaves: frozenset[str]
+    #: event type -> leaf -> canonical name, for leaves unique within that event type
+    event_leaves: Mapping[str, Mapping[str, str]]
+    #: event type -> canonical name -> position in the catalog entry (projection priority)
+    event_order: Mapping[str, Mapping[str, int]]
+
+
+def _build_key_tables() -> _KeyTables:
+    paths = sorted({p for spec in EVENT_CATALOG.values() for p in spec.key_fields})
+    canonical: dict[str, str] = {}
+    owner: dict[str, str] = {}
+    for path in paths:
+        if path in _NOT_PROJECTED_PATHS:
+            continue
+        name = _canonical_name(path)
+        if name in owner:  # never let two catalog fields share a name: fall back to flattening
+            name = path.replace(".", "_")
+        owner[name] = path
+        canonical[path] = name
+
+    aliases: dict[str, str] = {}
+    for path, name in canonical.items():
+        for spelling in (path, name, path.replace(".", "_")):
+            aliases.setdefault(spelling, name)
+    by_leaf: dict[str, list[str]] = {}
+    for path in canonical:
+        by_leaf.setdefault(_leaf(path), []).append(path)
+    ambiguous: set[str] = set()
+    for leaf, leaf_paths in by_leaf.items():
+        if len(leaf_paths) == 1:
+            aliases.setdefault(leaf, canonical[leaf_paths[0]])
+        elif leaf not in aliases:
+            ambiguous.add(leaf)
+    for extra in EXTRA_KEY_FIELDS:
+        aliases.setdefault(extra, extra)
+        aliases.setdefault(f"attributes.{extra}", aliases[extra])
+
+    event_leaves: dict[str, dict[str, str]] = {}
+    event_order: dict[str, dict[str, int]] = {}
+    for event_type, spec in EVENT_CATALOG.items():
+        projected = [p for p in spec.key_fields if p in canonical]
+        per_leaf: dict[str, list[str]] = {}
+        for path in projected:
+            per_leaf.setdefault(_leaf(path), []).append(canonical[path])
+        event_leaves[event_type] = {
+            leaf: names[0] for leaf, names in per_leaf.items() if len(names) == 1
+        }
+        event_order[event_type] = {canonical[p]: i for i, p in enumerate(projected)}
+    return _KeyTables(canonical, aliases, frozenset(ambiguous), event_leaves, event_order)
+
+
+_KEYS = _build_key_tables()
+
+#: Canonical key-field names that may reach providers (catalog fields + documented extras;
+#: leaves that stay ambiguous are accepted under their own name).
+ALLOWED_KEY_FIELDS: frozenset[str] = (
+    frozenset(_KEYS.canonical.values()) | EXTRA_KEY_FIELDS | _KEYS.ambiguous_leaves
+)
+
+
+def canonical_key_field(key: str, event_type: str | None = None) -> str | None:
+    """Canonical projected name of an ``EventSummary.key_fields`` key, or ``None``.
+
+    ``event_type`` (the evidence event's catalog type) resolves leaves that are ambiguous
+    across the catalog but unique within that event type.
+    """
+    name = _KEYS.aliases.get(key)
+    if name is not None:
+        return name
+    if event_type is not None:
+        name = _KEYS.event_leaves.get(event_type, {}).get(key)
+        if name is not None:
+            return name
+    return key if key in _KEYS.ambiguous_leaves else None
+
 
 _DENIED_KEY = re.compile(
     r"(?i)(passw|secret|token|cookie|authori[sz]ation|credential|private[_-]?key|session"
@@ -212,28 +319,34 @@ _DENIED_KEY = re.compile(
 _EXCERPT_KEY = re.compile(r"(?i)excerpt")
 _SAFE_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 
-#: Untrusted free-text limits per key (default LIMIT_SHORT).
+#: Admission decisions and request summaries carry the decisive Kubernetes detail; the
+#: correlation builder already bounds them to 256 characters.
+LIMIT_K8S_DETAIL = 256
+
+#: Untrusted free-text limits per canonical key (default LIMIT_SHORT).
 _TEXT_LIMITS: dict[str, int] = {
     "message": LIMIT_LOG_MESSAGE,
     "commit_message": LIMIT_COMMIT_MESSAGE,
-    "route": LIMIT_HTTP_PATH,
     "http_route": LIMIT_HTTP_PATH,
-    "path": LIMIT_HTTP_PATH,
     "resource_path": LIMIT_HTTP_PATH,
     "unit_path": LIMIT_HTTP_PATH,
-    "user_agent": LIMIT_USER_AGENT,
+    "github_workflow_path": LIMIT_HTTP_PATH,
+    "cwd": LIMIT_HTTP_PATH,
     "http_user_agent": LIMIT_USER_AGENT,
     "kubernetes_user_agent": LIMIT_USER_AGENT,
-    "command_line": LIMIT_K8S_FIELD,
     "process_command_line": LIMIT_K8S_FIELD,
     "exec_start": LIMIT_K8S_FIELD,
-    "request_summary": LIMIT_K8S_FIELD,
-    "pod_security_violation": LIMIT_K8S_FIELD,
+    "request_summary": LIMIT_K8S_DETAIL,
+    "pod_security_violation": LIMIT_K8S_DETAIL,
     "annotations": LIMIT_K8S_FIELD,
     "labels": LIMIT_K8S_FIELD,
-    "object_name": LIMIT_K8S_FIELD,
     "kubernetes_object_name": LIMIT_K8S_FIELD,
 }
+
+
+def _is_denied(*names: str) -> bool:
+    """Deny-list check on a key, each of its dotted segments, and its canonical name."""
+    return any(_DENIED_KEY.search(part) for name in names for part in (name, *name.split(".")))
 
 
 @dataclass
@@ -276,29 +389,62 @@ class _Builder:
         limit = LIMIT_EXCERPT if _EXCERPT_KEY.search(key) else _TEXT_LIMITS.get(key, LIMIT_SHORT)
         return self.untrusted(value, limit)
 
-    def attributes(
-        self, values: Mapping[str, Any], cap: int, *, allow: frozenset[str] | None
-    ) -> dict[str, Any]:
+    def _excerpt_opt_in(self, key: str) -> bool:
+        return self.include_excerpts and _EXCERPT_KEY.search(key) is not None
+
+    def attributes(self, values: Mapping[str, Any], cap: int) -> dict[str, Any]:
+        """Detection / correlation features (ExtorQ-computed keys; deny-list and cap only)."""
         out: dict[str, Any] = {}
         for key in sorted(values):
             if not _SAFE_KEY.match(key):
                 self.dropped_keys += 1
                 continue
-            denied = _DENIED_KEY.search(key) is not None
-            if denied and not (self.include_excerpts and _EXCERPT_KEY.search(key)):
-                self.dropped_keys += 1
-                continue
-            if (
-                allow is not None
-                and key not in allow
-                and not (self.include_excerpts and _EXCERPT_KEY.search(key))
-            ):
+            if _DENIED_KEY.search(key) and not self._excerpt_opt_in(key):
                 self.dropped_keys += 1
                 continue
             if len(out) >= cap:
                 self.dropped_keys += 1
                 continue
             out[key] = self.scalar(key, values[key])
+        return out
+
+    def key_fields(self, values: Mapping[str, Any], event_type: str) -> dict[str, Any]:
+        """Evidence key fields: canonical names, allow-list, deny-list, then the per-event cap.
+
+        Keys are normalised FIRST so dotted catalog paths (the correlation builder's form)
+        and flattened/leaf spellings are treated alike. When several spellings of one field
+        are present, the dotted catalog path wins. Fields are kept in the event type's
+        catalog order (most decisive first) before the cap applies.
+        """
+        chosen: dict[str, tuple[int, str]] = {}
+        for raw in sorted(values):
+            if not _SAFE_KEY.match(raw):
+                self.dropped_keys += 1
+                continue
+            if self._excerpt_opt_in(raw):
+                name: str | None = raw
+            elif _is_denied(raw):
+                self.dropped_keys += 1
+                continue
+            else:
+                name = canonical_key_field(raw, event_type)
+            if name is None or (_is_denied(name) and not self._excerpt_opt_in(name)):
+                self.dropped_keys += 1
+                continue
+            rank = 0 if raw in _KEYS.canonical else (1 if raw == name else 2)
+            previous = chosen.get(name)
+            if previous is not None:
+                self.dropped_keys += 1  # duplicate spelling of one field
+                if (rank, raw) >= previous:
+                    continue
+            chosen[name] = (rank, raw)
+        order = _KEYS.event_order.get(event_type, {})
+        out: dict[str, Any] = {}
+        for name in sorted(chosen, key=lambda n: (order.get(n, len(order)), n)):
+            if len(out) >= self.limits.max_key_fields:
+                self.dropped_keys += 1
+                continue
+            out[name] = self.scalar(name, values[chosen[name][1]])
         return out
 
 
@@ -330,7 +476,7 @@ def _evidence_event(
         "actor": b.untrusted(e.actor_name, LIMIT_ACTOR),
         "src_ip": e.src_ip,
         "summary": b.untrusted(e.summary, LIMIT_SUMMARY),
-        "fields": b.attributes(e.key_fields, b.limits.max_key_fields, allow=ALLOWED_KEY_FIELDS),
+        "fields": b.key_fields(e.key_fields, e.event_type),
     }
     if e.service_id is not None and e.service_id in service_refs:
         item["service_ref"] = service_refs[e.service_id]
@@ -417,12 +563,30 @@ def _related_event(b: _Builder, rel: Relationship, entry: TimelineEntry | None) 
 
 
 def _sample_evidence(evidence: list[EventSummary], cap: int) -> tuple[list[EventSummary], int]:
-    ordered = sorted(evidence, key=lambda e: (e.event_time, e.event_id))
+    """At most ``cap`` evidence events, in time order, covering every evidence event type.
+
+    The first event of each event type is kept before anything else (earliest types first
+    if there are more types than slots), so every stage of a multi-stage detection stays
+    visible: CORR-002's HTTP probes sit between earlier SSH failures and later audit
+    records and were lost to plain head/tail sampling. Remaining slots go to the earliest
+    and latest events.
+    """
+    unique = {e.event_id: e for e in evidence}
+    ordered = sorted(unique.values(), key=lambda e: (e.event_time, e.event_id))
     if len(ordered) <= cap:
-        return ordered, 0
-    head = math.ceil(cap / 2)
-    tail = cap - head
-    sample = ordered[:head] + (ordered[-tail:] if tail else [])
+        return ordered, len(evidence) - len(ordered)
+    first_of_type: dict[str, EventSummary] = {}
+    for event in ordered:
+        first_of_type.setdefault(event.event_type, event)
+    chosen = {e.event_id for e in list(first_of_type.values())[:cap]}
+    rest = [e for e in ordered if e.event_id not in chosen]
+    remaining = cap - len(chosen)
+    head = math.ceil(remaining / 2)
+    tail = remaining - head
+    chosen.update(e.event_id for e in rest[:head])
+    if tail:
+        chosen.update(e.event_id for e in rest[-tail:])
+    sample = [e for e in ordered if e.event_id in chosen]
     return sample, len(ordered) - len(sample)
 
 
@@ -521,8 +685,8 @@ def project_context(
         "services": services,
         "omitted_services": omitted_services,
         "related_assets": related_assets,
-        "detection_features": b.attributes(alert.features, limits.max_features, allow=None),
-        "correlation_features": b.attributes(ctx.features, limits.max_features, allow=None),
+        "detection_features": b.attributes(alert.features, limits.max_features),
+        "correlation_features": b.attributes(ctx.features, limits.max_features),
         "correlation": {
             "related_direct": counts[RelationshipType.DIRECT.value],
             "related_candidate": counts[RelationshipType.CANDIDATE.value],

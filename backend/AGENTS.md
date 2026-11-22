@@ -58,8 +58,15 @@ that apply to all backend code.
 make bootstrap && make up && make up-debug     # gateway 8443, ClickHouse debug proxy 18123
 uv run extorq migrate --status
 uv run python scripts/smoke_ingest.py          # one SYNTHETIC event round trip
-make up-full                                   # + detector, ai-worker, api (8000), console, grafana
+make up-full                                   # + detector, ai-worker, api (8000), console, grafana (AI off)
+make up-demo                                   # the same with Jev/Gemini ON (live, budgeted calls)
+make collectors-start                          # host collectors in the background (collectors-status/-stop)
+make demo-check                                # read-only readiness report (scenarios, freshness, endpoints)
 ```
+
+Gateway time window: events more than 1 day in the future or older than the `events`
+retention (90 days, `EXTORQ_EVENT_RETENTION_DAYS`, must equal the TTL in 0001) are
+quarantined (`older_than_retention`), never acknowledged and silently expired.
 
 Dev servers bind other ports (API 8100, console 3100) so they never clash with compose.
 

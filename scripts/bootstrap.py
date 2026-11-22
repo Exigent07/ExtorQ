@@ -47,9 +47,12 @@ CLICKHOUSE_USERS: tuple[str, ...] = (
     "extorq_grafana",
 )
 
-#: Simple single-value secrets: var/secrets/<name>.
+#: Simple single-value secrets: var/secrets/<name>. ``grafana_secret_key`` is Grafana's
+#: ``security.secret_key`` (D1-IC-1): it protects the encryption keys of stored secrets
+#: such as the provisioned datasource password; without it Grafana uses its public default.
 SIMPLE_SECRETS: tuple[str, ...] = (
     "grafana_admin_password",
+    "grafana_secret_key",
     "api_service_token",
     "frontend_session_secret",
     "analyst_password",

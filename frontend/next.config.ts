@@ -9,6 +9,9 @@ import { STATIC_SECURITY_HEADERS } from "./src/lib/security/csp";
  */
 const nextConfig: NextConfig = {
   output: "standalone",
+  // `next dev` would otherwise append a generated block to the hand-written AGENTS.md
+  // whenever it detects an AI coding agent; the console's guide stays authored here.
+  agentRules: false,
   poweredByHeader: false,
   reactStrictMode: true,
   productionBrowserSourceMaps: false,

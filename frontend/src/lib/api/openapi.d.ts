@@ -779,6 +779,11 @@ export interface components {
             /** Collectors Stale */
             collectors_stale: number;
             /**
+             * Collectors Inherited
+             * @default 0
+             */
+            collectors_inherited: number;
+            /**
              * Coverage Status
              * @enum {string}
              */
@@ -832,6 +837,11 @@ export interface components {
             /** Collectors Stale */
             collectors_stale: number;
             /**
+             * Collectors Inherited
+             * @default 0
+             */
+            collectors_inherited: number;
+            /**
              * Coverage Status
              * @enum {string}
              */
@@ -859,6 +869,13 @@ export interface components {
              * @default 0
              */
             invalid_records: number;
+            /** Hosted */
+            hosted?: components["schemas"]["HostedService"][];
+            /**
+             * Hosted Truncated
+             * @default false
+             */
+            hosted_truncated: boolean;
         };
         /** AssetSummary */
         AssetSummary: {
@@ -1584,6 +1601,22 @@ export interface components {
          * @enum {string}
          */
         HealthStatus: "ok" | "degraded" | "failed" | "disabled" | "unknown";
+        /**
+         * HostedService
+         * @description A service of an ANCESTOR asset with present instances on this asset.
+         *
+         *     Example: a cluster workload (``k8s_workload`` of ``k8s:<cluster>``) whose Pods and
+         *     containers run on the node ``k8s:<cluster>/node/<name>``. Only instances whose
+         *     ``asset_id`` is this asset are listed, and only services whose asset is an ancestor of
+         *     it are accepted (an instance cannot attach itself to another asset's service).
+         */
+        HostedService: {
+            service: components["schemas"]["ServiceListItem"];
+            /** Instances */
+            instances: components["schemas"]["ServiceInstanceItem"][];
+            /** Instances On Asset */
+            instances_on_asset: number;
+        };
         /** HttpInfo */
         HttpInfo: {
             /** Method */

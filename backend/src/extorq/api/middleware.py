@@ -10,7 +10,7 @@ from typing import Any
 
 from starlette.exceptions import HTTPException
 
-from extorq.api.errors import classify_unhandled
+from extorq.api.errors import QUOTA_RETRY_AFTER_SECONDS, classify_unhandled
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -121,14 +121,11 @@ class SecurityMiddleware:
     @staticmethod
     async def _reject(send: Send, request_id: str, status: int, detail: str) -> None:
         body = json.dumps({"detail": detail, "request_id": request_id}).encode("utf-8")
-        await send(
-            {
-                "type": "http.response.start",
-                "status": status,
-                "headers": [
-                    (b"content-type", b"application/json"),
-                    (b"content-length", str(len(body)).encode("ascii")),
-                ],
-            }
-        )
+        headers = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+        ]
+        if status == 429:
+            headers.append((b"retry-after", str(QUOTA_RETRY_AFTER_SECONDS).encode("ascii")))
+        await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": body})

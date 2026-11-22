@@ -29,6 +29,7 @@ from typing import Any, Protocol
 
 from extorq.api.errors import ServiceUnavailable
 from extorq.api.logs import get_logger
+from extorq.contracts.identity import service_id as compute_service_id
 
 log = get_logger("extorq.api.repository")
 
@@ -117,6 +118,9 @@ class EventFilters:
     src_ip: str = ""
     simulation_run_id: str = ""
     service_id: str = ""
+    #: Only events of this asset or its descendants (set with ``service_id``: the service's
+    #: owning asset, F-19). Empty = no restriction.
+    scope_asset: str = ""
 
 
 @dataclass(frozen=True)
@@ -126,7 +130,8 @@ class FindingFilters:
     scanner: str = ""
     category: str = ""
     states: tuple[str, ...] = field(default_factory=tuple)
-    #: Findings with at least one observation attributed to this service.
+    #: Findings whose LATEST observation is attributed to this service
+    #: (``v_findings_current.service_id``; an older attribution does not count).
     service_id: str = ""
 
 
@@ -182,18 +187,23 @@ class Repository(Protocol):
         self, filters: FindingFilters, limit: int, offset: int
     ) -> tuple[list[Row], int, bool]: ...
     def finding_severity_counts(self, asset_id: str) -> tuple[list[Row], bool]: ...
-    def finding_service_attribution(self, finding_ids: Sequence[str]) -> dict[str, str]: ...
 
     # services (schema 1.1)
     def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]: ...
     def get_service(self, service_id: str) -> Row | None: ...
-    def service_instances(self, service_id: str, limit: int) -> tuple[list[Row], int]: ...
+    def service_instances(
+        self, service_id: str, limit: int, scope_asset: str = ""
+    ) -> tuple[list[Row], int]: ...
+    def instances_on_asset(self, asset_id: str, limit: int) -> list[Row]: ...
+    def services_by_id(self, service_ids: Sequence[str], max_rows: int) -> list[Row]: ...
     def service_event_sources(
-        self, service_id: str, since: datetime, until: datetime
+        self, service_id: str, since: datetime, until: datetime, scope_asset: str = ""
     ) -> list[Row]: ...
-    def service_auth_summary(self, service_id: str, since: datetime, until: datetime) -> Row: ...
+    def service_auth_summary(
+        self, service_id: str, since: datetime, until: datetime, scope_asset: str = ""
+    ) -> Row: ...
     def service_auth_sources(
-        self, service_id: str, since: datetime, until: datetime, limit: int
+        self, service_id: str, since: datetime, until: datetime, limit: int, scope_asset: str = ""
     ) -> list[Row]: ...
 
     # rules
@@ -337,22 +347,26 @@ LIMIT 100
 
 FINDINGS_VIEW_EXISTS_SQL = "EXISTS TABLE extorq.v_findings_current"
 
-# Lifecycle view (0003, owner C3): one row per (asset_id, scanner, scope_hash, finding_id)
-# with state open | unverified | resolved derived from scan history.
+# Lifecycle view (0003, owner C3; 0005 adds service_id): one row per
+# (asset_id, scanner, scope_hash, finding_id) with state open | unverified | resolved derived
+# from scan history. ``service_id`` is the attribution of the finding's MOST RECENT
+# observation, NULL included: a later scan without attribution evidence clears an older link
+# (it is never carried forward). Every endpoint reads attribution from here (the fallback
+# below reproduces the same rule), so the findings list, the service filter, asset detail
+# and service detail always agree.
 FINDINGS_LC_LIST_SQL = """
 SELECT finding_id, asset_id, scanner, scope_hash, check_id, category, severity, title,
        resource_type, resource_name, resource_namespace, resource_path, package_name,
        installed_version, fixed_version, cve_ids, accepted_risk_reason, first_observed_at,
-       last_observed_at, last_scan_run_id, last_success_at, latest_scan_status, state
+       last_observed_at, last_scan_run_id, last_success_at, latest_scan_status, state,
+       service_id
 FROM extorq.v_findings_current
 WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
   AND (empty({severities:Array(String)}) OR has({severities:Array(String)}, severity))
   AND (empty({scanner:String}) OR scanner = {scanner:String})
   AND (empty({category:String}) OR category = {category:String})
   AND (empty({states:Array(String)}) OR has({states:Array(String)}, state))
-  AND (empty({service_id:String})
-       OR finding_id IN (SELECT finding_id FROM extorq.finding_observations
-                         WHERE service_id = {service_id:String}))
+  AND (empty({service_id:String}) OR service_id = {service_id:String})
 ORDER BY multiIf(state = 'open', 0, state = 'unverified', 1, 2),
          multiIf(severity = 'critical', 4, severity = 'high', 3, severity = 'medium', 2,
                  severity = 'low', 1, 0) DESC,
@@ -370,9 +384,7 @@ WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
   AND (empty({scanner:String}) OR scanner = {scanner:String})
   AND (empty({category:String}) OR category = {category:String})
   AND (empty({states:Array(String)}) OR has({states:Array(String)}, state))
-  AND (empty({service_id:String})
-       OR finding_id IN (SELECT finding_id FROM extorq.finding_observations
-                         WHERE service_id = {service_id:String}))
+  AND (empty({service_id:String}) OR service_id = {service_id:String})
 """
 
 FINDINGS_LC_SEVERITY_SQL = """
@@ -384,6 +396,8 @@ GROUP BY severity, state
 
 # Fallback when the lifecycle view (0003, C3) is absent: latest observation per finding
 # fingerprint. Aliases are prefixed ``f_`` so aggregates never shadow source columns.
+# ``f_service_id`` follows the view's rule: the latest observation's attribution, NULL
+# included (``argMax`` over a tuple keeps NULL instead of skipping it).
 FINDINGS_OBS_LIST_SQL = """
 SELECT
     finding_id,
@@ -406,16 +420,15 @@ SELECT
     argMax(cve_ids, observed_at) AS f_cve_ids,
     argMax(tuple(cvss_score), observed_at).1 AS f_cvss_score,
     argMax(tuple(remediation), observed_at).1 AS f_remediation,
-    argMax(tuple(accepted_risk_reason), observed_at).1 AS f_accepted_risk_reason
+    argMax(tuple(accepted_risk_reason), observed_at).1 AS f_accepted_risk_reason,
+    argMax(tuple(service_id), observed_at).1 AS f_service_id
 FROM extorq.finding_observations
 WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
-  AND (empty({service_id:String})
-       OR finding_id IN (SELECT finding_id FROM extorq.finding_observations
-                         WHERE service_id = {service_id:String}))
 GROUP BY finding_id
 HAVING (empty({severities:Array(String)}) OR has({severities:Array(String)}, f_severity))
    AND (empty({scanner:String}) OR f_scanner = {scanner:String})
    AND (empty({category:String}) OR f_category = {category:String})
+   AND (empty({service_id:String}) OR ifNull(f_service_id = {service_id:String}, 0))
 ORDER BY multiIf(f_severity = 'critical', 4, f_severity = 'high', 3, f_severity = 'medium', 2,
                  f_severity = 'low', 1, 0) DESC,
          last_observed_at DESC,
@@ -430,16 +443,15 @@ FROM
     SELECT finding_id,
            argMax(scanner, observed_at) AS f_scanner,
            argMax(category, observed_at) AS f_category,
-           argMax(severity, observed_at) AS f_severity
+           argMax(severity, observed_at) AS f_severity,
+           argMax(tuple(service_id), observed_at).1 AS f_service_id
     FROM extorq.finding_observations
     WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
-      AND (empty({service_id:String})
-           OR finding_id IN (SELECT finding_id FROM extorq.finding_observations
-                             WHERE service_id = {service_id:String}))
     GROUP BY finding_id
     HAVING (empty({severities:Array(String)}) OR has({severities:Array(String)}, f_severity))
        AND (empty({scanner:String}) OR f_scanner = {scanner:String})
        AND (empty({category:String}) OR f_category = {category:String})
+       AND (empty({service_id:String}) OR ifNull(f_service_id = {service_id:String}, 0))
 )
 """
 
@@ -453,16 +465,6 @@ FROM
     GROUP BY finding_id
 )
 GROUP BY severity
-"""
-
-# Latest non-null service attribution per finding (argMax skips NULL service_id values).
-FINDING_SERVICE_ATTRIBUTION_SQL = """
-SELECT finding_id, argMax(service_id, observed_at) AS attributed_service_id
-FROM extorq.finding_observations
-WHERE finding_id IN {finding_ids:Array(String)}
-  AND service_id IS NOT NULL
-GROUP BY finding_id
-LIMIT 1000
 """
 
 RULES_LATEST_SQL = """
@@ -704,6 +706,9 @@ WHERE event_time >= {since:DateTime64(3, 'UTC')}
   AND (empty({src_ip:String}) OR src_ip = {src_ip:String} OR has(k8s_source_ips, {src_ip:String}))
   AND (empty({simulation_run_id:String}) OR simulation_run_id = {simulation_run_id:String})
   AND (empty({service_id:String}) OR service_id = {service_id:String})
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
 ORDER BY event_time DESC, event_id
 LIMIT 1 BY event_id
 LIMIT {limit:UInt32} OFFSET {offset:UInt32}
@@ -828,6 +833,9 @@ LIMIT {max_rows:UInt32}
 """
 
 # ── Services (0004: v_services = services FINAL, v_service_instances_current) ─────────
+# F-19: ``scope_asset`` (the owning asset of the requested service, resolved first) keeps a
+# service's instances and events within that asset and its descendants (a cluster's nodes),
+# so a producer of another asset cannot place its rows under a service it does not own.
 
 SERVICES_LIST_SQL = """
 SELECT service_id, asset_id, service_kind, service_key, name, category, product, version,
@@ -853,7 +861,7 @@ SELECT service_id, asset_id, service_kind, service_key, name, category, product,
 FROM extorq.v_services
 WHERE service_id = {service_id:String}
 ORDER BY last_seen DESC
-LIMIT 1
+LIMIT 10
 """
 
 SERVICE_INSTANCES_SQL = """
@@ -863,14 +871,44 @@ SELECT instance_id, service_id, asset_id, instance_kind, instance_key, parent_in
        observed_by, attributes
 FROM extorq.v_service_instances_current
 WHERE service_id = {service_id:String}
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
 ORDER BY observed_at DESC, instance_id
 LIMIT {limit:UInt32}
+"""
+
+# Present instances running ON an asset (e.g. Pods/containers on a Kubernetes node), for
+# GET /assets/{id}/services ``hosted``. Their services belong to an ancestor asset.
+INSTANCES_ON_ASSET_SQL = """
+SELECT instance_id, service_id, asset_id, instance_kind, instance_key, parent_instance_id, state,
+       pid, process_name, process_user, namespace, pod_name, pod_uid, container_name,
+       container_id, image, node_name, workload_kind, workload_name, started_at, observed_at,
+       observed_by, attributes
+FROM extorq.v_service_instances_current
+WHERE asset_id = {asset_id:String}
+ORDER BY service_id, observed_at DESC, instance_id
+LIMIT {limit:UInt32}
+"""
+
+SERVICES_BY_ID_SQL = """
+SELECT service_id, asset_id, service_kind, service_key, name, category, product, version,
+       discovered_via, adapter_id, adapter_support, monitoring_status, coverage_note,
+       telemetry_sources, endpoints, config_refs, instance_count, last_telemetry_at,
+       first_seen, last_seen, present, observed_by
+FROM extorq.v_services
+WHERE has({service_ids:Array(String)}, service_id)
+ORDER BY asset_id, service_kind, name, service_id, last_seen DESC
+LIMIT {max_rows:UInt32}
 """
 
 SERVICE_INSTANCES_COUNT_SQL = """
 SELECT count() AS total
 FROM extorq.v_service_instances_current
 WHERE service_id = {service_id:String}
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
 """
 
 SERVICE_EVENT_SOURCES_SQL = """
@@ -880,6 +918,9 @@ SELECT source_type,
        max(ingested_time) AS last_ingested_at
 FROM extorq.events
 WHERE service_id = {service_id:String}
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
   AND event_time >= {since:DateTime64(3, 'UTC')}
   AND event_time < {until:DateTime64(3, 'UTC')}
 GROUP BY source_type
@@ -897,6 +938,9 @@ SELECT uniqExact(event_id) AS total,
        uniqExact(src_ip) AS distinct_sources
 FROM extorq.events
 WHERE service_id = {service_id:String}
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
   AND category = 'authentication'
   AND event_time >= {since:DateTime64(3, 'UTC')}
   AND event_time < {until:DateTime64(3, 'UTC')}
@@ -909,6 +953,9 @@ SELECT assumeNotNull(src_ip) AS source_ip,
        max(event_time) AS last_seen
 FROM extorq.events
 WHERE service_id = {service_id:String}
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
   AND category = 'authentication'
   AND src_ip IS NOT NULL
   AND event_time >= {since:DateTime64(3, 'UTC')}
@@ -972,7 +1019,6 @@ ALL_SELECT_SQL: tuple[str, ...] = (
     FINDINGS_OBS_LIST_SQL,
     FINDINGS_OBS_COUNT_SQL,
     FINDINGS_OBS_SEVERITY_SQL,
-    FINDING_SERVICE_ATTRIBUTION_SQL,
     RULES_LATEST_SQL,
     RULE_LATEST_RUNS_SQL,
     RULE_VERSIONS_SQL,
@@ -1004,10 +1050,30 @@ ALL_SELECT_SQL: tuple[str, ...] = (
     SERVICE_GET_SQL,
     SERVICE_INSTANCES_SQL,
     SERVICE_INSTANCES_COUNT_SQL,
+    INSTANCES_ON_ASSET_SQL,
+    SERVICES_BY_ID_SQL,
     SERVICE_EVENT_SOURCES_SQL,
     SERVICE_AUTH_SUMMARY_SQL,
     SERVICE_AUTH_SOURCES_SQL,
 )
+
+
+# ── Identity checks (F-19) ────────────────────────────────────────────────────────
+
+
+def identity_matches(row: Row) -> bool:
+    """A stored service row carries the id its natural key computes to.
+
+    The gateway quarantines mismatches since session 2 (A, F-19); the API re-checks so a
+    row stored before that (or written by another path) never stands in for a real service.
+    """
+    try:
+        expected = compute_service_id(
+            str(row["asset_id"]), str(row["service_kind"]), str(row["service_key"])
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+    return expected == str(row.get("service_id"))
 
 
 # ── Row normalisation ─────────────────────────────────────────────────────────────
@@ -1161,17 +1227,6 @@ class ClickHouseRepository:
                 self._lifecycle_failed(exc)
         return self._query(FINDINGS_OBS_SEVERITY_SQL, {"asset_id": asset_id}), False
 
-    def finding_service_attribution(self, finding_ids: Sequence[str]) -> dict[str, str]:
-        """``finding_id -> service_id`` for findings with an attributed observation."""
-        if not finding_ids:
-            return {}
-        rows = self._query(FINDING_SERVICE_ATTRIBUTION_SQL, {"finding_ids": list(finding_ids)})
-        return {
-            str(row["finding_id"]): str(row["attributed_service_id"])
-            for row in rows
-            if row.get("attributed_service_id")
-        }
-
     # -- services --
 
     def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]:
@@ -1187,31 +1242,56 @@ class ClickHouseRepository:
         return self._query(SERVICES_LIST_SQL, params)
 
     def get_service(self, service_id: str) -> Row | None:
+        """The newest stored row of ``service_id`` whose id matches its natural key (F-19)."""
         rows = self._query(SERVICE_GET_SQL, {"service_id": service_id})
-        return rows[0] if rows else None
+        valid = [row for row in rows if identity_matches(row)]
+        if len(valid) < len(rows):
+            log.warning("service_rows_identity_mismatch", count=len(rows) - len(valid))
+        return valid[0] if valid else None
 
-    def service_instances(self, service_id: str, limit: int) -> tuple[list[Row], int]:
-        rows = self._query(SERVICE_INSTANCES_SQL, {"service_id": service_id, "limit": limit})
-        total = self._scalar(SERVICE_INSTANCES_COUNT_SQL, {"service_id": service_id}, "total")
+    def service_instances(
+        self, service_id: str, limit: int, scope_asset: str = ""
+    ) -> tuple[list[Row], int]:
+        params = {"service_id": service_id, "scope_asset": scope_asset}
+        rows = self._query(SERVICE_INSTANCES_SQL, {**params, "limit": limit})
+        total = self._scalar(SERVICE_INSTANCES_COUNT_SQL, params, "total")
         return rows, total
 
-    def service_event_sources(self, service_id: str, since: datetime, until: datetime) -> list[Row]:
+    def instances_on_asset(self, asset_id: str, limit: int) -> list[Row]:
+        return self._query(INSTANCES_ON_ASSET_SQL, {"asset_id": asset_id, "limit": limit})
+
+    def services_by_id(self, service_ids: Sequence[str], max_rows: int) -> list[Row]:
+        if not service_ids:
+            return []
         return self._query(
-            SERVICE_EVENT_SOURCES_SQL, {"service_id": service_id, "since": since, "until": until}
+            SERVICES_BY_ID_SQL, {"service_ids": list(service_ids), "max_rows": max_rows}
         )
 
-    def service_auth_summary(self, service_id: str, since: datetime, until: datetime) -> Row:
-        rows = self._query(
-            SERVICE_AUTH_SUMMARY_SQL, {"service_id": service_id, "since": since, "until": until}
-        )
+    def service_event_sources(
+        self, service_id: str, since: datetime, until: datetime, scope_asset: str = ""
+    ) -> list[Row]:
+        params = {"service_id": service_id, "since": since, "until": until}
+        return self._query(SERVICE_EVENT_SOURCES_SQL, {**params, "scope_asset": scope_asset})
+
+    def service_auth_summary(
+        self, service_id: str, since: datetime, until: datetime, scope_asset: str = ""
+    ) -> Row:
+        params = {"service_id": service_id, "since": since, "until": until}
+        rows = self._query(SERVICE_AUTH_SUMMARY_SQL, {**params, "scope_asset": scope_asset})
         return rows[0] if rows else {}
 
     def service_auth_sources(
-        self, service_id: str, since: datetime, until: datetime, limit: int
+        self, service_id: str, since: datetime, until: datetime, limit: int, scope_asset: str = ""
     ) -> list[Row]:
         return self._query(
             SERVICE_AUTH_SOURCES_SQL,
-            {"service_id": service_id, "since": since, "until": until, "limit": limit},
+            {
+                "service_id": service_id,
+                "since": since,
+                "until": until,
+                "limit": limit,
+                "scope_asset": scope_asset,
+            },
         )
 
     # -- rules --
@@ -1313,6 +1393,7 @@ class ClickHouseRepository:
             "src_ip": filters.src_ip,
             "simulation_run_id": filters.simulation_run_id,
             "service_id": filters.service_id,
+            "scope_asset": filters.scope_asset,
             "limit": limit,
             "offset": offset,
         }

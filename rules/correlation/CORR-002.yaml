@@ -1,13 +1,14 @@
 rule_id: CORR-002
-version: 1.1.0
+version: 1.2.0
 title: Ordered HTTP probing, SSH failures and systemd persistence on one host
 description: >-
   Multi-stage sequence on one Linux host, in this order within 30 minutes: (1) HTTP probing
   (at least 10 client-error responses to one source, including at least 5 distinct
   probe-like routes, within 5 minutes), (2) SSH authentication failures (at least 3 failed
   connections or 5 failed attempts from one source within 5 minutes), (3) an unexpected
-  systemd persistence change (unit created, modified or enabled outside the allowlist, or an
-  auditd write to a watched unit path). The rule shows ordered co-occurrence of independent
+  systemd persistence change with creation or modification evidence (unit created, modified
+  or enabled outside the allowlist, or a successful auditd create/modify syscall on a unit
+  file; deletions are context only). The rule shows ordered co-occurrence of independent
   observations across three services (web server, sshd, systemd); it does not establish
   that one stage caused the next or that one actor performed all of them.
 severity: high
@@ -53,8 +54,44 @@ params:
   ssh_min_connections: 3
   ssh_min_failures: 5
   audit_key: extorq_systemd
-  # auditd watch hits that remove a file (e.g. a cleanup) are not persistence.
+  # Stage 3 needs CREATION or MODIFICATION evidence (v1.2.0). auditd syscalls that create
+  # or modify a unit file (allowlist: only successful hits count; anything else, including
+  # unknown or numeric syscall values, fails closed).
+  change_syscalls:
+    - open
+    - openat
+    - openat2
+    - creat
+    - truncate
+    - ftruncate
+    - rename
+    - renameat
+    - renameat2
+    - link
+    - linkat
+    - symlink
+    - symlinkat
+    - mknod
+    - mknodat
+    - chmod
+    - fchmod
+    - fchmodat
+    - fchmodat2
+    - chown
+    - fchown
+    - fchownat
+    - lchown
+  # Removals of unit files (and nametype DELETE path items) are reported as context only.
   deletion_syscalls: [unlink, unlinkat, rmdir]
+  # systemd unit directories (the auditd watches cover the first two in the lab).
+  unit_dirs:
+    - /etc/systemd/system/
+    - /usr/lib/systemd/system/
+    - /lib/systemd/system/
+    - /run/systemd/system/
+  # Unit files and drop-ins (RE2); editor swap/backup files are not units.
+  unit_file_pattern: >-
+    [.](service|socket|timer|path|mount|automount|swap|target|slice|scope|conf)$
   allowlist_paths: []
   # Addresses that aggregate many origins: a shared source IP through them is not identity.
   shared_nat_ips: ["10.0.2.2", "172.18.0.1", "127.0.0.1", "::1"]
@@ -71,6 +108,12 @@ false_positives:
   - >-
     In this lab every connection from the Mac host reaches the VM from the QEMU gateway
     10.0.2.2, so a shared source IP there carries no identity (confidence low).
+  - >-
+    Re-installing an unchanged unit file is a genuine write and counts (live: the lab's
+    vm.sh redeploy runs install on lab-portal.service: unlinkat, openat CREATE, fchownat,
+    fchmodat). The features separate persistence_units_inventory_confirmed (the inventory
+    saw new or changed content) from persistence_units_audit_only (write seen by auditd
+    only), and persistence_writers names the writing executable.
 blind_spots:
   - >-
     Sequences slower than 30 minutes, probing below the thresholds, or SSH failures below
@@ -83,6 +126,9 @@ blind_spots:
     parsed), probing over TLS-terminating proxies that hide the client address, and SSH on
     hosts without journald collection.
   - A stage that happened before the evaluation lookback (45 minutes) is not considered.
+  - >-
+    auditd logs without ENRICHED syscall names (numeric syscall values) never count as
+    stage 3 (fail closed); the inventory diff still does.
 references:
   - https://attack.mitre.org/techniques/T1595/003/
   - https://attack.mitre.org/techniques/T1110/
@@ -92,10 +138,11 @@ query: CORR-002.sql
 summary_template: >-
   Ordered sequence on {asset_id}: HTTP probing from {probe_src_ips} ({probe_requests} client
   errors, {probe_routes_distinct} probe-like routes), then SSH failures from {ssh_src_ips}
-  ({ssh_failed_connections} connections), then systemd change of {units} within
-  {sequence_seconds}s; same non-NAT source IP: {same_non_nat_source_ip}; shared NAT/gateway
-  address involved: {source_ip_shared_nat}; ordered co-occurrence, not proof of causation
-  ({confidence} confidence)
+  ({ssh_failed_connections} connections), then systemd change of {units} (writers
+  {persistence_writers}) within {sequence_seconds}s; unit removals in the window, context
+  only: {context_unit_removals}; same non-NAT source IP: {same_non_nat_source_ip}; shared
+  NAT/gateway address involved: {source_ip_shared_nat}; ordered co-occurrence, not proof of
+  causation ({confidence} confidence)
 tests:
   - name: ordered-sequence-same-external-source
     description: >-
@@ -105,6 +152,13 @@ tests:
     expect: alert
     alerts: 1
     confidence: medium
+    features:
+      persistence_units: [backdoor.service]
+      persistence_units_inventory_confirmed: [backdoor.service]
+      persistence_units_audit_only: []
+      persistence_change_types: [audit.openat, persistence.systemd.unit_created]
+      context_unit_removals: []
+      same_non_nat_source_ip: true
   - name: ordered-sequence-through-qemu-nat
     description: The same sequence arriving from the QEMU gateway 10.0.2.2 (simulation-tagged).
     fixture: tests/CORR-002/positive_nat_gateway_sim.jsonl
@@ -134,6 +188,34 @@ tests:
     fixture: tests/CORR-002/negative_below_probe_threshold.jsonl
     expect: no_alert
   - name: deletion-is-not-persistence
-    description: Probing and SSH failures followed only by an auditd unlinkat of a unit file.
+    description: >-
+      Probing and SSH failures followed only by an auditd unlinkat of a unit file by rm
+      (the shape of the live VM-002 cleanup that v1.0.0 counted).
     fixture: tests/CORR-002/negative_deletion_only.jsonl
     expect: no_alert
+  - name: non-changing-audit-hits-are-not-persistence
+    description: >-
+      Probing and SSH failures followed by auditd hits that neither create nor modify a
+      unit: a failed openat (EACCES), fsetxattr on an unresolved path, an editor swap file,
+      a numeric syscall value and a unit moved out of the directory (rename DELETE side).
+    fixture: tests/CORR-002/negative_noncounting_audit_hits.jsonl
+    expect: no_alert
+  - name: audit-create-with-removal-as-context
+    description: >-
+      Persistence seen by auditd only (openat CREATE of a unit, no inventory diff yet) plus
+      an unlinkat of another unit in the window: the creation is stage 3, the removal is
+      listed as context and is not evidence.
+    fixture: tests/CORR-002/positive_audit_create_removal_context.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      persistence_units: [beacon.service]
+      persistence_units_inventory_confirmed: []
+      persistence_units_audit_only: [beacon.service]
+      persistence_change_types: [audit.openat]
+      persistence_events: 1
+      context_unit_removals: [old-agent.service]
+      context_removal_events: 1
+      causation_established: false
+    summary_contains: "context only: old-agent.service"

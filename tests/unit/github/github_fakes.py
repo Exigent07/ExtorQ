@@ -59,7 +59,11 @@ class Injected:
 class FakeGitHub:
     """A single synthetic repository behind a fake GitHub REST API."""
 
-    def __init__(self, owner: str = "Example-Org", name: str = "extorq-lab") -> None:
+    def __init__(
+        self, owner: str = "Example-Org", name: str = "extorq-lab", *, sha_salt: str = ""
+    ) -> None:
+        #: Distinguishes the synthetic commit SHAs of separate scenarios (fixtures).
+        self.sha_salt = sha_salt
         self.owner = owner
         self.name = name
         self.full_name = f"{owner}/{name}"
@@ -107,7 +111,7 @@ class FakeGitHub:
     def _next_sha(self) -> str:
         self._counter += 1
         return hashlib.sha1(
-            f"synthetic-commit-{self._counter}".encode(), usedforsecurity=False
+            f"synthetic-commit-{self.sha_salt}{self._counter}".encode(), usedforsecurity=False
         ).hexdigest()
 
     def commit(

@@ -431,8 +431,10 @@ def _seed_detail(repo: FakeRepository) -> str:
         "title": f"{SYN} password authentication enabled",
         "last_observed_at": NOW,
     }
-    repo.findings = [finding, {**finding, "finding_id": hexid("finding:other")}]
-    repo.finding_attribution = {finding["finding_id"]: sid}
+    repo.findings = [
+        {**finding, "service_id": sid},
+        {**finding, "finding_id": hexid("finding:other"), "service_id": None},
+    ]
     repo.alerts = [alert_row("svc", service_ids=[sid]), alert_row("other")]
     return sid
 
@@ -537,3 +539,309 @@ def test_collector_status_type_is_reused_for_sources() -> None:
     assert isinstance(status, CollectorStatus)
     evaluator = service.ServiceEvaluator([status], NOW, 3600)
     assert evaluator.stale_sources("linux:lab-vm-01", ["linux.journald"]) == {}
+
+
+# ── session 3 review fixes ────────────────────────────────────────────────────────
+
+
+def _seed_node_service(repo: FakeRepository, *, cluster_collector_stale: bool) -> str:
+    """A SYNTHETIC service on a Kubernetes node whose only source is a CLUSTER collector."""
+    repo.assets = [
+        asset_row(CLUSTER, asset_type="kubernetes_cluster"),
+        asset_row(NODE, asset_type="kubernetes_node", parent_asset_id=CLUSTER),
+    ]
+    success = NOW - (timedelta(hours=2) if cluster_collector_stale else timedelta(seconds=30))
+    repo.collector_rows = [
+        collector_row(
+            "k8s-otel",
+            asset_id=CLUSTER,
+            source_types=["k8s.container_log"],
+            last_success_at=success,
+        )
+    ]
+    svc = service_row(
+        "kubelet.service",
+        asset_id=NODE,
+        category="unknown",
+        adapter_id="k8s-container-log",
+        telemetry_sources=["k8s.container_log"],
+        endpoints="[]",
+    )
+    repo.services = [svc]
+    return str(svc["service_id"])
+
+
+@pytest.mark.parametrize(
+    ("stale", "state"),
+    [(True, "degraded"), (False, "monitored")],
+)
+def test_node_service_coverage_is_identical_in_every_view(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository, stale: bool, state: str
+) -> None:
+    """Regression (review): GET /assets/{node} evaluated the node's services with the node's
+    own collectors only (none), GET /assets/{node}/services with the cluster collectors that
+    cover the node: one service read monitored=1 in one view and degraded=1 in the other at
+    the same instant. Both now use one shared function."""
+    sid = _seed_node_service(repo, cluster_collector_stale=stale)
+    node = quote(NODE, safe="")
+    expected = {
+        "monitored": 0,
+        "degraded": 0,
+        "unmonitored": 0,
+        "planned": 0,
+        "unsupported": 0,
+        "total": 1,
+    } | {state: 1}
+
+    detail = client.get(f"/api/v1/assets/{node}", headers=viewer)
+    assert detail.status_code == 200, detail.text
+    listing = client.get(f"/api/v1/assets/{node}/services", headers=viewer)
+    assert listing.status_code == 200, listing.text
+    across = client.get("/api/v1/services", headers=viewer, params={"asset_id": NODE}).json()
+    overview = client.get("/api/v1/overview", headers=viewer).json()
+    one = client.get(f"/api/v1/services/{sid}", headers=viewer).json()
+
+    assert detail.json()["services_summary"]["coverage"] == expected
+    assert listing.json()["summary"]["coverage"] == expected
+    assert across["summary"]["coverage"] == expected
+    assert overview["service_coverage"]["coverage"] == expected
+    assert listing.json()["items"][0]["coverage_state"] == state
+    assert one["service"]["coverage_state"] == state
+    by_kind = detail.json()["services_summary"]["by_kind"]
+    assert by_kind == listing.json()["summary"]["by_kind"]
+    if stale:
+        reasons = listing.json()["items"][0]["coverage_reasons"]
+        assert any("k8s-otel" in r and "stale" in r for r in reasons)
+        assert one["service"]["coverage_reasons"] == reasons
+
+
+def test_finding_attribution_is_the_latest_observations_in_every_endpoint(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository
+) -> None:
+    """Every endpoint takes a finding's service from its row (v_findings_current.service_id:
+    latest observation wins, NULL clears an older link) and the service filter matches it."""
+    sid = _seed_detail(repo)
+    attributed, cleared = hexid("finding:sshd"), hexid("finding:other")
+    expected = {attributed: sid, cleared: None}
+
+    listing = client.get("/api/v1/findings", headers=viewer).json()["items"]
+    assert {f["finding_id"]: f["service_id"] for f in listing} == expected
+    asset = client.get("/api/v1/assets/linux:lab-vm-01", headers=viewer).json()["findings"]
+    assert {f["finding_id"]: f["service_id"] for f in asset} == expected
+    filtered = client.get("/api/v1/findings", headers=viewer, params={"service_id": sid}).json()
+    assert [f["finding_id"] for f in filtered["items"]] == [attributed]
+    assert filtered["page"]["total"] == 1
+    detail = client.get(f"/api/v1/services/{sid}", headers=viewer).json()
+    assert [(f["finding_id"], f["service_id"]) for f in detail["findings"]] == [(attributed, sid)]
+    assert detail["findings_total"] == 1
+    assert repo.last_call("list_findings").service_id == sid
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"service_id": "ab" * 16}, "ab" * 16),
+        ({"service_id": None}, None),  # latest observation unattributed: link cleared
+        ({"service_id": ""}, None),
+        ({}, None),
+    ],
+)
+def test_finding_service_id_never_invents_a_link(
+    row: dict[str, object], expected: str | None
+) -> None:
+    assert service.finding_service_id(row) == expected
+
+
+def test_node_asset_coverage_inherits_the_cluster_collectors(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository
+) -> None:
+    """A Kubernetes node is covered by its cluster's collectors (the rule services already
+    used): the node is no longer reported 'missing' in the list, detail and overview."""
+    _seed_node_service(repo, cluster_collector_stale=False)
+    repo.assets.append(asset_row("linux:lab-vm-01"))
+    repo.collector_rows.append(collector_row())  # the VM's own collector
+    node = quote(NODE, safe="")
+
+    detail = client.get(f"/api/v1/assets/{node}", headers=viewer).json()
+    assert [c["collector_id"] for c in detail["collectors"]] == ["k8s-otel"]
+    assert detail["collectors"][0]["asset_id"] == CLUSTER  # reported for the ancestor
+    asset = detail["asset"]
+    assert (asset["collectors_total"], asset["collectors_inherited"]) == (1, 1)
+    assert asset["coverage_status"] == "ok"
+
+    items = client.get("/api/v1/assets", headers=viewer).json()["items"]
+    listing = {a["asset_id"]: a for a in items}
+    assert listing[NODE]["coverage_status"] == "ok"
+    assert listing[NODE]["collectors_inherited"] == 1
+    assert listing[CLUSTER]["collectors_inherited"] == 0  # its own collector
+    # The cluster never inherits from its nodes, and other assets are unaffected.
+    assert listing["linux:lab-vm-01"]["collectors_total"] == 1
+    assert listing["linux:lab-vm-01"]["collectors_inherited"] == 0
+
+    classes = client.get("/api/v1/overview", headers=viewer).json()["asset_coverage"]
+    nodes = next(c for c in classes if c["asset_type"] == "kubernetes_node")
+    assert (nodes["assets_ok"], nodes["assets_without_collector"], nodes["status"]) == (1, 0, "ok")
+
+
+def test_collector_prefix_match_is_segment_aware() -> None:
+    near_miss = service.collector_status(collector_row("x", asset_id="linux:lab-vm-0"), NOW)
+    assert service.collectors_for_asset("linux:lab-vm-01", [near_miss]) == []
+
+
+def test_node_lists_the_cluster_workloads_running_on_it(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository
+) -> None:
+    """GET /assets/{node}/services ``hosted``: the cluster's workloads with their Pods and
+    containers on this node (D2's per-node Pod list); the node's own summary is unchanged."""
+    ids = _seed_mixed(repo)
+    workload = next(r for r in repo.services if r["service_id"] == ids["workload"])
+    pod = instance_row(
+        workload,
+        "pod-uid-1",
+        asset_id=NODE,
+        instance_kind="pod",
+        pid=None,
+        process_name=None,
+        process_user=None,
+        namespace="extorq-apps",
+        pod_name=f"{SYN}-lab-portal-0",
+        pod_uid="pod-uid-1",
+        node_name="extorq-lab-control-plane",
+    )
+    container = instance_row(
+        workload,
+        "container-1",
+        asset_id=NODE,
+        instance_kind="container",
+        pid=None,
+        process_name=None,
+        process_user=None,
+        parent_instance_id=pod["instance_id"],
+        container_name="lab-portal",
+        pod_name=f"{SYN}-lab-portal-0",
+    )
+    elsewhere = instance_row(workload, "pod-uid-2", asset_id=f"{CLUSTER}/node/other-node")
+    repo.instances = [pod, container, elsewhere]
+
+    body = client.get(f"/api/v1/assets/{quote(NODE, safe='')}/services", headers=viewer).json()
+    assert body["items"] == [] and body["summary"]["coverage"]["total"] == 0
+    assert [h["service"]["service_id"] for h in body["hosted"]] == [ids["workload"]]
+    hosted = body["hosted"][0]
+    assert hosted["service"]["service_kind"] == "k8s_workload"
+    assert hosted["instances_on_asset"] == 2
+    assert {i["instance_kind"] for i in hosted["instances"]} == {"pod", "container"}
+    assert all(i["asset_id"] == NODE for i in hosted["instances"])
+    assert body["hosted_truncated"] is False
+    # The cluster itself hosts nothing (its workloads are its own items).
+    cluster = client.get(f"/api/v1/assets/{quote(CLUSTER, safe='')}/services", headers=viewer)
+    assert cluster.json()["hosted"] == []
+
+
+def test_hosted_instances_cannot_attach_to_a_foreign_or_forged_service(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository
+) -> None:
+    """F-19 defence in depth: an instance on the node that names a service of an unrelated
+    asset, or a stored service row whose id does not match its natural key, is not shown."""
+    ids = _seed_mixed(repo)
+    linux_ssh = next(r for r in repo.services if r["service_id"] == ids["monitored"])
+    forged = service_row(
+        "extorq-apps/Deployment/forged",
+        asset_id=CLUSTER,
+        service_kind="k8s_workload",
+        service_id=hexid("forged-service"),
+    )
+    repo.services.append(forged)
+    repo.instances = [
+        instance_row(linux_ssh, "pid:1", asset_id=NODE),  # VM service, not an ancestor
+        instance_row(forged, "pod-x", asset_id=NODE, instance_kind="pod"),
+    ]
+    body = client.get(f"/api/v1/assets/{quote(NODE, safe='')}/services", headers=viewer).json()
+    assert body["hosted"] == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/overview",
+        f"/api/v1/assets/{quote(NODE, safe='')}",
+        f"/api/v1/assets/{quote(NODE, safe='')}/services",
+        "/api/v1/services",
+    ],
+)
+def test_collector_health_is_read_once_per_request(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository, path: str
+) -> None:
+    """One evaluator per request: the asset's coverage, its services' coverage and the
+    hosted workloads all use the same collector snapshot (and one storage query)."""
+    _seed_node_service(repo, cluster_collector_stale=True)
+    repo.calls.clear()
+    assert client.get(path, headers=viewer).status_code == 200
+    assert [args for name, args in repo.calls if name == "collectors"] == [""]
+
+
+# ── F-19: a service's rows stay on its own asset subtree ──────────────────────────
+
+
+def test_rows_of_another_asset_never_appear_under_a_service(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository
+) -> None:
+    """F-19 (review): events and instances tagged with a service id are shown under that
+    service only when they belong to the service's asset or a descendant (cluster -> node).
+    A producer of the macOS host naming the VM's ssh service cannot plant rows there."""
+    sid = _seed_detail(repo)
+    genuine = event_row("svc-e1", service_id=sid, service_name="ssh")
+    planted = event_row(
+        "planted", service_id=sid, service_name="ssh", asset_id="macos:workstation-01"
+    )
+    repo.events = {e["event_id"]: e for e in (genuine, planted)}
+    svc = repo.get_service(sid)
+    assert svc is not None
+    repo.instances.append(instance_row(svc, "pid:666", asset_id="macos:workstation-01"))
+
+    detail = client.get(f"/api/v1/services/{sid}", headers=viewer).json()
+    assert [e["event_id"] for e in detail["recent_events"]] == [genuine["event_id"]]
+    assert detail["instances_total"] == 2  # the two VM processes, not the planted one
+    assert {i["asset_id"] for i in detail["instances"]} == {"linux:lab-vm-01"}
+    scopes = {args for name, args in repo.calls if name == "service_scope"}
+    assert scopes == {"linux:lab-vm-01"}  # telemetry and auth aggregates are scoped too
+
+    listing = client.get("/api/v1/events", headers=viewer, params={"service_id": sid}).json()
+    assert [e["event_id"] for e in listing["items"]] == [genuine["event_id"]]
+    assert repo.last_call("list_events").scope_asset == "linux:lab-vm-01"
+    # Without a service filter nothing is scoped (both events are listed).
+    everything = client.get("/api/v1/events", headers=viewer).json()
+    assert len(everything["items"]) == 2
+
+
+def test_cluster_service_keeps_its_node_rows(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository
+) -> None:
+    ids = _seed_mixed(repo)
+    workload = next(r for r in repo.services if r["service_id"] == ids["workload"])
+    repo.instances = [instance_row(workload, "pod-1", asset_id=NODE, instance_kind="pod")]
+    detail = client.get(f"/api/v1/services/{ids['workload']}", headers=viewer).json()
+    assert [i["asset_id"] for i in detail["instances"]] == [NODE]
+
+
+def test_a_forged_service_row_never_stands_in_for_the_real_one(
+    client: TestClient, viewer: dict[str, str], repo: FakeRepository
+) -> None:
+    """A newer row carrying the ssh service's id but another asset (identity mismatch) is
+    ignored by the detail and by the listings (counted as invalid)."""
+    real = service_row()
+    forged = {
+        **service_row(asset_id="macos:workstation-01"),
+        "service_id": real["service_id"],
+        "last_seen": NOW,
+    }
+    repo.services = [real, forged]
+    detail = client.get(f"/api/v1/services/{real['service_id']}", headers=viewer).json()
+    assert detail["service"]["asset_id"] == "linux:lab-vm-01"
+    listing = client.get("/api/v1/services", headers=viewer).json()
+    assert [i["asset_id"] for i in listing["items"]] == ["linux:lab-vm-01"]
+    assert listing["invalid_records"] == 1
+    only_forged = FakeRepository()
+    assert only_forged.get_service(real["service_id"]) is None
+    repo.services = [forged]
+    gone = client.get(f"/api/v1/services/{real['service_id']}", headers=viewer)
+    assert gone.status_code == 404

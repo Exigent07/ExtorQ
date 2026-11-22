@@ -45,3 +45,29 @@ validates records with the same contracts as the gateway, so these answers mean
 version skew or misconfiguration, never one bad record (bad records are
 quarantined with 202). Observed trigger: a 1.1 client against a 1.0 gateway.
 Dead letters can be re-queued with `extorq-collect flush --requeue-dead`.
+
+## A-IC-4 Collector SDK additions, session 3 (informational; B3, C1, B1, B2)
+
+Implemented in `extorq_collectors.sdk` (no contract change; tests in
+`tests/unit/platform/test_platform_sdk.py`):
+
+* `ctx.mark_degraded(reason: str)` (B3-IC-2, C1 3.3): the current cycle completed but only
+  partly. Health `status=degraded`, `last_error = "degraded: <r1>; <r2>"`,
+  `details.degraded_reasons = [...]` (redacted, sanitised, <= 8 distinct reasons);
+  `last_success_at` still advances. Per cycle: call it every cycle while the condition
+  lasts. A cycle that raises stays `failed`. Suggested uses: macOS source isolation
+  (B3: a failing source), GitHub (C1: one repository failed, rate limited mid-cycle,
+  `token_source=gh_cli`).
+* `ctx.committed_snapshot(name) -> dict[str, dict]` (B3-IC-3): the last COMMITTED snapshot,
+  parsed, as a fresh copy (staged items of this cycle are not included). Replaces
+  `ctx.store.snapshot(name)` + `json.loads` in `macos/collector.py` (two call sites).
+* Config secret check (C1 3.1): only STRING settings are checked (each with its key);
+  `allow_gh_cli_token: true` loads. The error names the setting path, never the value
+  (the loader used to embed pydantic's `input_value=...` in its message: fixed).
+
+## A-IC-5 PLAN §5.1 wording (owner: lead)
+
+PLAN §5.1 still says "Events with `event_time` > now+1d or older than 400d -> quarantine".
+Implemented per §11: older than the `events` retention (90 d, `EXTORQ_EVENT_RETENTION_DAYS`,
+pinned to the 0001 TTL by a unit test) -> quarantine reason `older_than_retention: ...`;
+future check unchanged (`time: event_time_in_future`). Suggest updating §5.1 to match.

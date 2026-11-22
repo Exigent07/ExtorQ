@@ -22,6 +22,7 @@ import { FindingsTable } from "@/components/views/findings/findings-table";
 import { LifecycleNotice } from "@/components/views/overview/posture-panel";
 import { AssetServices } from "@/components/views/services/asset-services";
 import type { AssetDetailResponse } from "@/lib/api/schemas";
+import { collectorsSummary } from "@/lib/assets";
 import { assetTypeLabel, formatCount, formatRelative, formatUtcShort } from "@/lib/format";
 import { assetHref, parseAssetIdSegment } from "@/lib/security/ids";
 import { getAsset, listAssets, listAssetServices, listEvents, listFindings } from "@/lib/server/api";
@@ -38,7 +39,11 @@ function parseTab(raw: string | string[] | undefined): Tab {
 }
 
 function tabLabel(tab: Tab, assetType: string): string {
-  if (tab === "services") return assetType.startsWith("kubernetes_cluster") ? "Workloads and Services" : "Services";
+  if (tab === "services") {
+    if (assetType === "kubernetes_cluster") return "Workloads and Services";
+    if (assetType === "kubernetes_node") return "Workloads on node";
+    return "Services";
+  }
   return { overview: "Overview", findings: "Findings", events: "Events" }[tab];
 }
 
@@ -46,10 +51,7 @@ function finding(detail: AssetDetailResponse, now: string): string {
   const a = detail.asset;
   const parts: string[] = [];
   if (a.collectors_total === 0) parts.push("No collector reports for this asset");
-  else {
-    const fresh = a.collectors_total - a.collectors_stale;
-    parts.push(`${formatCount(fresh)} of ${formatCount(a.collectors_total)} collectors fresh`);
-  }
+  else parts.push(collectorsSummary(a));
   parts.push(a.last_event_at ? `last event ${formatRelative(a.last_event_at, now)}` : "no event stored");
   parts.push(`${formatCount(a.open_alerts)} open alert${a.open_alerts === 1 ? "" : "s"}`);
   const f = detail.findings_summary;
@@ -167,14 +169,27 @@ export default async function AssetPage({ params, searchParams }: PageProps<"/as
           <Panel
             title="Telemetry sources"
             titleId="collectors-title"
-            meta={<span>Collector health as last reported</span>}
+            meta={
+              <span>
+                Collector health as last reported
+                {asset.collectors_inherited > 0
+                  ? ` · ${formatCount(asset.collectors_inherited)} reported for ${
+                      asset.asset_type === "kubernetes_node" ? "the cluster, which covers its nodes" : "a parent asset"
+                    }`
+                  : ""}
+              </span>
+            }
             flush
             bodyClassName="px-5"
           >
             {detail.collectors.length === 0 ? (
               <EmptyState>No collector has reported health for this asset. Its telemetry coverage is unknown.</EmptyState>
             ) : (
-              <CollectorTable collectors={detail.collectors} now={now} />
+              <CollectorTable
+                collectors={detail.collectors}
+                now={now}
+                showAsset={detail.collectors.some((c) => c.asset_id !== asset.asset_id)}
+              />
             )}
           </Panel>
           <div className="grid items-start gap-6 xl:grid-cols-2">

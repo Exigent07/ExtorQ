@@ -3,9 +3,14 @@
 Two bindings exist, both backed by unified logging (``macos.unified_log``):
 
 * ``macos-sshd``: Remote Login (OpenSSH, launchd job ``com.openssh.sshd``),
-  records of processes ``sshd`` / ``sshd-session``.
+  records of ``sshd`` / ``sshd-session`` / ``sshd-auth`` (OpenSSH 10 on macOS 27) mapped to
+  ``auth.ssh.*`` exactly like the Linux journald parser.
 * ``macos-screensharing``: Screen Sharing (launchd job ``com.apple.screensharing``),
   records of process ``screensharingd``.
+
+A record is bound to a service (``ServiceRef``) only when its kernel-attested image path is
+the service's binary on the sealed system volume (:data:`trusted_paths`); a process that is
+merely *named* like it is classified as an unverified sender and carries no ServiceRef.
 
 They match ONLY on the macOS launchd label (``unit_patterns``); they declare no
 product or executable matchers, so the shared registry can never hand them a
@@ -35,13 +40,22 @@ class _UnifiedLogAdapter(ServiceAdapter):
     """Common parse path: unified-log record -> classified SecurityEvent carrying ServiceRef."""
 
     processes: ClassVar[frozenset[str]] = frozenset()
+    #: Exact image paths that identify the service's own binaries (not used for discovery
+    #: matching: that is ``unit_patterns`` only, so Linux candidates never match).
+    trusted_paths: ClassVar[frozenset[str]] = frozenset()
+
+    def _trusted(self, path: Any) -> bool:
+        return (
+            isinstance(path, str)
+            and os.path.basename(path) in self.processes
+            and path in self.trusted_paths
+        )
 
     def accepts(self, raw: Mapping[str, Any]) -> bool:
-        path = raw.get("processImagePath")
-        return isinstance(path, str) and os.path.basename(path) in self.processes
+        return self._trusted(raw.get("processImagePath"))
 
     def accepts_record(self, record: unified_log.LogRecord) -> bool:
-        return record.process_name in self.processes
+        return self._trusted(record.process_path)
 
     def event_for(
         self,
@@ -90,15 +104,19 @@ class MacOSSshdAdapter(_UnifiedLogAdapter):
     support = AdapterSupport.IMPLEMENTED
     category = ServiceCategory.SSH
     unit_patterns = ("com.openssh.sshd",)
-    processes = frozenset({"sshd", "sshd-session"})
+    processes = unified_log.SSHD_PROCESSES
+    trusted_paths = unified_log.SSHD_TRUSTED_PATHS
     source_types = (SourceType.MACOS_UNIFIED_LOG,)
     description = (
         "macOS Remote Login (OpenSSH sshd, launchd job com.openssh.sshd) via unified logging"
     )
     collects = (
-        "authentication failures and successes (user, method, source address and port)",
-        "invalid-user attempts",
-        "other sshd/sshd-session messages as system.log.notable",
+        "authentication failures and successes as auth.ssh.login_failed / login_succeeded "
+        "(user, method, key type and fingerprint, source address and port)",
+        "invalid-user attempts (auth.ssh.invalid_user), pre-authentication disconnects "
+        "(auth.ssh.preauth_closed) and authentication-limit disconnects "
+        "(auth.ssh.max_auth_exceeded)",
+        "other sshd / sshd-session / sshd-auth messages as system.log.notable",
     )
     never_collects = (
         "passwords, private keys or key material",
@@ -114,6 +132,7 @@ class MacOSScreenSharingAdapter(_UnifiedLogAdapter):
     category = ServiceCategory.OTHER
     unit_patterns = ("com.apple.screensharing",)
     processes = frozenset({"screensharingd"})
+    trusted_paths = unified_log.SCREENSHARING_TRUSTED_PATHS
     source_types = (SourceType.MACOS_UNIFIED_LOG,)
     description = (
         "macOS Screen Sharing (VNC, launchd job com.apple.screensharing) via unified logging"

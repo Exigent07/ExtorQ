@@ -23,12 +23,11 @@ regexTarget = "line"
 regexes = ['''^\s*[A-Z][A-Z0-9_]*_KEY_FPR="[0-9A-F]{40}"\s*$''']
 
 [[allowlists]]
-description = "F-22 (owner E, pending): synthetic 'api_key: ...' parametrize sample in E's sanitiser unit test. Both conditions must hold: this file AND this exact list-literal line shape. Remove once E generates the sample at runtime."
+description = "F-22 (resolved 2026-11-22: E builds the synthetic sample at runtime, so the working-tree entry was removed). History only: commit 4ee5baa added the synthetic 'api_key: ...' sample to E's sanitiser test; history is never rewritten. Commit AND path must both match, so any new occurrence anywhere, including this file, is reported."
 targetRules = ["generic-api-key"]
 condition = "AND"
+commits = ["4ee5baae876717ecdfc00e45a7bad5ffe3b71d6a"]
 paths = ['''(^|/)tests/unit/ai/test_ai_sanitize\.py$''']
-regexTarget = "line"
-regexes = ['''^\s*"api_key: '[A-Za-z0-9_-]+'",\s*$''']
 
 [[allowlists]]
 description = "SSH public-key fingerprints in sshd log lines ('key ED25519 SHA256:<43 base64>'): public identifiers, not secrets (B1 journald fixtures)"
@@ -41,9 +40,3 @@ description = "Public OpenPGP v4 fingerprint in the official python image's GPG_
 targetRules = ["generic-api-key"]
 regexTarget = "line"
 regexes = ['''GPG_KEY=[0-9A-F]{40}(?:[^0-9A-Za-z]|$)''']
-
-[[allowlists]]
-description = "64-character upper-case hex launchd label suffix that merely starts with EAAA (Square tokens are mixed-case base64url) (B3 launchctl fixture; see F-24)"
-targetRules = ["square-access-token"]
-regexTarget = "secret"
-regexes = ['''^EAAA[0-9A-F]{60}$''']

@@ -155,6 +155,9 @@ class GitHubCollector(Collector):
         if failure is not None:
             raise GitHubCollectorError(failure)
         if reports and not any(r.completed for r in reports) and rate_limited_until is None:
+            # Records of the phases that did run were committed; the cycle still counts as
+            # failed so the incomplete coverage is visible in health.
             raise GitHubCollectorError(
-                "no repository could be polled: " + "; ".join(errors[:3] or ["see health details"])
+                "no repository was polled completely: "
+                + "; ".join(errors[:3] or ["see health details"])
             )

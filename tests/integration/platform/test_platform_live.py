@@ -280,3 +280,87 @@ def test_live_gateway_quarantines_forged_service_identity() -> None:
     body = response.json()
     assert body["accepted"] == 0
     assert body["quarantined"][0]["reason"].startswith("identity_mismatch")
+
+
+# ── session 3: retention-aligned quarantine, JSON-safe redaction ─────
+
+
+def test_live_gateway_quarantines_events_older_than_the_events_retention() -> None:
+    """PLAN §11: an event ClickHouse would expire at once is refused, not acknowledged."""
+    from datetime import timedelta
+
+    from extorq.contracts.common import utc_now
+
+    marker = uuid.uuid4().hex
+    old = synthetic_event(marker, 0)
+    old["event_time"] = old["observed_time"] = (utc_now() - timedelta(days=91)).isoformat()
+    recent = synthetic_event(marker, 1)
+    recent["event_time"] = (utc_now() - timedelta(days=89)).isoformat()
+    response = post(
+        batch([{"kind": "event", "data": old}, {"kind": "event", "data": recent}]),
+        bearer=token(),
+    )
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["accepted"] == 1 and body["rejected"] == 1
+    assert body["quarantined"][0]["index"] == 0
+    assert body["quarantined"][0]["reason"].startswith("older_than_retention: ")
+    rows = wait_for(
+        lambda: (
+            client("api_ro")
+            .query(
+                "SELECT reason, record_kind FROM extorq.ingest_quarantine "
+                "WHERE received_at > now64(3) - INTERVAL 10 MINUTE "
+                "AND batch_id = {b:String}",
+                parameters={"b": body["batch_id"]},
+            )
+            .result_rows
+        ),
+        lambda r: bool(r),
+    )
+    assert len(rows) == 1 and rows[0][1] == "event"
+    assert rows[0][0].startswith("older_than_retention")
+    counts = wait_for(lambda: event_counts([recent["event_id"]]), lambda c: c[0] == 1)
+    assert counts == (1, 1)
+    assert event_counts([old["event_id"]]) == (0, 0)
+
+
+def test_live_redaction_keeps_json_booleans_in_attributes() -> None:
+    """B2-IC-2 on the deployed gateway: JSON in attributes stays valid JSON."""
+    marker = uuid.uuid4().hex
+    event = synthetic_event(marker)
+    summary = json.dumps({"automount_sa_token": False, "secret_volumes": 0, "token_ttl": None})
+    event["attributes"] = {"synthetic": True, "test_marker": marker, "request_summary": summary}
+    response = post(batch([{"kind": "event", "data": event}]), bearer=token())
+    assert response.status_code == 202 and response.json()["accepted"] == 1
+    rows = wait_for(
+        lambda: (
+            client("api_ro")
+            .query(
+                "SELECT JSONExtractString(attributes, 'request_summary') FROM extorq.events "
+                "WHERE event_id = {id:String}",
+                parameters={"id": event["event_id"]},
+            )
+            .result_rows
+        ),
+        lambda r: bool(r),
+    )
+    assert json.loads(rows[0][0]) == {
+        "automount_sa_token": False,
+        "secret_volumes": 0,
+        "token_ttl": None,
+    }
+
+
+def test_live_gateway_status_reports_the_acceptance_window() -> None:
+    import httpx
+    from platform_live import GATEWAY, tls
+
+    response = httpx.get(
+        f"{GATEWAY}/v1/status",
+        verify=tls(),
+        timeout=10,
+        headers={"Authorization": f"Bearer {token('extorq-selftest')}"},
+    )
+    limits = response.json()["limits"]
+    assert limits["event_retention_days"] == 90 and limits["max_future_seconds"] == 86400

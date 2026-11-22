@@ -59,8 +59,7 @@ def list_findings(
             "which is not available"
         )
     rows, total, lifecycle = repo.list_findings(filters, limit, offset)
-    attribution = repo.finding_service_attribution([str(row["finding_id"]) for row in rows])
-    items = [service.finding_item(row, lifecycle, attribution) for row in rows]
+    items = [service.finding_item(row, lifecycle) for row in rows]
     return s.FindingListResponse(
         lifecycle_available=lifecycle,
         source="v_findings_current" if lifecycle else "finding_observations",

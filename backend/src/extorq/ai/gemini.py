@@ -1,6 +1,6 @@
 """Gemini investigation summaries with evidence-id verification.
 
-Design (prompt version ``summary-v1``):
+Design (prompt version ``summary-v3``; see :data:`SUMMARY_PROMPT_VERSION`):
 
 * The model receives a fixed system instruction (:data:`SYSTEM_INSTRUCTION`) and
   one user message containing the allow-listed, sanitised projection of the
@@ -36,6 +36,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from extorq.ai import transport
 from extorq.ai._compat import get_logger
 from extorq.ai.projection import GEMINI_LIMITS, Projection, project_context
 from extorq.ai.sanitize import clean_output, clean_token, clean_untrusted, redact_secrets
@@ -54,7 +55,10 @@ from extorq.contracts.common import utc_now
 from extorq.contracts.context import InvestigationContext
 from extorq.contracts.identity import assessment_id
 
-SUMMARY_PROMPT_VERSION = "summary-v2"
+#: Identifies what the provider saw: system instruction, schema AND projection format.
+#: v3 (2026-11-22): evidence key fields reach the model under canonical names and the
+#: evidence sample covers every event type (v2 carried no key fields on real contexts).
+SUMMARY_PROMPT_VERSION = "summary-v3"
 #: Room reserved for the user-message text around the evidence bundle: instructions,
 #: boundary lines and the ALLOWED_EVIDENCE_IDS list (<= 50 ids x 36 chars).
 PROMPT_FRAMING_CHARS = 3_000
@@ -401,9 +405,20 @@ ClientFactory = Callable[[str, AISettings], GeminiClient]
 
 
 def build_http_options(settings: AISettings) -> Any:
+    """Pinned endpoint, timeout, bounded retries and environment-independent HTTP clients.
+
+    Both the sync and the async client are injected (:mod:`extorq.ai.transport`), so the SDK
+    builds no client of its own: proxy variables, ``SSL_CERT_FILE``/``SSL_CERT_DIR``,
+    ``SSLKEYLOGFILE`` and ``GOOGLE_GENAI_HTTP_CLIENT`` cannot redirect, intercept or downgrade
+    requests carrying the API key, and redirects are never followed. With an injected async
+    client the SDK's aiohttp path is not used either. ``async_client_args["ssl"]`` only pins
+    the TLS context the SDK otherwise builds from ``SSL_CERT_FILE`` at construction for its
+    Live API websockets (never used by ExtorQ).
+    """
     from google.genai import types
 
     return types.HttpOptions(
+        async_client_args={"ssl": transport.tls_context()},
         base_url=GEMINI_BASE_URL,
         api_version=GEMINI_API_VERSION,
         timeout=int(settings.gemini_timeout_seconds * 1000),  # milliseconds
@@ -415,15 +430,20 @@ def build_http_options(settings: AISettings) -> Any:
             jitter=1.0,
             http_status_codes=list(RETRY_STATUSES),
         ),
+        httpx_client=transport.sync_client(settings.gemini_timeout_seconds),
+        httpx_async_client=transport.async_client(settings.gemini_timeout_seconds),
     )
 
 
 def _default_client_factory(api_key: str, settings: AISettings) -> GeminiClient:
     """Gemini Developer API client with every environment-driven switch pinned.
 
-    * ``vertexai=False``: ``GOOGLE_GENAI_USE_VERTEXAI`` cannot switch the backend;
+    * ``vertexai=False``: ``GOOGLE_GENAI_USE_VERTEXAI`` / ``GOOGLE_GENAI_USE_ENTERPRISE``
+      cannot switch the backend;
     * explicit ``api_key``: ``GOOGLE_API_KEY`` / ``GEMINI_API_KEY`` are not consulted;
-    * ``base_url`` pinned in :func:`build_http_options`;
+    * ``base_url`` and API version pinned in :func:`build_http_options`, which also injects
+      HTTP clients that ignore proxy / CA / key-log environment variables and never follow
+      redirects (:mod:`extorq.ai.transport`);
     * ``DebugConfig`` with no client mode: ``GOOGLE_GENAI_CLIENT_MODE=record|replay`` (which
       would write prompts and responses to disk) cannot be enabled from the environment.
     """

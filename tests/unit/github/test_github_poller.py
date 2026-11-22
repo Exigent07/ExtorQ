@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from github_fakes import FakeGitHub
 
-from extorq.contracts import PostureFinding, ScanRun, ScanStatus, SecurityEvent
+from extorq.contracts import PostureFinding, ScanRun, ScanStatus, SecurityEvent, Severity
 from extorq.contracts.asset import Asset, InventoryItem
 from extorq.contracts.identity import event_id
 from extorq.contracts.ingest import IngestRecord
@@ -26,6 +26,7 @@ from extorq_collectors.github.client import GitHubClient, GitHubRateLimited, Git
 from extorq_collectors.github.config import GitHubCollectorConfig
 from extorq_collectors.github.poller import PollReport, RepoPoller
 from extorq_collectors.github.state import RepoState
+from extorq_collectors.github.workflow import MAX_LEXICAL_BYTES, MAX_WORKFLOW_BYTES
 from extorq_collectors.sdk.base import to_record_json
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -637,3 +638,210 @@ def test_unconvertible_run_is_a_gap_not_a_poison_pill(baseline: Harness) -> None
     assert "-1" not in gap.attributes["gap_detail"].split("(")[1]  # only the exception type
     _, again = baseline.poll()
     assert events(again) == []  # checkpoint advanced: no retry loop
+
+
+# ── fail closed: unanalysable workflows are compared lexically ─────────────
+
+
+def _padded(text: str) -> str:
+    """GitHub-valid YAML beyond the analyser's size budget (comment padding)."""
+    return "# synthetic padding\n" * (MAX_WORKFLOW_BYTES // 20 + 16) + text
+
+
+def test_oversized_escalation_is_detected_lexically(baseline: Harness) -> None:
+    fake = baseline.fake
+    sha = fake.commit(
+        "ci: pad workflow and broaden permissions [extorq-sim gh001big01]", {CI: _padded(GH001)}
+    )
+    report, records = baseline.poll()
+    assert report.completed, report.errors
+    (wf,) = events(records, "github.workflow.modified")
+    assert wf.github is not None and wf.github.commit_sha == sha
+    a = wf.attributes
+    assert a["analysis"] == "lexical_fallback"
+    assert a["effective_permissions_unknown"] is True
+    assert a["write_all_added"] is True
+    assert a["dangerous_triggers_added"] == ["pull_request_target"]
+    assert a["untrusted_checkout_added"] is True
+    assert "analysis_lexical_fallback" in a["risk_flags"]
+    assert "workflow_unparseable" in a["risk_flags"]
+    assert a["parse_error_after"] == f"workflow exceeds {MAX_WORKFLOW_BYTES} bytes"
+    assert a["permissions_before"] == "workflow=contents:read"
+    assert a["permissions_after"] == "unparseable;lexical=write-all"
+    assert a["lexical_truncated"] is False
+    assert a["workflow_sha256_after"]  # whole file read: its hash is known
+    assert wf.raw is not None and wf.raw.startswith("diff omitted")
+    assert wf.simulation is not None and wf.simulation.run_id == "gh001big01"
+    assert "compared lexically" in (wf.message or "")
+    # The content was read as a bounded prefix with the raw media type.
+    content = [r for r in fake.requests if "/contents/" in r.url.path]
+    assert content and all("raw" in r.headers["accept"] for r in content)
+
+    # Posture fails closed too: the unparseable finding carries the lexical indicators.
+    (finding,) = [
+        f for f in of_type(records, PostureFinding) if f.check_id == "github.workflow.unparseable"
+    ]
+    assert finding.severity == Severity.HIGH
+    assert finding.evidence is not None and "lexical scan: write-all" in finding.evidence
+    assert finding.attributes["lexical_write_all"] is True
+    item = next(i for i in of_type(records, InventoryItem) if i.item_key == CI)
+    assert item.attributes["analysis"] == "lexical_fallback"
+    assert item.attributes["lexical_write_all"] is True
+
+
+def test_alias_bomb_escalation_is_detected_lexically(baseline: Harness) -> None:
+    reuse = "".join(f"  R{i}: *base\n" for i in range(150))
+    bomb = GH001 + "env:\n  BASE: &base synthetic\n" + reuse
+    baseline.fake.commit("ci: reuse anchors", {CI: bomb})
+    _, records = baseline.poll()
+    (wf,) = events(records, "github.workflow.modified")
+    a = wf.attributes
+    assert a["analysis"] == "lexical_fallback" and "aliases" in a["parse_error_after"]
+    assert a["write_all_added"] is True and a["effective_permissions_unknown"] is True
+    assert wf.raw and "+permissions: write-all" in wf.raw  # small file: real diff kept
+
+
+def test_workflow_beyond_lexical_bound_is_marked_truncated(baseline: Harness) -> None:
+    huge = "#" * (MAX_LEXICAL_BYTES + 64) + "\npermissions: write-all\n"
+    baseline.fake.commit("ci: giant workflow", {CI: huge})
+    report, records = baseline.poll()
+    assert report.completed
+    (wf,) = events(records, "github.workflow.modified")
+    a = wf.attributes
+    assert a["analysis"] == "lexical_fallback" and a["lexical_truncated"] is True
+    assert "lexical_scan_truncated" in a["risk_flags"]
+    assert a["workflow_sha256_after"] is None  # only a prefix was read: hash unknown
+    assert a["write_all_added"] is False  # never claimed without evidence
+
+
+# ── per-commit isolation: one unreadable commit never blinds the repository ─
+
+
+def test_permanently_unreadable_commit_is_a_gap_and_collection_continues(
+    baseline: Harness,
+) -> None:
+    fake = baseline.fake
+    bad = fake.commit("huge vendored import", {"README.md": "vendored\n"})
+    escalation = fake.commit("ci: broaden token permissions", {CI: GH001})
+    fake.add_run(head_sha=escalation)
+    fake.inject(
+        rf".*/commits/{bad}",
+        422,
+        {"message": "Sorry, this diff is taking too long to generate."},
+    )
+    report, records = baseline.poll()
+    assert report.completed, report.errors
+    (gap,) = events(records, "extorq.collector.gap_detected")
+    a = gap.attributes
+    assert a["gap_reason"] == "commit_unavailable" and a["source_type"] == "github.api"
+    assert a["commit_sha"] == bad and a["http_status"] == 422 and a["transient"] is False
+    assert gap.github is not None
+    assert gap.github.repository == "Example-Org/extorq-lab" and gap.github.commit_sha == bad
+    assert bad[:12] in (gap.message or "") and "HTTP 422" in (gap.message or "")
+    assert gap.event_id == event_id("github.api", ASSET, f"gap:commit_unavailable:{bad}")
+    # The rest of the repository is still collected in the same poll.
+    (wf,) = events(records, "github.workflow.modified")
+    assert wf.github is not None and wf.github.commit_sha == escalation
+    assert wf.attributes["write_all_added"] is True
+    committed = [e.github.commit_sha for e in events(records, "github.commit.observed") if e.github]
+    assert committed == [escalation]
+    assert events(records, "github.workflow_run.observed")
+    assert scans(records, "extorq-posture-github")
+    assert baseline.state.branch_heads["main"] == escalation
+    assert baseline.state.commit_retries == {}
+    _, again = baseline.poll()
+    assert events(again) == []  # advanced past it: no retry loop, no duplicate gap
+
+
+def test_transient_commit_failure_is_retried_then_given_up(baseline: Harness) -> None:
+    fake = baseline.fake
+    flaky = fake.commit("touch readme", {"README.md": "flaky\n"})
+    later = fake.commit("ci: broaden token permissions", {CI: GH001})
+    fake.inject(rf".*/commits/{flaky}", 502, {"message": "Server Error"})
+    report, records = baseline.poll()
+    assert report.completed
+    assert events(records, "extorq.collector.gap_detected") == []
+    (wf,) = events(records, "github.workflow.modified")  # later commit not blocked
+    assert wf.github is not None and wf.github.commit_sha == later
+    assert baseline.state.branch_heads["main"] == later
+    assert baseline.state.commit_retries[flaky]["attempts"] == 1
+    assert any("retried next poll" in e for e in report.errors)
+
+    _, records = baseline.poll()  # attempt 2 of 3: still pending
+    assert events(records) == []
+    assert baseline.state.commit_retries[flaky]["attempts"] == 2
+
+    _, records = baseline.poll()  # attempt 3: given up with a gap
+    (gap,) = events(records, "extorq.collector.gap_detected")
+    assert gap.attributes["gap_reason"] == "commit_unavailable"
+    assert gap.attributes["http_status"] == 502 and gap.attributes["transient"] is True
+    assert gap.attributes["attempts"] == 3
+    assert baseline.state.commit_retries == {}
+
+
+def test_transient_commit_failure_recovers_with_the_genuine_push_time(
+    baseline: Harness,
+) -> None:
+    fake = baseline.fake
+    flaky = fake.commit(
+        "ci: broaden token permissions [extorq-sim retry0001]", {CI: GH001}, pusher="synthetic-op"
+    )
+    pushed_at = fake.clock
+    fake.inject(rf".*/commits/{flaky}", 503, times=3)  # one request = 3 client attempts
+    _, records = baseline.poll()
+    assert events(records, "github.commit.observed") == []
+    assert flaky in baseline.state.commit_retries
+
+    report, records = baseline.poll()
+    assert report.completed and not report.errors
+    (commit,) = events(records, "github.commit.observed")
+    assert commit.github is not None and commit.github.commit_sha == flaky
+    assert commit.event_time == pushed_at and commit.attributes["time_basis"] == "push_activity"
+    assert commit.actor is not None and commit.actor.name == "synthetic-op"
+    (wf,) = events(records, "github.workflow.modified")
+    assert wf.attributes["write_all_added"] is True and wf.event_time == pushed_at
+    assert wf.simulation is not None and wf.simulation.run_id == "retry0001"
+    assert baseline.state.commit_retries == {}
+    assert events(records, "extorq.collector.gap_detected") == []
+
+
+def test_commit_listing_failure_does_not_stop_other_phases(baseline: Harness) -> None:
+    fake = baseline.fake
+    sha = fake.commit("needs compare", {"README.md": "q\n"})
+    fake.add_run(head_sha=sha)
+    fake.inject(r".*/compare/.*", 500)
+    fake.clock += timedelta(hours=1)  # posture and security-alert scans are due
+    head_before = baseline.state.branch_heads["main"]
+    report, records = baseline.poll()
+    assert not report.completed  # the branch checkpoint did not advance
+    assert any("commits on main not listed" in e for e in report.errors)
+    assert baseline.state.branch_heads["main"] == head_before
+    assert events(records, "github.workflow_run.observed")  # later phases still ran
+    assert scans(records, "extorq-posture-github")
+    assert scans(records, "github-security-alerts")
+    fake.clear_errors()
+    report, records = baseline.poll()
+    assert report.completed
+    assert [e.github.commit_sha for e in events(records, "github.commit.observed") if e.github] == [
+        sha
+    ]
+
+
+def test_auth_and_rate_limit_errors_on_a_commit_still_propagate(baseline: Harness) -> None:
+    fake = baseline.fake
+    sha = fake.commit("x", {"README.md": "x\n"})
+    fake.inject(rf".*/commits/{sha}", 401, {"message": "Bad credentials"})
+    with pytest.raises(GitHubUnauthorized):
+        baseline.poll()
+    fake.clear_errors()
+    fake.inject(
+        rf".*/commits/{sha}",
+        403,
+        {"message": "API rate limit exceeded"},
+        headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "4102444800"},
+    )
+    head_before = baseline.state.branch_heads["main"]
+    with pytest.raises(GitHubRateLimited):
+        baseline.poll()
+    assert baseline.state.branch_heads["main"] == head_before  # nothing skipped
+    assert baseline.state.commit_retries == {}

@@ -319,3 +319,55 @@ def test_detection_rules_registered(clean) -> None:
     assert set(by_id) == set(RULES)
     assert by_id["VM-001"]["query_sha256"] == RULES["VM-001"].metadata.query_sha256
     assert all(r["enabled"] == 1 for r in rows)
+
+
+def test_late_burst_ingested_after_its_window_alerts_exactly_once(clean, to_row) -> None:
+    """Regression for the live case of 2026-11-21: a collector backfill delivered a VM-001
+    burst about 26 minutes after it happened. The detector had already run over those
+    minutes (nothing ingested yet) and its normal 20-minute window no longer reaches them.
+    The catch-up must evaluate the burst exactly once: one alert, one stored version, the
+    full evidence, and nothing on any later run (inside and beyond the overlap margin).
+    Real wall-clock times, because the catch-up keys on events.ingested_time."""
+    rule = RULES["VM-001"]
+    base = utc_now()
+    records = harness.load_fixture(BURST)
+    newest = max(m.event_time for _, m in records if isinstance(m, SecurityEvent))
+    records = harness.shift_records(records, (base - timedelta(minutes=26)) - newest)
+    times = [m.event_time for _, m in records if isinstance(m, SecurityEvent)]
+    engine = _engine(clean, rule)  # default EngineConfig: catch-up enabled (6 h horizon)
+
+    # 1. The detector runs while the burst still sits in the collector's outbox.
+    early = engine.run_once(now=base, force=True)[0]
+    assert early.status.value == "succeeded" and early.rows_matched == 0
+
+    # 2. Backfill: ingested now, 26 minutes after event time.
+    harness.insert_records(clean.client("admin"), records, to_row, batch_id="backfill")
+    later = base + timedelta(minutes=1)
+    normal_start, _ = engine.window_for(rule, later)
+    assert max(times) < normal_start  # the normal window alone would never see the burst
+
+    # 3. The next run catches up: exactly one alert with the complete evidence.
+    caught = engine.run_once(now=later, force=True)[0]
+    assert caught.status.value == "succeeded" and caught.alerts_created == 1
+    assert caught.window_start <= min(times)
+    [alert] = _latest(clean, "VM-001")
+    assert alert["event_count"] == len(records) == 18
+
+    # 4. Later runs re-evaluate inside the overlap margin and then stop: no new alerts,
+    #    no new versions, no duplicate evidence.
+    for minutes in (2, 4, 10, 20):
+        run = engine.run_once(now=base + timedelta(minutes=minutes), force=True)[0]
+        assert run.status.value == "succeeded"
+        assert (run.alerts_created, run.alerts_updated) == (0, 0), minutes
+    assert len(_latest(clean, "VM-001")) == 1
+    assert _versions(clean, alert["alert_id"]) == 1
+    admin = clean.client("admin")
+    stored = admin.select(
+        "SELECT count(), uniqExact(event_id) FROM alert_evidence WHERE alert_id = {a:String}",
+        {"a": alert["alert_id"]},
+    ).rows[0]
+    assert tuple(stored) == (18, 18)
+    created = admin.select(
+        "SELECT sum(alerts_created), count() FROM rule_runs WHERE rule_id = 'VM-001'"
+    ).rows[0]
+    assert tuple(created) == (1, 6)  # six runs, one alert creation in total

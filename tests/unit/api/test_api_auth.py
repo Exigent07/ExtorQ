@@ -196,6 +196,29 @@ def test_unexpected_storage_error_is_503_without_details(
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
+def test_storage_quota_exhaustion_is_429_with_retry_after(
+    client: TestClient, analyst: dict[str, str], repo: FakeRepository
+) -> None:
+    """ClickHouse QUOTA_EXCEEDED (code 201) is load, not an outage: 429 + Retry-After so the
+    console does not retry at once (it retries 503), and nothing of the error leaks."""
+    from clickhouse_connect.driver.exceptions import DatabaseError
+
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise DatabaseError(
+            "Received ClickHouse exception, code: 201, server response: Code: 201. "
+            "DB::Exception: Quota for user `synthetic` for 60s has been exceeded: "
+            "queries = 1201/1200. (QUOTA_EXCEEDED)"
+        )
+
+    repo.all_assets = boom  # type: ignore[method-assign]
+    response = client.get(OVERVIEW, headers=analyst)
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "30"
+    assert "quota" in response.json()["detail"]
+    assert "synthetic" not in response.text and "1201" not in response.text
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
 def test_unexpected_error_is_generic_500(
     client: TestClient, analyst: dict[str, str], repo: FakeRepository
 ) -> None:

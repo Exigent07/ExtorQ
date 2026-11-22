@@ -104,7 +104,7 @@ configuration can only select producer *names*.
 | Producer | Predicate | Event types | On the reference host (24 h window, 2026-11-21) |
 |---|---|---|---|
 | `sudo` | `process == "sudo"` | `auth.sudo.command`, `auth.sudo.failure`, `system.log.notable` | no sudo use in window; parser tested with labelled synthetic records |
-| `sshd` | `process == "sshd" OR process == "sshd-session"` | `auth.local.failure` (failed password/publickey), `system.log.notable` (accepted, invalid user, other) | none: Remote Login is off (job not loaded) |
+| `sshd` | `process == "sshd" OR process == "sshd-session" OR process == "sshd-auth"` | `auth.ssh.login_failed`, `auth.ssh.invalid_user`, `auth.ssh.preauth_closed`, `auth.ssh.max_auth_exceeded`, `auth.ssh.login_succeeded` (same mapping as Linux, see "Remote Login (sshd)"); `system.log.notable` for other lines and for senders outside the sealed system volume | none: Remote Login is off (job not loaded) and stays off; parser tested with labelled synthetic records |
 | `screensharing` | `process == "screensharingd"` | `auth.local.failure`, `system.log.notable` | none: Screen Sharing off |
 | `opendirectory_auth` | opendirectoryd `auth` category, "Authentication failed for" | `auth.local.failure` | 6 records (real; user name is `<private>`, GeneratedUID public) |
 | `authorization` | `com.apple.Authorization`, "Failed to authorize" | `auth.local.failure` (denied), `system.log.notable` (user cancelled, -60006) | none in window; synthetic-tested |
@@ -119,6 +119,7 @@ GeneratedUID), `network.{src_ip,src_port}` (sshd, screensharing viewer), source
 `severity_hint` from `messageType` (Fault high, Error medium, others info),
 `attributes`: `producer, subsystem, log_category, message_type, sender_image`,
 per producer `run_as, tty, cwd, reason, auth_service, auth_method, invalid_user,
+key_type, key_fingerprint, authenticating_user, close_kind, signal, source_verified,
 right, client, status_code, plugin, status_message, threat_detected, team_id,
 signing_id, bundle_id, path_hash, scan_result, prompt_type, approved`, and
 `private_redaction=true` when the message contains `<private>`. `raw` is a
@@ -136,9 +137,45 @@ Privacy and limits:
   `RealName` is never read. `attributes.actor_name_source=dscl_generated_uid`.
 * Unified logging is not an audit trail: retention is size-bounded and messages
   may be rate-limited; a gap in the log store itself is not detectable.
-* Catalog note: `auth.ssh.*` types only allow `linux.journald`, so macOS sshd
-  failures are `auth.local.failure` with `attributes.auth_service=sshd` (proposal
-  B3-IC-1 in `docs/team/interface-changes/B3.md`).
+
+### Remote Login (sshd) → `auth.ssh.*`
+
+The catalog allows `macos.unified_log` for the `auth.ssh.*` types (B3-IC-1, merged by
+the lead). macOS 27.0.1 ships OpenSSH 10.3p1, which splits the server into `sshd`
+(listener), `sshd-session` (privileged monitor: writes the authentication results) and
+`sshd-auth` (pre-authentication); the `sshd` producer reads all three. The message
+formats are OpenSSH's own and identical to Linux, so the patterns mirror the Linux
+journald parser (`extorq_collectors.linux.auth`): anchored at the end, greedy user
+group, so an attacker-controlled user name such as `admin from 10.0.0.9 port 22 ssh2`
+can never move the source address.
+
+| sshd message | Event type | Key fields |
+|---|---|---|
+| `Failed <method> for [invalid user ]<user> from <ip> port <port> ssh2[: <type> <fp>]` | `auth.ssh.login_failed` | `actor.name`, `network.src_ip/src_port`, `auth_method`, `invalid_user`, `key_type`, `key_fingerprint` |
+| `Invalid user <user> from <ip> port <port>` | `auth.ssh.invalid_user` | `actor.name`, `network.*`, `invalid_user=true` |
+| `Connection closed\|reset by [invalid\|authenticating user <user> ]<ip> port <port> [preauth]`, `Disconnected from ... [preauth]` | `auth.ssh.preauth_closed` | `invalid_user`, `authenticating_user`, `close_kind` |
+| `error: maximum authentication attempts exceeded for ... ssh2 [preauth]`, `Disconnecting ...: Too many authentication failures [preauth]` | `auth.ssh.max_auth_exceeded` | `invalid_user`, `signal` |
+| `Accepted <method> for <user> from <ip> port <port> ssh2[: <type> <fp>]` | `auth.ssh.login_succeeded` | `auth_method`, `key_type`, `key_fingerprint` |
+| anything else (kex, `Received disconnect`, PAM diagnostics) | `system.log.notable` (`sshd_message`) | none taken from the message |
+
+Sender verification: unified logging records the kernel-attested image path of the
+process that wrote a record. Only `/usr/sbin/sshd`, `/usr/libexec/sshd-session` and
+`/usr/libexec/sshd-auth` (sealed system volume: only Apple can write there) count as
+Remote Login. A process merely *named* `sshd` elsewhere (a copied binary, a third-party
+OpenSSH build) yields `system.log.notable` with `attributes.source_verified=false`, no
+actor, no network fields and no ServiceRef. The same rule binds `screensharingd`
+records to Screen Sharing. Every verified record carries the ServiceRef of
+`com.openssh.sshd` (`adapter_id=macos-sshd`), and the newest one feeds that service's
+`last_telemetry_at`. The `uid` of the writer is not checked (the uid of `sshd-auth`
+could not be observed with Remote Login off).
+
+Detection note (owner C2): VM-001 currently selects `source_type = 'linux.journald'`,
+so macOS sshd events are stored and attributed to the Remote Login service but do not
+feed VM-001 until C2 includes `macos.unified_log` (CORR-002 is a Linux sequence).
+
+Verified with labelled synthetic records only (`tests/fixtures/macos/unified_log/
+synthetic_sshd_auth.ndjson`): Remote Login stays **off** on the reference host because
+enabling it would weaken the host.
 
 ## 2. LaunchAgents / LaunchDaemons (`macos.launchd`)
 
@@ -283,8 +320,8 @@ Runs with every inventory cycle through B1's shared interface
   parsed or stored). `launchctl print system/<label>` exits 113 "Could not find
   service" when a job is not loaded. Apple's own ~900 jobs are **not** turned into
   services; third-party loaded jobs are (this also reveals SMAppService
-  background items that have no plist in the scanned directories, e.g.
-  `com.ollama.ollama`), and Apple jobs are when they own a listening socket.
+  background items that have no plist in the scanned directories), and Apple jobs
+  are when they own a listening socket.
   `application.*` LaunchServices entries (GUI app instances) are never services.
 * **listening sockets** → owning pid → the launchd job whose process tree
   contains it (`HOST_SERVICE`, key = label) or, without a job, the process
@@ -305,8 +342,8 @@ Exposure from the bind address: loopback / private / any / unknown.
 Product/version only from evidence: Homebrew paths name the formula
 (`/opt/homebrew/opt/redis/...` → `redis`) and `Cellar/<formula>/<version>/` the
 version, taken from the job definition or from the kernel-verified executable of a
-running instance (e.g. `/opt/homebrew/Cellar/redis/8.10.1/bin/redis-server` →
-`8.10.1`, `attributes.version_evidence`); nothing else is guessed. `attributes`
+running instance (e.g. `/opt/homebrew/Cellar/<formula>/<version>/bin/<binary>` →
+`<version>`, `attributes.version_evidence`); nothing else is guessed. `attributes`
 record `launchd_label,
 launchd_domain, job_loaded, job_running, job_pid, override, service_state
 (not_loaded | loaded_idle | running), definition_path, definition_sha256,
@@ -317,9 +354,9 @@ Adapters (coverage):
 
 | Adapter | Support | Binding | Coverage on the reference host |
 |---|---|---|---|
-| `macos-sshd` | implemented | unified-log producer `sshd` (processes `sshd`, `sshd-session`) for job `com.openssh.sshd` | **unmonitored**: Remote Login is off (job not loaded), reported honestly; monitored as soon as it is loaded and the log source is fresh (≤ 600 s), degraded when stale/failing |
+| `macos-sshd` | implemented | unified-log producer `sshd` (`/usr/sbin/sshd`, `/usr/libexec/sshd-session`, `/usr/libexec/sshd-auth`) for job `com.openssh.sshd`; `auth.ssh.*` events | **unmonitored**: Remote Login is off (job not loaded), reported honestly; monitored as soon as it is loaded and the log source is fresh (≤ 600 s), degraded when stale/failing |
 | `macos-screensharing` | implemented | producer `screensharing` (`screensharingd`) for `com.apple.screensharing` | unmonitored: off |
-| `redis`, `mysql`, `postgresql`, `ftp`, `dns` | planned (shared registry) | none (extension points) | e.g. `sh.brew.redis`, `sh.brew.mysql`: discovered, unmonitored |
+| `redis`, `mysql`, `postgresql`, `ftp`, `dns` | planned (shared registry) | none (extension points) | e.g. a Homebrew `redis` or `mysql` launchd job: discovered, unmonitored |
 | other platforms' implemented adapters (Linux nginx/apache/systemd/...) | not claimed on macOS | — | support `none`, `attributes.other_platform_adapter` names them |
 
 The macOS adapters match only macOS launchd labels, so the shared registry never
@@ -334,7 +371,10 @@ disappear. Events (`macos.inventory`, with `service` ref): `service.discovered`
 (first cycle: `attributes.baseline=true`), `service.removed`,
 `service.exposure.changed` (`endpoints_added`, `endpoints_removed`,
 `attribution`, `exposure`, `non_loopback_exposure`). Unified-log events of
-`sshd`/`screensharingd` carry the service reference (`adapter_id`).
+`sshd`/`sshd-session`/`sshd-auth`/`screensharingd` carry the service reference
+(`adapter_id`) only when the writer is the system binary (see "Remote Login (sshd)").
+Instance discovery attributes running `sshd`, `sshd-session`, `sshd-auth` and
+`sshd-keygen-wrapper` processes to `com.openssh.sshd`.
 
 ## 6. Health and explicit collection gaps
 
@@ -386,21 +426,36 @@ sanitised and bounded before it leaves the collector.
 
 ## 9. MAC-001 simulation
 
-`simulations/macos/mac_001_launchagent.sh [--run-id ID] [--wait S|--no-wait]`
+`simulations/macos/mac_001_launchagent.sh [--run-id ID] [--wait S | --no-wait [--hold S]]`
 creates `~/Library/LaunchAgents/com.extorq.sim.<run_id>.plist` (Label
 `com.extorq.sim.<run_id>`, ProgramArguments `[/usr/bin/true]`, RunAtLoad false;
-`plutil -lint` checked, written atomically), records the SimulationRun with
-`uv run extorq-collect sim-record --scenario MAC-001 --asset macos:workstation-01`,
-and waits (read-only query as `extorq_api_ro`, `simulations/macos/wait_event.py`)
-for `persistence.launchd.item_created`. It **never runs launchctl**; the job is
-never loaded. macOS may show a **"Background Items Added"** notification: that is
-expected. `--cleanup --run-id ID` deletes the file only if it is a regular file
-carrying that label, verifies it is gone, records `cleaned_up` and waits for
-`persistence.launchd.item_deleted`. Requires the collector to be running. No
-detection rule for MAC-001 exists yet (C2's optional rule); the scenario is
-verified on telemetry.
+`plutil -lint` checked, written atomically), records the SimulationRun
+(`started`, `completed`) with `uv run extorq-collect sim-record --scenario MAC-001 --asset
+macos:workstation-01`, waits (read-only query as `extorq_api_ro`,
+`simulations/macos/wait_event.py`) for `persistence.launchd.item_created`, and then
+**always removes the file again**, records `cleaned_up` and waits for
+`persistence.launchd.item_deleted`. It **never runs launchctl**; the job is never loaded.
+macOS may show a **"Background Items Added"** notification: that is expected.
 
-## 10. Verification
+Cleanup guarantee: an `EXIT` trap removes the plist whenever the script ends after
+creating it: normal completion, any error, a wait that timed out, Ctrl-C (INT), TERM or
+HUP (signals interrupt the waits, so removal is immediate). It removes only the regular
+file carrying the run's label and verifies it is gone. With `--no-wait` the file is kept
+`--hold` seconds (default 90; the launchd source scans every 60 s) instead of querying
+ClickHouse. Only SIGKILL or a power loss can leave the file behind;
+`--cleanup --run-id ID` removes such a leftover (it refuses symlinks, non-regular files
+and files with another label). When the file is already absent it changes nothing (no
+SimulationRun update) and shows the `item_deleted` event stored earlier.
+
+The C2 rule `rules/macos/MAC-001` alerts on `item_created` (simulation runs included:
+telemetry is genuine). Verified runs: `docs/team/status/B3.md`.
+
+## 10. Fixtures and verification
+
+Unit-test fixtures (`tests/fixtures/macos/`) are minimised: Apple entries are real and
+trimmed; every third-party application, service, label and signing identity of the
+reference host is replaced by a synthetic `com.example.thirdparty.*` / `ExampleApp`
+placeholder (provenance per file in `tests/fixtures/macos/README.md`).
 
 ```
 uv run pytest tests/unit/macos -q

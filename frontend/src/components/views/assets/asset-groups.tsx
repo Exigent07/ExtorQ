@@ -7,6 +7,7 @@ import { CoverageStatusDot } from "@/components/console/status-badge";
 import { RelativeTime } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import type { AssetListItem } from "@/lib/api/schemas";
+import { collectorsSummary } from "@/lib/assets";
 import { assetTypeLabel, formatCount } from "@/lib/format";
 import { assetHref } from "@/lib/security/ids";
 
@@ -64,9 +65,7 @@ function hierarchy(assets: AssetListItem[]): Row[] {
 }
 
 function collectorsText(asset: AssetListItem): string {
-  if (asset.collectors_total === 0) return "no collector reporting";
-  const fresh = asset.collectors_total - asset.collectors_stale;
-  return `${formatCount(fresh)} of ${formatCount(asset.collectors_total)} collector${asset.collectors_total === 1 ? "" : "s"} fresh`;
+  return collectorsSummary(asset);
 }
 
 /** One asset as a two-line row: name and coverage, then id, collectors, recency and alerts. */

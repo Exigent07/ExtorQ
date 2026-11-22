@@ -1,14 +1,20 @@
--- VM-002 v1.1.0: new or modified systemd unit (persistence) on a Linux host.
+-- VM-002 v1.2.0: new or modified systemd unit (persistence) on a Linux host.
 --
 -- Trigger: persistence.systemd.unit_created / unit_modified inventory diffs (snapshot
 -- comparison over SSH) for unit files not in {allowlist_paths}. Baseline snapshots are
 -- never alerted. Supporting evidence (optional sources):
---   * auditd watch hits with key {audit_key} on exactly the same path (linux.auditd),
---     excluding deletions ({deletion_syscalls}): removing the file corroborates nothing
+--   * auditd watch hits with key {audit_key} that CREATE OR MODIFY exactly the same path
+--     (linux.auditd): successful (attributes.success = true) syscalls from the allowlist
+--     {change_syscalls} (open/openat/creat/truncate, rename/link/symlink into the
+--     directory, chmod/chown family). The written path is the hit's CREATE/NORMAL path
+--     item, or the CREATE item of a rename/link whose primary item is the source name.
+--     Everything else corroborates nothing: deletions (unlink/unlinkat/rmdir, nametype
+--     DELETE), failed attempts, xattr/timestamp changes, unknown or numeric syscalls
+--     (allowlist, not denylist: an unrecognised syscall fails closed).
 --   * persistence.systemd.unit_enabled for the same unit name
--- Confidence: high when the auditd watch corroborates the inventory diff on the exact
--- path, medium otherwise. A unit that is only *enabled* (existing file, no content
--- change in the window) produces its own row, confidence medium.
+-- Confidence: high when an auditd create/modify hit corroborates the inventory diff on
+-- the exact path, medium otherwise. A unit that is only *enabled* (existing file, no
+-- content change in the window) produces its own row, confidence medium.
 -- Identity (PLAN 5.3): asset, unit path, content sha256 (enable-only rows: asset, unit,
 -- 'enabled:<wanted_by>'). Duplicate-safe via LIMIT 1 BY event_id; joins only feed
 -- uniqExact / distinct arrays.
@@ -61,8 +67,13 @@ WITH
         SELECT
             event_id,
             asset_id,
-            ifNull(resource_path, '') AS path,
+            if(JSONExtractString(attributes, 'nametype') IN ('CREATE', 'NORMAL')
+                   AND ifNull(resource_path, '') != '',
+               assumeNotNull(resource_path),
+               substring(arrayFirst(p -> startsWith(p, 'CREATE:/'),
+                                    JSONExtract(attributes, 'paths', 'Array(String)')), 8)) AS path,
             ifNull(process_executable, '') AS executable,
+            JSONExtractString(attributes, 'syscall') AS syscall,
             simulation_run_id
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
@@ -70,7 +81,8 @@ WITH
           AND source_type = 'linux.auditd'
           AND event_type = 'file.audit.watch'
           AND JSONExtractString(attributes, 'audit_key') = {audit_key:String}
-          AND NOT has({deletion_syscalls:Array(String)}, JSONExtractString(attributes, 'syscall'))
+          AND JSONExtractBool(attributes, 'success')
+          AND has({change_syscalls:Array(String)}, JSONExtractString(attributes, 'syscall'))
         LIMIT 1 BY event_id
     )
 SELECT
@@ -97,10 +109,11 @@ SELECT
         toBool(max(i.vendor_unit)),
         toBool(uniqExactIf(w.event_id, w.event_id != '') > 0),
         arraySort(groupUniqArrayIf(8)(w.executable, w.executable != '')),
+        arraySort(groupUniqArrayIf(8)(w.syscall, w.syscall != '')),
         arraySort(groupUniqArrayIf(8)(en.wanted_by, en.wanted_by != ''))
     ), concat('Tuple(change_types Array(String), exec_start String, previous_sha256 String, ',
               'vendor_unit Bool, audit_corroborated Bool, writer_executables Array(String), ',
-              'wanted_by Array(String))'))) AS features,
+              'writer_syscalls Array(String), wanted_by Array(String))'))) AS features,
     if(i.sha256 != '', i.sha256, 'sha256-unknown') AS signature,
     if(uniqExactIf(w.event_id, w.event_id != '') > 0, 'high', 'medium') AS confidence,
     arrayDistinct(arrayConcat(groupUniqArray(16)(i.simulation_run_id),
@@ -129,10 +142,11 @@ SELECT
         false,
         false,
         CAST([], 'Array(String)'),
+        CAST([], 'Array(String)'),
         arraySort(groupUniqArrayIf(8)(e.wanted_by, e.wanted_by != ''))
     ), concat('Tuple(change_types Array(String), exec_start String, previous_sha256 String, ',
               'vendor_unit Bool, audit_corroborated Bool, writer_executables Array(String), ',
-              'wanted_by Array(String))'))) AS features,
+              'writer_syscalls Array(String), wanted_by Array(String))'))) AS features,
     concat('enabled:', arrayStringConcat(arraySort(groupUniqArray(4)(e.wanted_by)), ',')) AS signature,
     'medium' AS confidence,
     groupUniqArray(16)(e.simulation_run_id) AS simulation_run_ids

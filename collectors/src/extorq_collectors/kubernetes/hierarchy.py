@@ -6,6 +6,8 @@
       │    │                                         itself for bare and static pods
       │    └─ ServiceInstance pod "<pod uid>" (kubelet config hash for static pods)
       │         └─ ServiceInstance container "<bare container id>"
+      │            asset_id: the node asset once scheduled; the cluster asset while the
+      │            scheduler has not bound the pod to a node (A-IC-2)
       └─ Service k8s_service  "<ns>/<name>"          logical Service object; never a
                                                      host operating-system service
 
@@ -364,14 +366,19 @@ def _pod_instances(
 ) -> None:
     spec = as_dict(pod.get("spec"))
     status = as_dict(pod.get("status"))
-    node = valid_k8s_name(spec.get("nodeName"))
-    asset = node_asset_id(node)
     key = pod_instance_key(pod)
-    if asset is None or key is None:
-        # Unscheduled pod: no node asset to attribute it to yet (the gateway would
-        # quarantine an instance without asset_id).
-        out.notes.append("unscheduled pod instance omitted until it has a node")
+    if key is None:
+        out.notes.append("pod without a usable uid omitted (no stable instance identity)")
         return
+    # Every instance carries an asset_id (the gateway quarantines instances without one,
+    # A-IC-2): the node it runs on once scheduled, else the cluster asset that manages it.
+    # node_name stays None until the scheduler binds the pod; attributes.asset_scope =
+    # "cluster" marks the exception.
+    node = valid_k8s_name(spec.get("nodeName"))
+    node_asset = node_asset_id(node)
+    asset = node_asset or ASSET_ID
+    if node_asset is None:
+        out.notes.append("unscheduled pod instance attributed to the cluster asset")
     pod_name = clean(meta(pod).get("name"), 253)
     api_uid = clean(meta(pod).get("uid"), 64)
     piid = pod_instance_id(sid, key)
@@ -409,6 +416,9 @@ def _pod_instances(
             k: v
             for k, v in {
                 "phase": clean(status.get("phase"), 32),
+                # only on the exception, so scheduled instances keep their snapshot form
+                "asset_scope": None if node_asset else "cluster",
+                "scheduled": None if node_asset else node is not None,
                 "qos_class": clean(status.get("qosClass"), 32),
                 "ready": _ready(pod),
                 "restart_count": restarts,

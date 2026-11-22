@@ -17,3 +17,5 @@ secrets/
 npm-debug.log*
 .pnpm-debug.log*
 .taste-skill/
+# screenshots and other documentation are not part of the image
+docs/

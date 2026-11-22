@@ -70,7 +70,7 @@ PRODUCERS: dict[str, Producer] = {
         ),
         Producer(
             "sshd",
-            'process == "sshd" OR process == "sshd-session"',
+            'process == "sshd" OR process == "sshd-session" OR process == "sshd-auth"',
             "OpenSSH server records (only when Remote Login is enabled).",
         ),
         Producer(
@@ -119,6 +119,24 @@ PRODUCERS: dict[str, Producer] = {
 }
 
 DEFAULT_PRODUCERS: tuple[str, ...] = tuple(PRODUCERS)
+
+#: Process names of Apple's OpenSSH server. macOS 27.0.1 ships OpenSSH 10.3p1, which splits
+#: the server into ``sshd`` (listener), ``sshd-session`` (privileged monitor, writes the
+#: authentication results) and ``sshd-auth`` (pre-authentication).
+SSHD_PROCESSES: frozenset[str] = frozenset({"sshd", "sshd-session", "sshd-auth"})
+#: Image paths of those binaries on the sealed system volume. Unified logging records the
+#: kernel-attested image path of the process that wrote a record, and nothing but Apple can
+#: write below /usr on the sealed volume, so only these paths are Remote Login. A process
+#: merely *named* sshd elsewhere (a copied binary, a third-party OpenSSH build) is reported
+#: as an unverified sender (``system.log.notable``) and never as ``auth.ssh.*`` evidence.
+SSHD_TRUSTED_PATHS: frozenset[str] = frozenset(
+    {"/usr/sbin/sshd", "/usr/libexec/sshd-session", "/usr/libexec/sshd-auth"}
+)
+SCREENSHARINGD_PATH = (
+    "/System/Library/CoreServices/RemoteManagement/screensharingd.bundle/Contents/MacOS/"
+    "screensharingd"
+)
+SCREENSHARING_TRUSTED_PATHS: frozenset[str] = frozenset({SCREENSHARINGD_PATH})
 
 
 def build_predicate(names: Iterable[str]) -> str:
@@ -350,17 +368,39 @@ _SUDO_FAILURE_HINTS = (
     "conversation failed",
 )
 
+# OpenSSH authentication messages (auth.c auth_log(), sshd-session/monitor). The formats are
+# the same as on Linux (extorq_collectors.linux.auth): user names are attacker-controlled and
+# may contain spaces, so every pattern is anchored at the end and the user group is greedy;
+# the trailing "from <ip> port <n>" written by sshd always wins.
+_SSH_IP = r"(?P<ip>[0-9A-Fa-f:.]{2,45})"
+_SSH_PORT = r"(?P<port>\d{1,5})"
+_SSH_METHOD = r"(?P<method>[a-z0-9-]{2,40}(?:/[a-z0-9-]{1,40})?)"
+_SSH_KEY = r"(?:: (?P<keytype>[A-Z0-9-]{2,32}) (?P<fp>(?:SHA256|MD5):[A-Za-z0-9+/=:]{8,100}))?"
 _SSH_FAILED = re.compile(
-    r"^Failed (?P<method>[\w/-]+) for (?P<invalid>invalid user )?(?P<user>\S*) "
-    r"from (?P<ip>[0-9A-Fa-f:.]+) port (?P<port>\d+)"
+    rf"^Failed {_SSH_METHOD} for (?P<invalid>invalid user )?(?P<user>.*) "
+    rf"from {_SSH_IP} port {_SSH_PORT} ssh2{_SSH_KEY}$"
 )
 _SSH_ACCEPTED = re.compile(
-    r"^Accepted (?P<method>[\w/-]+) for (?P<user>\S+) "
-    r"from (?P<ip>[0-9A-Fa-f:.]+) port (?P<port>\d+)"
+    rf"^Accepted {_SSH_METHOD} for (?P<user>.*) from {_SSH_IP} port {_SSH_PORT} ssh2{_SSH_KEY}$"
 )
-_SSH_INVALID = re.compile(
-    r"^Invalid user (?P<user>\S*) from (?P<ip>[0-9A-Fa-f:.]+) port (?P<port>\d+)"
+_SSH_INVALID = re.compile(rf"^Invalid user (?P<user>.*) from {_SSH_IP} port {_SSH_PORT}$")
+_SSH_CLOSED = re.compile(
+    rf"^Connection (?P<kind>closed|reset) by (?:(?P<who>invalid|authenticating) user "
+    rf"(?P<user>.*) )?{_SSH_IP} port {_SSH_PORT} \[preauth\]$"
 )
+_SSH_DISCONNECTED = re.compile(
+    rf"^Disconnected from (?:(?P<who>invalid|authenticating) user (?P<user>.*) )?"
+    rf"{_SSH_IP} port {_SSH_PORT} \[preauth\]$"
+)
+_SSH_MAX_EXCEEDED = re.compile(
+    rf"^error: maximum authentication attempts exceeded for (?P<invalid>invalid user )?"
+    rf"(?P<user>.*) from {_SSH_IP} port {_SSH_PORT} ssh2 \[preauth\]$"
+)
+_SSH_TOO_MANY = re.compile(
+    rf"^Disconnecting (?:(?P<who>invalid|authenticating) user (?P<user>.*) )?{_SSH_IP} "
+    rf"port {_SSH_PORT}: Too many authentication failures \[preauth\]$"
+)
+_SSH_USER_LIMIT = 256
 _SCREEN_SHARING_AUTH = re.compile(
     r"Authentication:\s*(?P<result>FAILED|SUCCEEDED)\s*::\s*User Name:\s*(?P<user>.*?)\s*::"
     r"\s*Viewer Address:\s*(?P<ip>[0-9A-Fa-f:.]+)\s*(?:::\s*Type:\s*(?P<type>\S+))?"
@@ -482,64 +522,132 @@ def _classify_sudo(record: LogRecord) -> Classified:
     )
 
 
+def _ssh_network(ip: str | None, port: str | None) -> Network | None:
+    src_ip = _ip_or_none(ip)
+    src_port = int(port) if port is not None and port.isdigit() else None
+    if src_port is not None and not 0 <= src_port <= 65535:
+        src_port = None
+    if src_ip is None and src_port is None:
+        return None
+    return Network(src_ip=src_ip, src_port=src_port, protocol="tcp", direction="inbound")
+
+
+def _ssh_actor(user: str | None) -> Actor | None:
+    """sshd writes the user name as received (``%.100s``); an empty name stays unknown."""
+    if user is None:
+        return None
+    name, _ = clean_text(user, _SSH_USER_LIMIT)
+    return Actor(type=ActorType.USER, name=name or None)
+
+
+def _unverified_sender(record: LogRecord, producer: str, action: str) -> Classified:
+    """A record from a process *named* like a monitored service but not its system binary."""
+    return Classified(
+        "system.log.notable",
+        producer,
+        action=action,
+        attributes={"auth_service": producer, "source_verified": False},
+    )
+
+
 def _classify_sshd(record: LogRecord) -> Classified:
+    """OpenSSH (Remote Login) records -> ``auth.ssh.*`` (catalog B3-IC-1), as on Linux."""
+    if record.process_path not in SSHD_TRUSTED_PATHS:
+        return _unverified_sender(record, "sshd", "sshd_unverified_sender")
     message = record.event_message
+    base = {"auth_service": "sshd"}
     failed = _SSH_FAILED.match(message)
     if failed:
         return Classified(
-            "auth.local.failure",
+            "auth.ssh.login_failed",
             "sshd",
             action="ssh_login_failed",
             outcome=Outcome.FAILURE,
-            actor=Actor(type=ActorType.USER, name=failed.group("user") or None),
-            network=Network(
-                src_ip=_ip_or_none(failed.group("ip")),
-                src_port=int(failed.group("port")),
-                protocol="tcp",
-                direction="inbound",
-            ),
+            actor=_ssh_actor(failed.group("user")),
+            network=_ssh_network(failed.group("ip"), failed.group("port")),
             attributes={
-                "auth_service": "sshd",
+                **base,
                 "auth_method": failed.group("method"),
-                "invalid_user": bool(failed.group("invalid")),
+                "invalid_user": failed.group("invalid") is not None,
+                "key_type": failed.group("keytype"),
+                "key_fingerprint": failed.group("fp"),
             },
         )
     accepted = _SSH_ACCEPTED.match(message)
     if accepted:
         return Classified(
-            "system.log.notable",
+            "auth.ssh.login_succeeded",
             "sshd",
             action="ssh_login_succeeded",
             outcome=Outcome.SUCCESS,
-            actor=Actor(type=ActorType.USER, name=accepted.group("user")),
-            network=Network(
-                src_ip=_ip_or_none(accepted.group("ip")),
-                src_port=int(accepted.group("port")),
-                protocol="tcp",
-                direction="inbound",
-            ),
-            attributes={"auth_service": "sshd", "auth_method": accepted.group("method")},
+            actor=_ssh_actor(accepted.group("user")),
+            network=_ssh_network(accepted.group("ip"), accepted.group("port")),
+            attributes={
+                **base,
+                "auth_method": accepted.group("method"),
+                "key_type": accepted.group("keytype"),
+                "key_fingerprint": accepted.group("fp"),
+            },
         )
     invalid = _SSH_INVALID.match(message)
     if invalid:
         return Classified(
-            "system.log.notable",
+            "auth.ssh.invalid_user",
             "sshd",
             action="ssh_invalid_user",
             outcome=Outcome.FAILURE,
-            actor=Actor(type=ActorType.USER, name=invalid.group("user") or None),
-            network=Network(
-                src_ip=_ip_or_none(invalid.group("ip")),
-                src_port=int(invalid.group("port")),
-                protocol="tcp",
-                direction="inbound",
-            ),
-            attributes={"auth_service": "sshd", "invalid_user": True},
+            actor=_ssh_actor(invalid.group("user")),
+            network=_ssh_network(invalid.group("ip"), invalid.group("port")),
+            attributes={**base, "invalid_user": True},
         )
-    return Classified("system.log.notable", "sshd", action="sshd_message")
+    for close_kind, pattern in (("connection", _SSH_CLOSED), ("disconnected", _SSH_DISCONNECTED)):
+        closed = pattern.match(message)
+        if closed:
+            who = closed.group("who")
+            return Classified(
+                "auth.ssh.preauth_closed",
+                "sshd",
+                action="ssh_preauth_closed",
+                outcome=Outcome.FAILURE if who == "invalid" else Outcome.UNKNOWN,
+                actor=_ssh_actor(closed.group("user")),
+                network=_ssh_network(closed.group("ip"), closed.group("port")),
+                attributes={
+                    **base,
+                    "invalid_user": (who == "invalid") if who else None,
+                    "authenticating_user": (who == "authenticating") if who else None,
+                    "close_kind": f"connection_{closed.group('kind')}"
+                    if close_kind == "connection"
+                    else "disconnected",
+                },
+            )
+    for signal, pattern in (
+        ("max_attempts_exceeded", _SSH_MAX_EXCEEDED),
+        ("too_many_authentication_failures", _SSH_TOO_MANY),
+    ):
+        exceeded = pattern.match(message)
+        if exceeded:
+            groups = exceeded.groupdict()
+            return Classified(
+                "auth.ssh.max_auth_exceeded",
+                "sshd",
+                action="ssh_max_auth_exceeded",
+                outcome=Outcome.FAILURE,
+                actor=_ssh_actor(groups.get("user")),
+                network=_ssh_network(groups.get("ip"), groups.get("port")),
+                attributes={
+                    **base,
+                    "invalid_user": groups.get("invalid") is not None
+                    or groups.get("who") == "invalid",
+                    "signal": signal,
+                },
+            )
+    # Key exchange, session and diagnostic lines: kept as notable, never as auth evidence.
+    return Classified("system.log.notable", "sshd", action="sshd_message", attributes=base)
 
 
 def _classify_screensharing(record: LogRecord) -> Classified:
+    if record.process_path not in SCREENSHARING_TRUSTED_PATHS:
+        return _unverified_sender(record, "screensharing", "screensharing_unverified_sender")
     match = _SCREEN_SHARING_AUTH.search(record.event_message)
     if not match:
         return Classified("system.log.notable", "screensharing", action="screensharing_message")
@@ -758,7 +866,7 @@ def classify(record: LogRecord) -> Classified:
     result: Classified | None = None
     if name == "sudo":
         result = _classify_sudo(record)
-    elif name in ("sshd", "sshd-session"):
+    elif name in SSHD_PROCESSES:
         result = _classify_sshd(record)
     elif name == "screensharingd":
         result = _classify_screensharing(record)

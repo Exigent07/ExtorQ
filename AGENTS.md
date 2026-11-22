@@ -5,9 +5,11 @@ ExtorQ. `CLAUDE.md` only imports this file; do not duplicate instructions
 there. Build-time ownership, interfaces and the interface-change protocol are in
 [`docs/team/PLAN.md`](docs/team/PLAN.md). Component guides sit next to the
 code they describe and add detail without overriding the security invariants
-below: [`backend/AGENTS.md`](backend/AGENTS.md) (present); `collectors/AGENTS.md`,
-`rules/AGENTS.md`, `frontend/AGENTS.md` and `infra/kind/AGENTS.md` are owned by
-B1, C2, D2 and B2 and were not present at the last update.
+below: [`backend/AGENTS.md`](backend/AGENTS.md) (A),
+[`collectors/AGENTS.md`](collectors/AGENTS.md) (B1),
+[`rules/AGENTS.md`](rules/AGENTS.md) (C2),
+[`frontend/AGENTS.md`](frontend/AGENTS.md) (D2) and
+[`infra/kind/AGENTS.md`](infra/kind/AGENTS.md) (B2).
 
 Documentation rule: describe only what exists; label anything else
 **planned**.
@@ -66,7 +68,7 @@ service (additional adapters stay modular and planned).
 | `scanners/` | Trivy, Gitleaks, Semgrep integration (`extorq-scan`) | C3 |
 | `rules/` | detection rules (YAML metadata + SQL) and their JSONL fixtures | C2 |
 | `simulations/` | safe, reversible attack scenarios for lab assets | B1, B2, B3, C1, C2 |
-| `infra/clickhouse/` | server config, users, migrations (`0001`, `0004`: lead; `0002`: A; `0003`: C3) | as noted |
+| `infra/clickhouse/` | server config, users, migrations (`0001`, `0004`, `0006`: lead; `0002`: A; `0003`, `0005`: C3) | as noted |
 | `infra/vm/`, `infra/kind/`, `infra/grafana/` | Ubuntu VM, kind cluster, Grafana | B1, B2, D1 |
 | `frontend/` | Next.js + shadcn/ui security console | D2 |
 | `lab/` | monitored lab targets (lab portal app, lab GitHub repository content): deliberately attackable, not ExtorQ code | B1, C1 |
@@ -272,19 +274,20 @@ that can also be run directly:
 | Task | Make target | Direct command |
 |---|---|---|
 | Secrets, CA, producer registry | `make bootstrap` | `python3 scripts/bootstrap.py && uv sync` |
-| Core / full stack | `make up` / `make up-full` | `docker compose up -d` / `docker compose --profile full up -d` |
+| Core / full stack | `make up` / `make up-full` (AI off) / `make up-demo` (AI on: Jev and Gemini flags) | `docker compose up -d --build --wait <core>` / `docker compose --profile full up -d --build --wait` |
 | Debug ClickHouse proxy (never in demos) | `make up-debug` | `docker compose --profile debug up -d clickhouse-debug` |
+| Stack status, logs, stop (volumes kept) | `make ps`, `make logs`, `make down` | `docker compose --profile full --profile debug ps` / `logs` / `down` |
 | Ubuntu VM | `make vm-up` / `vm-status` / `vm-down` | `infra/vm/vm.sh up` / `status` / `down` |
 | kind cluster | `make kind-up` / `kind-status` / `kind-down` | `infra/kind/kind.sh up` / `status` / `down` |
-| Collectors | `make collectors`, `collectors-once`, `collectors-status`, `collectors-flush` | `uv run extorq-collect run [--only ids] [--once]` |
+| Collectors | background: `make collectors-start [ONLY=a,b]`, `collectors-status`, `collectors-stop`; foreground: `make collectors [ARGS="--only ids"]`; `collectors-once`, `collectors-flush` | `uv run extorq-collect run [--only ids] [--once]`; `uv run python scripts/collectors_ctl.py start` (`stop`, `status`) |
 | Scanners | `make scan` | `uv run extorq-scan run all` |
-| Simulations | `make sim-<scenario>`, `make sim-cleanup SCENARIO=... RUN_ID=...` | `simulations/**.sh` |
+| Simulations | `make sim-http`, `sim-vm-001`, `sim-vm-002`, `sim-k8s-001`, `sim-k8s-002`, `sim-mac-001`, `sim-gh-001 ARGS="--repo <owner>/extorq-lab"`; `make sim-cleanup SCENARIO=... RUN_ID=...` (GH-001 cleanup needs `ARGS="--repo ... --cleanup --run-id ..."`) | `simulations/**.sh`; verify with `uv run python simulations/lib/verify_scenario.py <run_id> --expect <RULE>` |
 | Rules | | `uv run extorq rules validate`, `uv run extorq rules test` |
 | Unit tests | `make test` | `uv run pytest -q` (excludes integration/lab/live_ai/failure) |
 | Security tests | `make test-security` | `uv run pytest tests/security -q` |
 | Live RBAC probe | | `uv run pytest tests/security/test_security_clickhouse_rbac_live.py -m integration -q` |
 | Lint and types | `make lint`, `make typecheck` | `uv run ruff check`, `uv run mypy` |
-| Demo readiness | `make demo-check` (script being added by A) | `uv run python scripts/demo_check.py` |
+| Demo readiness | `make demo-check` (uses the debug proxy when it is up, otherwise runs its read-only queries inside the `api` container) | `uv run python scripts/demo_check.py`; runbook: [`docs/demo-runbook.md`](docs/demo-runbook.md) |
 
 CI (`.github/workflows/ci.yml`) runs lint, type checks, unit and security
 tests, the frontend build, gitleaks and Trivy on every push and pull request.

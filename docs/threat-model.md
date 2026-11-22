@@ -240,8 +240,10 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
     SANs) so collectors can pin the CA (implemented: `scripts/bootstrap.py`).
   * Replays: batch idempotency keys and deterministic event ids collapse
     duplicates (`contracts/ingest.py`, `contracts/identity.py`); events with
-    `event_time` more than one day ahead or 400 days old are quarantined
-    (implemented: `processing.py` time checks).
+    `event_time` more than one day ahead, or older than the 90-day `events`
+    retention (`older_than_retention`, build session 3; 400 days before), are
+    quarantined (implemented: `processing.py` time checks; the running
+    gateway's `/v1/status` reports `event_retention_days: 90`).
   * Source-level spoofing (c): the Linux parsers check a line's claimed
     program against journald's kernel-attested fields (`_UID`, `_EXE`,
     `_SYSTEMD_UNIT`) before parsing it; `SYSLOG_IDENTIFIER` and message text
@@ -308,7 +310,12 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   * GitHub token: file-based, `repr()`-safe, mode warning when group/world
     readable; the broad-scope `gh` CLI fallback is opt-in and reported as a
     health warning (implemented:
-    `collectors/src/extorq_collectors/github/token.py`; F-14).
+    `collectors/src/extorq_collectors/github/token.py`; F-14). The committed lab
+    configuration enables the fallback with the user's explicit approval
+    (PLAN 11, 2026-11-22); the health warning names the scopes `repo` and
+    `workflow` (observed live), so a compromise of the collector process or
+    of the operator account yields a token that can write to the user's
+    repositories (accepted for the lab; known limitations C8).
 * **Residual risk.** Any process running as the operator can read `var/`
   (no keychain integration). Inside the cluster, cluster-admin or node root can
   read the OTel token.
@@ -400,7 +407,7 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   * Gateway redaction and sanitisation: `redact_text` and
     `sanitize_untrusted` (ANSI, C0/C1, bidi/zero-width removal, NFC,
     truncation) (implemented: `backend/src/extorq/common/redaction.py`,
-    `backend/src/extorq/ingest/processing.py`; gaps F-02, F-06).
+    `backend/src/extorq/ingest/processing.py`; F-02, F-03 and F-06 resolved).
   * Console renders telemetry as text: no `dangerouslySetInnerHTML` or other
     HTML sinks, no raw-HTML markdown, CSP with per-request nonce and no
     `unsafe-inline` scripts (verified:
@@ -507,17 +514,27 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   `SecurityEvent.service` reference names a `service_id` that the gateway cannot
   tie to the event's asset without a lookup. Service ids are deterministic and
   computable from public facts (asset id, kind, unit name). A producer could
-  therefore attach instances or events to another asset's service. Required
-  controls (A, in progress; tracked as F-19): reject `service_instance` records
-  without `asset_id` and authorise that asset; recompute `service_id` from
-  `(asset_id, service_kind, service_key)` and `instance_id` from its parts at
-  the gateway; and have the API join instances and events to a service by
-  service id **and** asset scope (D1).
+  therefore attach instances or events to another asset's service. Controls
+  (F-19): the gateway quarantines `service_instance` records without
+  `asset_id` (`asset_unattributable`) and authorises that asset, and recomputes
+  `service_id` from `(asset_id, service_kind, service_key)` and `instance_id`
+  from its parts, quarantining mismatches as `identity_mismatch` (implemented,
+  A; verified: `tests/security/test_security_service_identity_binding.py`, A's
+  integration tests); the detector and the correlation builder trust a
+  `services` row only if its id recomputes from its own fields and drop an
+  event's service reference whose valid records belong only to unrelated assets
+  (implemented, C2: `backend/src/extorq/detection/service_identity.py`). Open (D1): the
+  API still joins instances and events to a service by service id alone, so an
+  authorised producer can attach an instance on its own asset to another
+  asset's service id and have it shown under that service.
 * **Residual risk.** Wildcard patterns (`k8s:extorq-lab*`, `github:*`) also
   match look-alike asset ids. Finding and inventory content is not checked
   against the producer's domain beyond the asset id. `asset_type` is not
   checked against the asset id namespace.
-* **Verification.** F probe; planned (A) unit and integration tests.
+* **Verification.** F probe; A's `tests/unit/platform` and
+  `uv run pytest -q -m integration tests/integration/platform` (26 passed,
+  including 401/403 with `ingest_audit` and identity binding on the deployed
+  gateway); `tests/security/test_security_service_identity_binding.py`.
 
 ### T13 Service failures and telemetry gaps (D)
 
@@ -677,15 +694,17 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
     `service` and `service_instance` (implemented:
     `backend/src/extorq/ingest/processing.py`; verified:
     `tests/security/test_security_ingest_redaction.py`).
-  * AI projection limited to service names, kinds and coverage (planned: E).
+  * AI projection limited to service names, kinds and coverage (implemented:
+    `backend/src/extorq/ai/projection.py`).
 * **Residual risk.** The VM dispatcher returns the first 256 characters of
   every process's argument vector (`collect_processes` in
   `infra/vm/files/extorq-collect-dispatch`; Linux lets any user read
   `/proc/<pid>/cmdline`), and the Linux collector stores them, pattern-redacted,
-  in process inventory items and service instances (F-17). Redaction now covers
-  `--password <x>`, mysql `-p<x>`, `sshpass -p` and Authorization schemes, but
-  not `--requirepass <x>`, `redis-cli -a <x>`, `curl -u user:pass` or
-  `PGPASSWORD=<x>` (F-06, verified). Mistyped passwords in user-name fields and
+  in process inventory items and service instances (F-17). Redaction covers
+  `--password <x>`, mysql `-p<x>`, `sshpass -p`, Authorization schemes and,
+  since session 2, `--requirepass <x>`, `redis-cli -a <x>`, `curl -u user:pass`,
+  `PGPASSWORD=<x>` and `MYSQL_PWD=<x>` (F-06 resolved; F probe 2026-11-22), but
+  pattern redaction cannot know every program's secret flags. Mistyped passwords in user-name fields and
   secrets in container logs cannot be recognised reliably. The nginx error-log
   query-string issue (F-23) is resolved: B1's HTTP adapters strip queries and
   Referer values.
@@ -825,31 +844,35 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
 | Redaction of every free-text field of every record kind | `tests/security/test_security_ingest_redaction.py` | F |
 | Adapter data minimisation, planned adapters silent, no port-based product inference | `tests/security/test_security_service_adapters.py` | F |
 | HTTP adapters strip query-string and Referer secrets | `tests/security/test_security_adapter_canaries.py` | F |
-| Service identities bound to the authorised asset (F-19) | `tests/security/test_security_service_identity_binding.py` (`xfail` until A lands F-IC-6) | F, A |
-| Live per-user ClickHouse privileges | `tests/security/test_security_clickhouse_rbac_live.py` (`integration`, 32 checks passed 2026-11-21) | F |
-| Gateway 401/403 with `ingest_audit`, spool durability | planned `tests/integration/platform`, `tests/failure` | A |
+| Service identities bound to the authorised asset (F-19 gateway part) | `tests/security/test_security_service_identity_binding.py` (hard tests since 2026-11-22; quarantine reason `identity_mismatch` asserted) | F, A |
+| Live per-user ClickHouse privileges | `tests/security/test_security_clickhouse_rbac_live.py` (`integration`, 32 checks passed 2026-11-21 and 2026-11-22) | F |
+| Gateway 401/403 with `ingest_audit` | `tests/integration/platform` (`integration`, 26 passed) | A |
+| Spool durability under ClickHouse outage and gateway/writer restarts | `tests/failure/test_failure_durability.py` (`failure`, 2 passed: 100/100 and 800/800 delivered) | A |
 
 ## 8. Open items for the lead
 
 Planned or partial mitigations that this model relies on:
 
-1. Collector SDK outbox and checkpoints (A) for T03.
-2. Writer bounded retries and dead letter (A) for T03/T13; failure tests.
-3. Gateway integration tests: 401/403 + `ingest_audit` (A).
-4. Stale/missing states in console and Grafana (D1/D2) for T14.
+Status on 2026-11-22 (build session 3):
+
+1. Collector SDK outbox and checkpoints (A) for T03: done.
+2. Writer bounded retries and dead letter (A) for T03/T13: done; failure tests
+   passed (ClickHouse outage 100/100, restarts 800/800).
+3. Gateway integration tests: 401/403 + `ingest_audit` (A): done (26 passed).
+4. Stale/missing states in console and Grafana (D1/D2) for T14: done.
 5. CI workflow with least-privilege permissions and SHA-pinned actions (A):
-   done (`.github/workflows/ci.yml`).
-6. Live RBAC probe (F): done, 32 checks passed
-   (`tests/security/test_security_clickhouse_rbac_live.py`).
+   done (`.github/workflows/ci.yml`); not yet run on GitHub.
+6. Live RBAC probe (F): done, 32 checks passed (2026-11-21 and 2026-11-22).
 7. Proposals F-IC-1 (NaN) and F-IC-2 (`.gitignore`) were merged by the lead
-   (schema 1.1). Open findings in `docs/team/status/F.md`: F-02, F-03, F-04,
-   F-05, F-06, F-09, F-10, and from pass 2 F-16 onwards.
-8. Service model: identity recomputation and asset-scoped joins (F-19, A and
-   D1); command-line minimisation on the VM (F-17, B1); per-instance coverage
-   and forwarder-aware attribution (F-20, B1/B3); masquerading flags and churn
-   bounds (F-21, B1/B3); query-string stripping in the nginx error adapter
-   (F-23, B1); service summaries limited to names, kinds and coverage in the
-   AI projection (E).
+   (schema 1.1). Open findings in `docs/team/status/F.md`: F-01 (by design),
+   F-09 (operator), F-17 (B1), F-19 API part (D1), F-20 and F-21 (B1/B3),
+   F-22 (E), F-24 (B3, fixtures not committed).
+8. Service model: asset-scoped joins in the API (F-19, D1); command-line
+   minimisation on the VM (F-17, B1); forwarder-aware attribution (F-20,
+   B1/B3); masquerading flags and churn bounds (F-21, B1/B3). Done: identity
+   recomputation at the gateway (F-19, A), query-string stripping in the nginx
+   error adapter (F-23, B1), service summaries limited to names, kinds and
+   coverage in the AI projection (E).
 
 ## 9. Change log
 
@@ -857,3 +880,7 @@ Planned or partial mitigations that this model relies on:
 * 2026-11-21 (evening): schema 1.1 service model (T21 to T24, service records
   in T12), status updates after review pass 2 (T03 outbox implemented, T16
   `.gitignore` gaps closed), new verification rows.
+* 2026-11-22 (build session 3): F-19 gateway part and F-06 resolved; gh CLI
+  token fallback enabled for the lab with the user's approval (T-secrets
+  residual); verification rows for integration and failure tests; open items
+  refreshed.

@@ -12,6 +12,7 @@ All collections are bounded so the checkpoint cannot grow without limit.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -22,6 +23,13 @@ MAX_ETAGS = 64
 MAX_RUNS_TRACKED = 1000
 MAX_SNAPSHOT_CHARS = 32 * 1024
 MAX_INVENTORY_KEYS = 256
+#: Commits awaiting a retry after a transient detail failure (beyond: gap at once).
+MAX_COMMIT_RETRIES = 32
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_RETRY_KEYS = frozenset(
+    {"branch", "attempts", "initial_backfill", "last_failed_at", "last_error", "push"}
+)
 
 
 def checkpoint_key(full_name: str) -> str:
@@ -63,6 +71,10 @@ class RepoState:
     #: Item keys of the last inventory snapshot (to emit tombstones for removed items).
     inventory_workflows: list[str] = field(default_factory=list)
     inventory_branches: list[str] = field(default_factory=list)
+    #: commit sha -> retry entry for a commit whose detail failed transiently. The branch
+    #: checkpoint has already moved past it (one commit never blinds the repository);
+    #: entry keys: branch, attempts, initial_backfill, last_failed_at, last_error, push.
+    commit_retries: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def remember_etag(self, key: str, etag: str | None) -> None:
         if not etag:
@@ -120,4 +132,16 @@ class RepoState:
         state.runs_seen = {str(k): str(v) for k, v in state.runs_seen.items()}
         state.inventory_workflows = [str(v) for v in state.inventory_workflows][:MAX_INVENTORY_KEYS]
         state.inventory_branches = [str(v) for v in state.inventory_branches][:MAX_INVENTORY_KEYS]
+        retries: dict[str, dict[str, Any]] = {}
+        for sha, entry in state.commit_retries.items():
+            if (
+                isinstance(sha, str)
+                and _SHA_RE.match(sha)
+                and isinstance(entry, dict)
+                and isinstance(entry.get("branch"), str)
+                and isinstance(entry.get("attempts"), int)
+                and len(retries) < MAX_COMMIT_RETRIES
+            ):
+                retries[sha] = {k: v for k, v in entry.items() if k in _RETRY_KEYS}
+        state.commit_retries = retries
         return state

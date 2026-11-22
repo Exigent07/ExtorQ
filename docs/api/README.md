@@ -38,6 +38,10 @@ Every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosni
 capped (`EXTORQ_API_MAX_BODY_BYTES`, default 64 KiB, enforced while streaming). Error bodies
 are `{"detail": ..., "request_id": ...}`; database errors, SQL and stack traces are never
 returned (ClickHouse failures become 503 and are logged server-side with the request id).
+When the `extorq_api_ro` ClickHouse quota (1200 queries per minute, migration 0002) is
+exhausted the API answers **429** with `Retry-After: 30` instead: it is load, not an outage,
+and clients must not retry at once (the console retries only 502/503/504). Each request reads
+collector health once (one evaluator per request) to keep the query count low.
 Validation errors never echo the submitted values.
 
 ## Storage identities and SQL
@@ -61,9 +65,9 @@ return `page` = `{limit, offset, returned, has_more, next_offset, total}`. Time 
 | Method + path | Purpose | Filters / notes |
 |---|---|---|
 | `GET /overview` | Asset coverage per asset class (incl. stale/missing), open alerts by severity, open findings (lifecycle view or explicit `lifecycle_available=false` fallback), alerts over 24 h, collection health summary, recent high/critical alerts, **service coverage** | — |
-| `GET /assets` | Assets with collector coverage, last event, open alerts | `asset_type`, `environment` |
-| `GET /assets/{asset_id}` | Asset record, collectors (staleness), inventory summary, event counts per source type, findings, recent alerts, **`services_summary`**, **`child_assets`** (e.g. Kubernetes nodes of a cluster) | `since`/`until` for event counts (default 24 h, max 90 d) |
-| `GET /assets/{asset_id}/services` | Services of one asset + coverage summary | `kind`, `category`, `adapter_support`, `monitoring_status`, `coverage`, `include_removed` |
+| `GET /assets` | Assets with collector coverage (own + ancestor collectors, `collectors_inherited`), last event, open alerts | `asset_type`, `environment` |
+| `GET /assets/{asset_id}` | Asset record, collectors covering it (staleness; a node lists its cluster's collectors, each with its own `asset_id`), inventory summary, event counts per source type, findings, recent alerts, **`services_summary`**, **`child_assets`** (e.g. Kubernetes nodes of a cluster) | `since`/`until` for event counts (default 24 h, max 90 d) |
+| `GET /assets/{asset_id}/services` | Services of one asset + coverage summary; **`hosted`**: services of an ancestor asset with instances on this asset (a node's Pods/containers grouped by cluster workload; not counted in `summary`) | `kind`, `category`, `adapter_support`, `monitoring_status`, `coverage`, `include_removed` (filters apply to `items`) |
 | `GET /services` | Service inventory across assets | `asset_id` + the filters above |
 | `GET /services/{service_id}` | Service detail: endpoints (exposure + attribution), instances, telemetry per source, authentication activity, recent events, findings, alerts | `since`/`until` (default 24 h, max 31 d) |
 | `GET /findings` | Posture findings | `asset_id`, `severity`, `scanner`, `category`, `state` (lifecycle only, else 400), `service_id` |
@@ -110,15 +114,45 @@ Each service reports `adapter_support` (implemented / planned / none) and the co
 
 Nothing is ever upgraded; `coverage_reasons` explains each downgrade or qualification.
 Collectors match a service when they report the source type for the service's asset or an
-ancestor asset (`k8s:<cluster>` covers `k8s:<cluster>/node/<name>`). A source with no
+ancestor asset (`k8s:<cluster>` covers `k8s:<cluster>/node/<name>`). The same ancestor rule
+gives an asset's own coverage (`coverage_status`, `collectors_total`, overview classes): a
+Kubernetes node is covered by its cluster's collectors (`collectors_inherited` says how many
+report for an ancestor) instead of being reported "missing".
+
+**Ownership (F-19).** Service ids can be computed by anyone, so the API never lets rows of
+another asset appear under a service:
+
+* A service row counts only when its stored `service_id` equals the identity computed from
+  its natural key (`service_id(asset_id, kind, key)`); a mismatching row is never shown (the
+  detail answers with the newest genuine row or 404; listings count it in `invalid_records`).
+  The gateway quarantines such rows since session 2; the API re-checks.
+* `GET /services/{id}` (instances, telemetry per source, authentication activity, recent
+  events) and `GET /events?service_id=` only include rows whose `asset_id` is the service's
+  own asset or a descendant of it (a cluster's nodes). An event or instance from another
+  asset that names the service is left out.
+* `hosted` (on `GET /assets/{id}/services`) lists an instance only under a service whose asset
+  is a strict ancestor of the requested asset and whose identity matches.
+
+Alerts are written by the detector only and are not filtered this way; findings follow
+`v_findings_current.service_id`. A source with no
 collector health at all is shown as `collection: "no_collector_health"` in the service
 detail but does not invent staleness. Unsupported, planned and unmonitored services are
 always listed; `include_removed=true` adds tombstoned services.
 
+Every view that reports service coverage (`GET /assets/{id}` `services_summary`,
+`GET /assets/{id}/services`, `GET /services`, `GET /services/{id}`, `GET /overview`
+`service_coverage`) evaluates it with the same function against **all** collector health
+reports, so a service (for example on a Kubernetes node, covered by the cluster's
+collectors) has the same `coverage_state` in every view at the same instant.
+
 Per-service views only contain what the adapters attributed (`events.service_id`,
-`finding_observations.service_id`, `alerts.service_ids`): an empty list means "nothing
-attributed", not "nothing happened". Finding attribution uses the latest non-null
-`service_id` among a finding's observations (works before and after C3's 0005 view change).
+`v_findings_current.service_id`, `alerts.service_ids`): an empty list means "nothing
+attributed", not "nothing happened". A finding's `service_id` is the attribution of its
+**latest** observation (`v_findings_current.service_id`, C3 migration 0005): a later scan
+that re-attributes the finding wins, and a later scan without attribution evidence clears
+an older link (it is never carried forward). `GET /findings` (items and the `service_id`
+filter), `GET /assets/{id}` and `GET /services/{id}` all apply this one rule; without the
+lifecycle view the observation fallback reproduces it.
 
 ## Data honesty rules
 

@@ -35,45 +35,51 @@ export function CoverageGapsPanel({
       {coverage.length === 0 ? (
         <EmptyState>The investigation context records no source coverage for this alert.</EmptyState>
       ) : (
-        <Table aria-label="Telemetry source coverage during the alert window">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Source</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Last success</TableHead>
-              <TableHead className="hidden text-right sm:table-cell">Lag</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {coverage.map((c) => (
-              <TableRow key={`${c.source_type}|${c.collector_id ?? ""}`}>
-                <TableCell className="py-2 whitespace-normal">
-                  <div className="font-mono text-xs text-ink">
-                    <UntrustedText value={c.source_type} limit={40} />
-                  </div>
-                  {c.note ? (
-                    <div className="text-xs text-muted-foreground">
-                      <UntrustedText value={c.note} limit={160} />
-                    </div>
-                  ) : null}
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <HealthStatusDot status={c.status} />
-                    {c.stale ? <StaleBadge /> : null}
-                    {c.gap_during_window ? <StatusPill tone="warn" label="Gap in window" /> : null}
-                  </div>
-                </TableCell>
-                <TableCell className="text-right">
-                  <RelativeTime value={c.last_success_at} now={now} className="text-xs" />
-                </TableCell>
-                <TableCell className="hidden text-right font-mono text-xs text-ink-2 sm:table-cell">
-                  {formatDuration(c.lag_seconds)}
-                </TableCell>
+        <>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Status as recorded when the investigation context was built (<Timestamp value={context.created_at} />); current
+            collector health is on the asset and health pages.
+          </p>
+          <Table aria-label="Telemetry source coverage during the alert window">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Source</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Last success</TableHead>
+                <TableHead className="hidden text-right sm:table-cell">Lag</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {coverage.map((c) => (
+                <TableRow key={`${c.source_type}|${c.collector_id ?? ""}`}>
+                  <TableCell className="py-2 whitespace-normal">
+                    <div className="font-mono text-xs text-ink">
+                      <UntrustedText value={c.source_type} limit={40} />
+                    </div>
+                    {c.note ? (
+                      <div className="text-xs text-muted-foreground">
+                        <UntrustedText value={c.note} limit={160} />
+                      </div>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <HealthStatusDot status={c.status} />
+                      {c.stale ? <StaleBadge /> : null}
+                      {c.gap_during_window ? <StatusPill tone="warn" label="Gap in window" /> : null}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <RelativeTime value={c.last_success_at} now={now} className="text-xs" />
+                  </TableCell>
+                  <TableCell className="hidden text-right font-mono text-xs text-ink-2 sm:table-cell">
+                    {formatDuration(c.lag_seconds)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </>
       )}
       {context.missing_telemetry.length > 0 ? (
         <div className="mt-4">

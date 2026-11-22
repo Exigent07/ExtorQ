@@ -10,7 +10,8 @@ strings sanitised; nothing is inferred beyond counting and ordering. Domains:
 * kubernetes:   Pod Security denials, cluster-admin grants, actors, other 403s
 * github:       actor(s), workflow permission deltas, runs of the changed commit,
                 branch protection changes
-* persistence:  systemd/launchd changes, auditd corroboration, unit state changes
+* persistence:  systemd/launchd changes, auditd corroboration (create/modify syscalls only;
+                removals counted separately as context), unit state changes
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from typing import Any
 from extorq.contracts.alert import DetectionAlert
 from extorq.contracts.context import Relationship, RelationshipType
 from extorq.correlation.records import EventRecord
+from extorq.detection import linux_audit
 from extorq.detection._compat import sanitize
 from extorq.detection.alerts import coerce_attributes
 
@@ -200,12 +202,24 @@ def _persistence(evidence: Sequence[EventRecord], events: Sequence[EventRecord])
         return {}
     units = {u for e in evidence if (u := e.unit_name())}
     paths = {e.resource_path for e in changes if e.resource_path}
-    audit = [e for e in events if e.event_type == "file.audit.watch" and e.resource_path in paths]
+    hits = [e for e in events if e.event_type == "file.audit.watch"]
+    # Only successful create/modify syscalls on the changed paths corroborate a change;
+    # removals of those paths (e.g. a cleanup's unlinkat) are counted as context only.
+    writes = [
+        e
+        for e in hits
+        if linux_audit.is_change(e.attributes, e.resource_path)
+        and linux_audit.written_path(e.attributes, e.resource_path) in paths
+    ]
+    removals = [
+        e for e in hits if e.resource_path in paths and linux_audit.is_removal(e.attributes)
+    ]
     return {
         "persistence_changes": len(changes),
         "persistence_units": _sorted_bounded(units, 8, 128),
-        "auditd_corroborated": bool(audit),
-        "auditd_writers": _sorted_bounded((e.process_executable for e in audit), 4, 128),
+        "auditd_corroborated": bool(writes),
+        "auditd_writers": _sorted_bounded((e.process_executable for e in writes), 4, 128),
+        "auditd_removals": len(removals),
         "unit_state_changes": sum(
             1
             for e in events

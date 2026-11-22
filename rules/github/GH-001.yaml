@@ -1,12 +1,14 @@
 rule_id: GH-001
-version: 1.0.0
+version: 1.1.0
 title: GitHub Actions workflow privilege escalation
 description: >-
   A commit changed a GitHub Actions workflow so that it gains privileges: it adds
   `permissions: write-all`, adds a sensitive write scope (contents, actions, packages,
   id-token, ...), adds a privileged trigger (pull_request_target, workflow_run, ...) or adds
   a checkout of untrusted pull-request code under a privileged trigger. Evidence is the
-  collector's before/after analysis of the workflow file at that commit.
+  collector's before/after analysis of the workflow file at that commit. A workflow that
+  cannot be parsed is compared lexically by the collector (fail closed,
+  analysis = lexical_fallback) and still alerts, with confidence medium.
 severity: high
 status: stable
 mitre_techniques: [T1195.002, T1098]
@@ -51,6 +53,10 @@ blind_spots:
   - Reusable workflows referenced from other repositories are analysed only as references.
   - Effective permissions depend on the repository default; when it is unknown the
     analysis is marked effective_permissions_unknown (confidence medium).
+  - >-
+    Lexical fallback (unparseable workflow) cannot tell which job a permissions block or
+    checkout belongs to and examines a bounded prefix of very large files
+    (features.lexical_scan_truncated); it over-reports rather than under-reports.
 references:
   - https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
   - https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
@@ -58,7 +64,8 @@ query: GH-001.sql
 summary_template: >-
   Workflow {workflow_path} in {repository} gained privileges at commit {commit_sha} by
   {actor}: write-all {write_all_added}; scopes {sensitive_scopes_added}; triggers
-  {risky_triggers_added}; untrusted checkout {untrusted_checkout_added}
+  {risky_triggers_added}; untrusted checkout {untrusted_checkout_added}; analysis
+  {analysis_methods}
 tests:
   - name: write-all-added
     fixture: tests/GH-001/positive_write_all.jsonl
@@ -80,3 +87,49 @@ tests:
     description: Workflow edits that do not add privileges (step change, read scope, push trigger).
     fixture: tests/GH-001/negative_benign_edits.jsonl
     expect: no_alert
+  - name: lexical-fallback-write-all
+    description: >-
+      The new workflow version is unparseable (duplicate mapping key) but adds
+      permissions write-all and pull_request_target; C1's analyser compares it lexically
+      (analysis = lexical_fallback, effective permissions unknown): alert, medium.
+    fixture: tests/GH-001/positive_lexical_fallback_write_all.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      analysis_methods: [lexical_fallback]
+      write_all_added: true
+      risky_triggers_added: [pull_request_target]
+      effective_permissions_unknown: true
+    summary_contains: "analysis lexical_fallback"
+  - name: lexical-fallback-benign
+    description: An unparseable edit whose lexical comparison adds no privilege.
+    fixture: tests/GH-001/negative_lexical_fallback_benign.jsonl
+    expect: no_alert
+  - name: c1-collector-output-gh001-scenario
+    description: >-
+      C1's tests/fixtures/github/gh001_collector_output.jsonl copied verbatim (synthetic
+      GitHub API fake, real collector code path): baseline commit, the escalation commit
+      (write-all, pull_request_target, untrusted checkout) and the cleanup commit. Exactly
+      one alert, high, for the escalation; none for baseline or cleanup.
+      tests/rules/test_gh001_collector_contract.py runs the same check on C1's current file.
+    fixture: tests/GH-001/c1_collector_output.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities:
+      commit_sha: cc816a42e0fc91f07530c6c94bc28b27f2ea8ae7
+  - name: c1-collector-output-lexical-fallback
+    description: >-
+      C1's tests/fixtures/github/gh001_lexical_fallback.jsonl copied verbatim: the same
+      scenario with an unparseable escalation commit (compared lexically by analyser 1.1.0)
+      and a cleanup commit. Exactly one alert, medium, for the escalation.
+    fixture: tests/GH-001/c1_lexical_fallback.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    entities:
+      commit_sha: 20cf45b8869252ee1559dc36478c2a165be76788
+    features:
+      analysis_methods: [lexical_fallback]
+

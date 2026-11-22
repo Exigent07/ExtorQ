@@ -148,6 +148,29 @@ def test_rotate_changes_tokens_and_leaf_but_keeps_ca(tmp_path: Path) -> None:
     assert token_file.read_text() != token
 
 
+@needs_openssl
+def test_every_compose_file_secret_is_created_by_bootstrap(tmp_path: Path) -> None:
+    """compose.yaml must never reference a var/ secret that `make bootstrap` does not make."""
+    import yaml
+
+    assert bootstrap.bootstrap(tmp_path, rotate=False, rotate_ca=False) == 0
+    compose = yaml.safe_load((REPO / "compose.yaml").read_text(encoding="utf-8"))
+    files = [
+        spec["file"]
+        for spec in compose["secrets"].values()
+        if isinstance(spec, dict) and "file" in spec
+    ]
+    assert "./var/secrets/grafana_secret_key" in files
+    for path in files:
+        assert path.startswith("./var/"), path
+        assert (tmp_path / path[2:]).is_file(), f"bootstrap does not create {path}"
+    grafana = compose["services"]["grafana"]
+    assert "grafana_secret_key" in grafana["secrets"]
+    assert (
+        grafana["environment"]["GF_SECURITY_SECRET_KEY__FILE"] == "/run/secrets/grafana_secret_key"
+    )
+
+
 # ── migration runner ──────────────────────────────────────────────────
 
 
