@@ -1,4 +1,4 @@
-"""Agentless SSH transport to the lab VM's read-only dispatch boundary.
+"""Agentless SSH transport to a Linux host's read-only dispatch boundary.
 
 ``SSHDispatchClient(target).run(command)`` executes one allow-listed dispatch
 command (``version``, ``journal``, ``audit``, ``inventory``, ``packages``,

@@ -35,9 +35,9 @@ the AI worker reads the stored context (it is the only input AI receives). CLI:
 | `related_assets` | other assets with related activity (cross-asset links, section 2.3) |
 | `features` | deterministic aggregates (section 3) |
 | `findings` | open and unverified posture findings of the asset from C3's `v_findings_current` (fallback: raw `finding_observations` shown as unverified) |
-| `coverage` | per required/evidence source type: collector, status, last success, lag, `stale` (now - last_success > 3 x interval), `gap_during_window` (failed/degraded reports, reported telemetry gaps, or no report during the window) |
+| `coverage` | per required/evidence source and asset: collector, status, last success, lag, `stale` (now - last_success > 3 x interval), `gap_during_window` (failed/degraded reports, reported telemetry gaps, or no report during the window) |
 | `missing_telemetry` | required sources without events on the asset in the window; `rule_runs.missing_sources` of evaluations overlapping the alert |
-| `limitations` | fixed statements (never causation, NAT sources, truncation, unreadable evidence, missing service/asset records, stale sources, simulation tag) |
+| `limitations` | fixed statements about causation, NAT sources, truncation, unreadable evidence, missing service or asset records, and stale sources |
 | `truncated` | which sections were capped |
 | `input_hash`, `context_id` | section 4 |
 
@@ -45,6 +45,11 @@ the AI worker reads the stored context (it is the only input AI receives). CLI:
 validated identifiers (source types, rule ids, asset ids, IP addresses): no telemetry text
 ever enters them. Summaries and key fields of events are sanitised (control and format
 characters removed) and truncated; telemetry is untrusted input.
+
+Collector health and gap reports are scoped to the source and asset that produced
+the evidence. Kubernetes OTel reports cover the node recorded on the audit or
+container-log event. With no node attribution, the display uses an applicable
+cluster-scope report when one exists. Missing health remains unknown.
 
 ## 2. Relationship classification
 
@@ -55,13 +60,9 @@ against the alert's evidence profile, then derives the type and strength.
 
 | Type | Criteria | Strength |
 |---|---|---|
-| **DIRECT** | a verified shared identifier: propagated HTTP request id (`shared_request_id`), Kubernetes pod uid (`shared_pod_uid`), kube-apiserver audit id (`shared_audit_id`), commit SHA in the same repository (`shared_commit_sha`), GitHub workflow run (`shared_workflow_run`), the same resource on the same asset: file path, systemd unit, Kubernetes object, workflow file (`shared_resource`) | strong |
-| **CANDIDATE** | plausible but inferred: same asset and context window plus a shared non-identifying attribute: a source IP that is **not** a shared NAT address (`shared_source_ip`), a principal name (`shared_principal`), the same ExtorQ simulation marker (`simulation_run`) | moderate with a non-NAT IP or two attributes; weak otherwise |
+| **DIRECT** | a verified shared identifier: propagated HTTP request id (`shared_request_id`), pod UID or API audit ID within the same cluster (`shared_pod_uid`, `shared_audit_id`), commit SHA or workflow run within the same repository (`shared_commit_sha`, `shared_workflow_run`), or the same resource on the same asset (`shared_resource`) | strong |
+| **CANDIDATE** | a shared non-NAT source IP (`shared_source_ip`) or principal name (`shared_principal`) within the context window | moderate with a same-asset non-NAT IP or two cross-asset attributes, weak otherwise |
 | **UNESTABLISHED** | considered and shown for completeness, no supported link: an IP match only through a shared NAT/gateway/loopback address (`shared_nat_source_ip`), or temporal proximity on the same asset only (`same_asset_time_window`), possibly with service topology bases | weak |
-
-The simulation marker (`extorq-sim-<run_id>`) is a lab scenario tag carried in
-attacker-controllable text (user names, user agents, object names); it never makes a link
-DIRECT.
 
 ### 2.2 Service-aware bases (contract 1.1)
 
@@ -104,7 +105,7 @@ pod-network gateway: NodePort traffic to lab pods, observed in the live lab-port
 ### 2.5 Selection and bounds
 
 1. **Linked events** (all assets, within the window): shared request id, pod uid, audit id,
-   commit, workflow run, source IP, simulation run, authenticated principal; on the alert's
+   commit, workflow run, source IP, authenticated principal; on the alert's
    asset also principal names, resource paths/names and evidence services (max 1000 rows).
 2. **Temporal neighbours**: the 40 nearest other events on the alert's asset.
 
@@ -114,11 +115,12 @@ Relationships are ranked (DIRECT, CANDIDATE, UNESTABLISHED; then strength; then 
 ## 3. Aggregated features (deterministic)
 
 Common: relationship counts per type, source types, number of evidence/related services,
-`cross_service_activity`, number of related assets, `simulation_tagged`,
+`cross_service_activity`, number of related assets,
 `causation_established: false`.
 SSH: failure events, distinct user names and connections, `ssh_success_after_failures` (a
-successful login from a failing source after the first failure) with the user names,
-`sudo_after_login`. HTTP: 4xx/5xx counts, distinct 4xx routes, probe-like routes, distinct
+successful login on the same host from a non-NAT address after its last observed failure)
+with the user names, and `sudo_after_login` for the same host and account. These features
+express ordered co-occurrence. HTTP: 4xx/5xx counts, distinct 4xx routes, probe-like routes, distinct
 user agents, application login failures and authorization denials. Kubernetes: Pod
 Security denials, cluster-admin grants, other 403s, actors, namespaces. GitHub: actors,
 added write scopes, write-all added, workflow runs of the changed commit, branch protection
@@ -126,9 +128,9 @@ and settings changes. Persistence: changes, units, auditd corroboration and writ
 state changes, package changes. Values are computed only from the events in the context.
 
 auditd corroboration (`auditd_corroborated`, `auditd_writers`) counts only **successful
-create/modify syscalls** whose written path is one of the changed unit paths (the shared
-definition in `extorq.detection.linux_audit`, identical to the VM-002 / CORR-002 rule
-parameters and checked by a unit test). Removals of those paths (for example a cleanup's
+create/modify syscalls** with the systemd audit key on the same host and path as an
+inventory change in the preceding 120 seconds (or the rule's configured threshold).
+Removals of those paths (for example a cleanup's
 `unlinkat` by `rm`) are counted separately as `auditd_removals` and never corroborate a
 change; failed attempts, xattr or timestamp changes and numeric (non-enriched) syscall
 values count as neither.

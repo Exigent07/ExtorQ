@@ -66,7 +66,7 @@ query fails.
 |---|---|---|
 | Collector `buffered` (exit 75) | gateway down or unreachable | records are safe in the outbox; restore the gateway, then `uv run extorq-collect flush` |
 | Every host collector stale | the background runner is not running | `make collectors-status`; `make collectors-start` (log `var/log/collectors.log`) |
-| API answers 503 for up to a minute | the `extorq_api_ro` quota (1200 queries per minute) is exhausted, for example by smoke or test runs | wait for the next minute; do not run load-heavy checks while presenting |
+| API answers 503 for up to a minute | the `extorq_api_ro` quota may be exhausted, for example by smoke or test runs. The quota is 6,000 queries per minute after migration `0007_api_quota.sql` and 1,200 before it. | Check the applied migration and the effective quota. Wait for the next interval if the quota is exhausted. |
 | Gateway `401` | wrong or rotated token | re-run `scripts/bootstrap.py`; restart the collector |
 | Gateway `403` | producer not allowed this kind, asset or source type | read `ingest_audit`; fix the collector or request a registry change (A) |
 | `202` but nothing stored | records quarantined or writer failing | read `ingest_quarantine`; `docker compose ps`; writer health |
@@ -74,7 +74,7 @@ query fails.
 | Linux collector errors | VM down, host key changed, dispatcher denial (exit 77) | `infra/vm/vm.sh status`; host-key and authentication failures are never retried automatically |
 | Kubernetes events missing | OTel DaemonSet down or cannot reach the gateway | `infra/kind/kind.sh status`, `infra/kind/kind.sh netcheck` |
 | `k8s-inventory` collector fails with 401; K8S-002 alerts only medium | the 24-hour inventory token expired | `infra/kind/kind.sh token`, then restart the collector |
-| GitHub collector health shows warnings or gaps | token source and plan limits: the gh CLI token is broader than read-only; branch protection, rules and rulesets on a private free-plan repository answer 403 | expected for the lab ([known limitations](known-limitations.md) C6 to C8); a fine-grained read-only token removes the breadth warning |
+| GitHub collector fails or reports coverage gaps | check the dedicated fine-grained token file, its ownership and mode, repository permissions and plan limits | confirm `token_source=file` and examine feature-specific gaps. Branch protection, rules and rulesets may return 403 on a private free-plan repository ([known limitations](known-limitations.md) C6 to C8). |
 | Rule never fires | missing sources or no matching telemetry | `rule_runs.missing_sources`; `uv run extorq rules test --only <ID>` |
 | Service shows `unmonitored` | no adapter, planned adapter, adapter disabled | read its `coverage_note`; see [known limitations](known-limitations.md) S1 |
 | Service shows `degraded` | source failing, no telemetry yet, or stale | check the adapter's collector health and source |
@@ -87,6 +87,10 @@ query fails.
   `infra/kind/kind.sh deploy`).
 * **Retention:** ClickHouse TTLs enforce retention automatically
   ([security.md section 5](security.md#5-data-retention-clickhouse-ttls)).
+* **Recovery:** Use a separately scoped Compose project for validation.
+  `make reset-data` shows the plan. The authorized reset mode requires a
+  previously rehearsed recovery procedure, a fresh private backup directory
+  and paused external producers. [Backup, restore and failure procedure](recovery.md)
 * **Lab resets:** simulations clean up after themselves (`--cleanup`);
   `infra/vm/vm.sh redeploy` re-applies VM configuration without losing
   telemetry.

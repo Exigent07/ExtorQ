@@ -21,7 +21,7 @@ from __future__ import annotations
 import random
 import re
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -55,6 +55,12 @@ class DbClient(Protocol):
     def select(self, sql: str, parameters: dict[str, Any] | None = None) -> QueryRows: ...
 
     def insert_rows(self, table: str, rows: Sequence[dict[str, Any]]) -> None: ...
+
+
+class RuleQueryClient(DbClient, Protocol):
+    def select_batches(
+        self, sql: str, parameters: dict[str, Any], batch_size: int
+    ) -> Generator[QueryRows, None, None]: ...
 
 
 def error_code(exc: BaseException) -> int | None:
@@ -172,6 +178,17 @@ class ClickHouseConnectClient:
 
         return self._retry("select", run)  # type: ignore[no-any-return,unused-ignore]
 
+    def select_batches(
+        self, sql: str, parameters: dict[str, Any], batch_size: int
+    ) -> Generator[QueryRows, None, None]:
+        """Stream a single query in bounded batches without retrying a partial response."""
+        bound = {key: _bind_value(value) for key, value in parameters.items()}
+        with self._client.query_rows_stream(sql, parameters=bound) as stream:
+            columns = list(stream.source.column_names)
+            types = [getattr(t, "name", str(t)) for t in stream.source.column_types]
+            for batch in chunked(stream, batch_size):
+                yield QueryRows(columns, types, [tuple(_to_utc(v) for v in row) for row in batch])
+
     def insert_rows(self, table: str, rows: Sequence[dict[str, Any]]) -> None:
         if not rows:
             return
@@ -196,11 +213,11 @@ def wrap(client: Any) -> DbClient:
     return ClickHouseConnectClient(client)
 
 
-def connect(role: str) -> DbClient:
+def connect(role: str) -> ClickHouseConnectClient:
     """Open a client for a ClickHouse identity via A's storage layer."""
     from extorq.storage.clickhouse import get_client
 
-    return wrap(get_client(role))  # type: ignore[arg-type]
+    return ClickHouseConnectClient(get_client(role))  # type: ignore[arg-type]
 
 
 def chunked(items: Iterable[Any], size: int) -> Iterable[list[Any]]:

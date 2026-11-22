@@ -40,29 +40,28 @@ Files are 0600 in 0700 directories. Rotation: `--rotate` (passwords, service
 secrets, tokens, gateway certificate) and `--rotate-ca` (also the CA); restart
 the affected services and collectors afterwards.
 
-The AI keys come from the user-owned `.env` (`JEV_API_KEY`, `GEMINI_API_KEY`);
-ExtorQ tooling never reads, prints or modifies it. Compose mounts each key only
-into the service that needs it (Jev into `ai-worker`, Gemini into `api`). Both
-providers stay disabled unless the operator opts in: compose interpolates
-`EXTORQ_JEV_ENABLED` / `EXTORQ_GEMINI_ENABLED` (default `false`) from the shell;
-`make up-demo` sets both to `true`, and running `make up-full` again switches AI
-off.
+The default deployment starts the Jev worker in disabled mode without a provider
+key or internet-facing network. For an approved live Jev budget, provision the
+provider key as a private file at `var/secrets/jev_api_key`, or set
+`EXTORQ_JEV_KEY_PATH` to the private file's location. The opt-in overlay mounts
+that file only in `ai-worker` and requires `EXTORQ_JEV_DAILY_CAP` in the operator's
+environment. Running `make up-full` restores the disabled configuration.
 
 ## 3. Platform stack (`compose.yaml`, owner A)
 
 ```sh
 make up          # = docker compose up -d --build --wait (core: clickhouse, migrate, ingest, writer)
 make up-full     # + detector, ai-worker, api, frontend, grafana (profile "full"), AI off; waits up to 600 s
-make up-demo     # up-full with EXTORQ_JEV_ENABLED=true and EXTORQ_GEMINI_ENABLED=true
+# Optional, with an explicitly approved budget and a provisioned Jev key:
+# EXTORQ_JEV_DAILY_CAP=<approved integer> make up-demo
 make up-debug    # loopback ClickHouse proxy for tests and read-only tools (profile "debug"); never in demos
 make ps          # status of every service, all profiles
 make demo-check  # read-only readiness report (scripts/demo_check.py); without the proxy it queries inside the api container
 make migrate     # rebuild the backend image and apply new migrations (one-shot)
 ```
 
-`migrate` applies `infra/clickhouse/migrations/` (0001 core tables, 0002 RBAC,
-0003 findings views, 0004 services, 0005 findings services view, 0006 refresh
-of `v_alerts`) as `extorq_admin` and exits. The `full` profile builds
+`migrate` applies all numbered migrations in `infra/clickhouse/migrations/`
+as `extorq_admin` and exits. The `full` profile builds
 `infra/grafana/Dockerfile` and `frontend/Dockerfile`. Check the console with
 D2's smoke script after `make up-full`
 ([demo-runbook.md section 2](demo-runbook.md#2-pre-flight-checklist); state of
@@ -79,6 +78,38 @@ make smoke                                                        # = uv run pyt
 `scripts/smoke_ingest.py` sends one synthetic event labelled
 `labels.synthetic=true` and reads it back as `extorq_api_ro` through the debug
 proxy.
+
+### Event identity upgrade
+
+Start with a disposable copy and verify the database, spool and collector-state
+backup before upgrading an existing installation. Pause collectors, ingest and
+writer. Keep the original alert and event IDs in ClickHouse. The SQLite spool
+adds its identity ledger atomically and registers compatible pending events
+using their existing IDs and recorded producer. Seed compatible events that have
+already been written to ClickHouse before resuming submissions. The seeding
+command reads using `extorq_api_ro` and writes only to the mounted SQLite spool.
+
+Use the exact Compose project and verify the volume name with `docker volume
+inspect`. The command below expects `EXTORQ_SPOOL_VOLUME` to hold that project's
+existing `spool` volume. The volume labels must name the selected project and
+`com.docker.compose.volume=spool`.
+
+```sh
+docker compose --env-file /dev/null build migrate
+docker compose --env-file /dev/null run --rm --no-deps -T \
+  -e EXTORQ_SPOOL_PATH=/var/lib/extorq/spool/spool.db \
+  -v "$EXTORQ_SPOOL_VOLUME:/var/lib/extorq/spool" \
+  migrate spool seed-event-identities --yes
+```
+
+Check `accepted`, `duplicate`, `conflict`, `unmappable` and `expired` counts.
+Each committed page is safe to retry. A conflict means that trusted legacy
+rows disagree about one canonical key. Unmappable rows include retired
+controlled-validation records and incompatible historical payloads. They
+remain addressable by their original IDs. Review either count before cutover.
+If a live upgrade writes new IDs, preserve the upgraded spool and use a
+compatible reader and writer for recovery. Restoring an earlier backup can
+discard post-backup observations and requires a recovery decision.
 
 ## 4. Lab VM (`infra/vm/vm.sh`, owner B1)
 
@@ -127,27 +158,19 @@ uv run extorq-scan run all                # make scan
 
 Collector ids: `macos-workstation-01`, `linux-ssh-lab-vm-01`, `k8s-inventory`,
 `github-repos`. Collector state lives in
-`var/collectors/<collector_id>/state.db`. GitHub token: the committed
-`config/collectors/github.yaml` enables the GitHub CLI token fallback
-(`gh_cli_token_fallback: true`), approved by the user for the lab on
-2026-11-22; that token carries broad OAuth scopes (`repo`, `workflow`) and the
-collector reports this as a health warning. The preferred setup is a
-fine-grained read-only token file (`token_file` or `EXTORQ_GITHUB_TOKEN_FILE`)
-with the fallback switched off.
+`var/collectors/<collector_id>/state.db`. Configure a repository-scoped,
+fine-grained read-only GitHub token file with `token_file` or
+`EXTORQ_GITHUB_TOKEN_FILE`. The checked-in configuration disables CLI fallback.
+Check the collector's credential source in its health details after deployment.
 
-## 7. Simulations
+## 7. Detection validation
 
-`make sim-<scenario>` runs `simulations/**` (`ARGS="..."` passes options;
-revert with `make sim-cleanup SCENARIO=<scenario> RUN_ID=<id>`). Every
-simulation is reversible and records `SimulationRun`s through
-`extorq-collect sim-record`. The GitHub simulation needs `--repo`
-(`make sim-gh-001 ARGS="--repo Exigent07/extorq-lab"`, a dry run by default);
-its `--execute` mode pushes to the private lab repository and needs the
-operator's explicit approval, and its cleanup is
-`make sim-gh-001 ARGS="--repo Exigent07/extorq-lab --cleanup --run-id <id>"`
-(`make sim-cleanup SCENARIO=gh-001` does not pass `--repo`). Scenario details:
-[attack-scenarios.md](attack-scenarios.md); demonstration plan:
-[demo-runbook.md](demo-runbook.md).
+Use `python -m detection_tests list` from the checkout to inspect the matrix.
+The runner's asset-specific targets perform state-changing actions on some
+assets. Confirm the approved disposable targets and actions before execution.
+Version 2 reports link matching alert evidence to each controlled action in
+`var/reports/`. The older `simulations/` scripts and scenario notes describe
+historical workflows. Their `SimulationRun` ingestion contract was removed.
 
 ## 8. Teardown (operator decisions)
 

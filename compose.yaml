@@ -1,4 +1,4 @@
-# ExtorQ runtime stack (PLAN §4.1). Owner: agent A.
+# ExtorQ runtime stack (PLAN §4.1). Owner: platform.
 #
 #   make up        core: clickhouse, migrate, ingest, writer
 #   make up-full   + detector, ai-worker, api, frontend, grafana   (profile "full")
@@ -9,9 +9,9 @@
 #   18123 debug proxy in the "debug" profile only). ClickHouse itself is never published.
 # * "data" is an internal network (no egress). The gateway lives on "edge" only and has
 #   no network path to ClickHouse; its only link to the data plane is the spool volume.
-# * Secrets are compose file secrets from var/secrets and var/tls (`make bootstrap`); the
-#   AI keys come from the user's .env via `environment:` secret sources and are mounted
-#   only into the services that need them (ai-worker: Jev, api: Gemini).
+# * Secrets are compose file secrets from var/secrets and var/tls (`make bootstrap`). The
+#   only AI key (Jev, schema 2.0) comes from the user's .env via an `environment:` secret
+#   source and is mounted only into the ai-worker; the api never calls an AI provider.
 # * Every container: non-root user, cap_drop ALL, no-new-privileges, memory limit,
 #   read-only root filesystem where the software allows it (tmpfs for scratch space).
 
@@ -43,7 +43,6 @@ x-backend: &backend
   restart: unless-stopped
 
 x-backend-env: &backend-env
-  EXTORQ_ENVIRONMENT: lab
   EXTORQ_LOG_LEVEL: INFO
   EXTORQ_CLICKHOUSE_HOST: clickhouse
   EXTORQ_CLICKHOUSE_PORT: "8123"
@@ -177,7 +176,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── full profile (services owned by C2, E, D1, D2) ───────────────────────
+  # ── full profile: detection, AI triage, analyst API, console, Grafana ────
   detector:
     <<: *backend
     profiles: [full]
@@ -205,23 +204,14 @@ services:
     <<: *backend
     profiles: [full]
     command: ["ai-worker"]
-    # read_only must be false here: compose materialises `environment:`-sourced secrets
-    # (the AI key from the user's .env) by copying them into /run/secrets, which a
-    # read-only root filesystem refuses ("`file` is the sole supported option"). The
-    # image's code and virtualenv are root-owned and the service runs as uid 10001, so
-    # it still cannot modify its own code; /tmp stays a size-limited tmpfs.
-    read_only: false
-    networks: [data, edge]
+    networks: [data]
     environment:
       <<: *backend-env
       EXTORQ_INSTANCE_NAME: ai-worker
-      JEV_API_KEY_FILE: /run/secrets/jev_api_key
-      # AI is advisory and OFF unless the operator opts in (E-IC-1): EXTORQ_JEV_ENABLED=true.
-      EXTORQ_JEV_ENABLED: ${EXTORQ_JEV_ENABLED:-false}
+      EXTORQ_JEV_ENABLED: "false"
       EXTORQ_AI_DOTENV: ""
     secrets:
       - extorq_ai_password
-      - jev_api_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -230,12 +220,8 @@ services:
     <<: *backend
     profiles: [full]
     command: ["api"]
-    # read_only must be false here: compose materialises `environment:`-sourced secrets
-    # (the AI key from the user's .env) by copying them into /run/secrets, which a
-    # read-only root filesystem refuses ("`file` is the sole supported option"). The
-    # image's code and virtualenv are root-owned and the service runs as uid 10001, so
-    # it still cannot modify its own code; /tmp stays a size-limited tmpfs.
-    read_only: false
+    # Read-only root filesystem (from x-backend): the api only gets file secrets. It never
+    # calls an AI provider (Jev triage runs in the ai-worker), so it needs no AI key.
     networks: [data, edge]
     ports:
       - "127.0.0.1:8000:8000"
@@ -245,15 +231,12 @@ services:
       EXTORQ_API_BIND_HOST: 0.0.0.0
       EXTORQ_API_PORT: "8000"
       EXTORQ_API_SERVICE_TOKEN_FILE: /run/secrets/api_service_token
-      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
-      # On-demand Gemini summaries are OFF unless the operator opts in (E-IC-1).
-      EXTORQ_GEMINI_ENABLED: ${EXTORQ_GEMINI_ENABLED:-false}
+      # The api reads stored Jev assessments only; never let AI settings read a dotenv file.
       EXTORQ_AI_DOTENV: ""
     secrets:
       - extorq_api_ro_password
       - extorq_api_writer_password
       - api_service_token
-      - gemini_api_key
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
@@ -392,7 +375,3 @@ secrets:
     file: ./var/secrets/grafana_admin_password
   grafana_secret_key:
     file: ./var/secrets/grafana_secret_key
-  jev_api_key:
-    environment: JEV_API_KEY
-  gemini_api_key:
-    environment: GEMINI_API_KEY

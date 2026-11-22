@@ -165,19 +165,20 @@ def test_health_rules_ai_and_ingest(
         latest_run_row("K8S-001", last_status="failed", failures_24h=3),
     ]
     repo.ai_counts = [
-        {"provider": "google-gemini", "task": "summary", "status": "ok", "assessments": 2},
-        {"provider": "google-gemini", "task": "summary", "status": "timeout", "assessments": 1},
+        {"provider": "typesafe-jev", "task": "triage", "status": "ok", "assessments": 2},
+        {"provider": "typesafe-jev", "task": "triage", "status": "timeout", "assessments": 1},
     ]
     repo.ai_last = [
         {
-            "provider": "google-gemini",
-            "task": "summary",
+            "provider": "typesafe-jev",
+            "task": "triage",
             "last_assessment_at": NOW,
             "last_status": "timeout",
             "last_error": "TimeoutError",
             "last_ok_at": NOW - timedelta(hours=1),
         }
     ]
+    integrations.config = {("typesafe-jev", "triage"): {"configured": True, "enabled": False}}
     repo.quarantined = 4
     repo.audit_decisions = [{"decision": "denied", "events": 2}]
     body = client.get("/api/v1/health", headers=analyst).json()
@@ -189,19 +190,52 @@ def test_health_rules_ai_and_ingest(
     assert rules["GH-001"]["run_stale"] is None  # disabled: not applicable
     assert rules["K8S-001"]["last_run"]["last_status"] == "failed"  # run without registry row
 
-    ai = {(a["provider"], a["task"]): a for a in body["ai"]}
-    gemini = ai[("google-gemini", "summary")]
-    assert gemini["status_counts"] == {"ok": 2, "timeout": 1}
-    assert gemini["last_status"] == "timeout"
-    assert gemini["configured"] is True and gemini["enabled"] is False
-    jev = ai[("typesafe-jev", "triage")]
-    assert jev["status_counts"] == {} and jev["last_assessment_at"] is None
+    # Schema 2.0: Jev triage is the only AI provider reported.
+    assert [(a["provider"], a["task"]) for a in body["ai"]] == [("typesafe-jev", "triage")]
+    jev = body["ai"][0]
+    assert jev["status_counts"] == {"ok": 2, "timeout": 1}
+    assert jev["last_status"] == "timeout"
+    assert jev["configured"] is True and jev["enabled"] is False
     assert body["ingest"] == {
         "window_hours": 24,
         "quarantined_records": 4,
         "audit_decisions": {"denied": 2},
     }
     assert body["ai_configuration_source"] == "fake"
+    # No ai-worker report: whether Jev runs is unknown, not "disabled".
+    assert jev["runtime_status"] is None and jev["runtime_reported_at"] is None
+
+
+def test_health_reports_the_ai_worker_state_next_to_the_api_flags(
+    client: TestClient,
+    analyst: dict[str, str],
+    repo: FakeRepository,
+    integrations: FakeIntegrations,
+) -> None:
+    """Jev runs in the ai-worker: its fresh report is the runtime truth, even when the API
+    process itself has no key (configured/enabled stay the API's own view)."""
+    integrations.config = {("typesafe-jev", "triage"): {"configured": False, "enabled": False}}
+    repo.pipeline = [
+        pipeline_row("ai_worker", "old", status="disabled",
+                     last_reported_at=NOW - timedelta(hours=2)),  # stale: ignored
+        pipeline_row("ai_worker", "w2", status="ok", last_reported_at=NOW - timedelta(seconds=30),
+                     details='{"provider":"typesafe-jev","model":"synthetic"}'),
+        pipeline_row("writer", "w1", status="failed"),  # another component: ignored
+    ]  # fmt: skip
+    jev = client.get("/api/v1/health", headers=analyst).json()["ai"][0]
+    assert (jev["configured"], jev["enabled"]) == (False, False)
+    assert jev["runtime_status"] == "ok"
+    assert jev["runtime_reported_at"].startswith("2026-11-21T11:59:30")
+
+    repo.pipeline = [pipeline_row("ai_worker", "w3", status="disabled")]
+    jev = client.get("/api/v1/health", headers=analyst).json()["ai"][0]
+    assert jev["runtime_status"] == "disabled"
+
+    repo.pipeline = [
+        pipeline_row("ai_worker", "w4", status="ok", last_reported_at=NOW - timedelta(hours=1))
+    ]
+    jev = client.get("/api/v1/health", headers=analyst).json()["ai"][0]
+    assert jev["runtime_status"] is None  # only a stale report: unknown
 
 
 def test_overview_collection_summary_counts(

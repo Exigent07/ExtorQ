@@ -29,6 +29,9 @@ from extorq.contracts import (
     AIStatus,
     AITask,
     InvestigationContext,
+    JevAnswer,
+    JevTriageResult,
+    TriageRecommendation,
 )
 from extorq.contracts.identity import service_id
 
@@ -111,7 +114,6 @@ def alert_row(label: str = "a1", **kw: Any) -> Row:
         "evidence_truncated": 0,
         "features": '{"distinct_connections":6}',
         "mitre_techniques": ["T1110"],
-        "simulation_run_ids": [],
         "created_at": NOW - timedelta(minutes=49),
         "updated_at": NOW - timedelta(minutes=49),
         "detector_version": "0.0.0-synthetic",
@@ -165,8 +167,6 @@ def event_row(label: str = "e1", **kw: Any) -> Row:
         "gh_workflow_path": None,
         "gh_workflow_run_id": None,
         "gh_actor_login": None,
-        "simulation_run_id": None,
-        "scenario_id": None,
         "message": "<b>synthetic</b> message",
         "attributes": '{"auth_method":"password"}',
     }
@@ -306,19 +306,35 @@ def instance_row(service: Row, key: str = "pid:100", **kw: Any) -> Row:
     return row
 
 
+def triage_result() -> JevTriageResult:
+    """A SYNTHETIC, contract-valid Jev triage result (one Noul answer)."""
+    return JevTriageResult(
+        recommendation=TriageRecommendation.ROUTINE_REVIEW,
+        uncertain=False,
+        order_consistent=True,
+        sufficient_context_probability=0.8,
+        answers=[JevAnswer(question_id="synthetic-q1", type="noul", value=0.8)],
+        rationale_codes=["synthetic"],
+        question_set_version="triage-synthetic",
+    )
+
+
 def assessment(alert_id: str, **kw: Any) -> AIAssessment:
+    """A SYNTHETIC Jev triage assessment (the only AI task since schema 2.0)."""
+    status = kw.get("status", AIStatus.OK)
     data: dict[str, Any] = {
-        "assessment_id": hexid(f"assessment:{alert_id}:{kw.get('status', 'ok')}"),
+        "assessment_id": hexid(f"assessment:{alert_id}:{status}"),
         "alert_id": alert_id,
         "context_id": hexid(f"context:{alert_id}"),
         "context_input_hash": sha(f"input:{alert_id}"),
-        "provider": AIProvider.GEMINI,
+        "provider": AIProvider.JEV,
         "model": "synthetic-model",
-        "task": AITask.SUMMARY,
-        "prompt_version": "summary-v1",
+        "task": AITask.TRIAGE,
+        "prompt_version": "triage-synthetic",
         "status": AIStatus.OK,
+        "triage": triage_result() if status == AIStatus.OK else None,
         "created_at": NOW,
-        "requested_by": "analyst:alice",
+        "requested_by": "system:ai-worker",
     }
     data.update(kw)
     return AIAssessment(**data)
@@ -569,8 +585,6 @@ class FakeRepository:
                 continue
             if f.open_only and status in CLOSED_STATUSES:
                 continue
-            if f.simulation_run_id and f.simulation_run_id not in a["simulation_run_ids"]:
-                continue
             if f.service_id and f.service_id not in a.get("service_ids", []):
                 continue
             state = self.states.get(a["alert_id"])
@@ -703,21 +717,17 @@ class FakeRepository:
 
 
 class FakeIntegrations:
-    """Configurable stand-in for the C2/E adapters."""
+    """Configurable stand-in for the correlation and AI adapters."""
 
     def __init__(self) -> None:
         self.stored: dict[str, InvestigationContext] = {}
         self.buildable: dict[str, InvestigationContext] = {}
         self.saved: list[InvestigationContext] = []
         self.assessments: dict[str, list[AIAssessment]] | None = {}
-        self.summary_result: AIAssessment | None = None
-        self.summary_error: Exception | None = None
         self.build_error: Exception | None = None
         self.load_error: Exception | None = None
-        self.summary_calls: list[tuple[str, str]] = []
         self.config: dict[tuple[str, str], dict[str, bool | None]] = {
             ("typesafe-jev", "triage"): {"configured": False, "enabled": False},
-            ("google-gemini", "summary"): {"configured": True, "enabled": False},
         }
 
     def load_context(self, repo: Any, alert_id: str) -> InvestigationContext | None:
@@ -737,13 +747,6 @@ class FakeIntegrations:
         if self.assessments is None:
             return None
         return self.assessments.get(alert_id, [])
-
-    def request_summary(self, repo: Any, alert_id: str, requested_by: str) -> AIAssessment:
-        self.summary_calls.append((alert_id, requested_by))
-        if self.summary_error is not None:
-            raise self.summary_error
-        assert self.summary_result is not None
-        return self.summary_result
 
     def ai_configuration(self) -> tuple[dict[tuple[str, str], dict[str, bool | None]], str]:
         return self.config, "fake"

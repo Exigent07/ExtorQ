@@ -19,8 +19,8 @@ Review findings referenced as `F-nn` are tracked in `docs/team/status/F.md`.
 ExtorQ is a single-operator lab SIEM running on one Apple Silicon Mac. It
 collects telemetry from four asset classes (the Mac itself, an Ubuntu VM, a kind
 Kubernetes cluster, a GitHub repository), stores it in ClickHouse, runs
-versioned SQL detections, builds evidence bundles and optionally asks two AI
-providers for advisory output. Since schema 1.1 every host and node is further
+versioned SQL detections, builds evidence bundles and optionally uses Jev for
+advisory triage. Since schema 1.1 every host and node is further
 broken down into **services** (host services, applications, Kubernetes
 workloads and Kubernetes Service objects) and **service instances**
 (processes, containers, Pods), discovered from evidence and monitored through
@@ -38,7 +38,7 @@ Assumptions:
    purpose. Their telemetry is attacker-influenced data.
 3. **Docker Desktop and QEMU are trusted** to enforce the network isolation
    they document (internal networks, loopback port publishing, user-mode NAT).
-4. **Third-party APIs** (GitHub, TypeSafe Jev, Google Gemini) are reached over
+4. **Third-party APIs** (GitHub and TypeSafe Jev) are reached over
    TLS and are trusted for authenticity of their responses, not for
    confidentiality of what ExtorQ sends them.
 5. There is no multi-tenancy and no internet-facing listener.
@@ -56,7 +56,7 @@ the lab).
 | Telemetry and evidence integrity | ClickHouse `extorq.events`, SQLite spool | Alerts and investigations are only as good as the evidence |
 | Service inventory and coverage state | `extorq.services`, `extorq.service_instances` | Analysts decide what is watched from it; a wrong "monitored" hides blind spots |
 | Alerts (authoritative) | `extorq.alerts`, `alert_evidence` | Written only by the detector; AI and analysts must not alter them |
-| AI provider keys | `.env` (user-owned), compose file secrets | Billable, third-party account access |
+| Jev provider key | Private file in the opt-in Compose overlay | Billable, third-party account access |
 | ClickHouse passwords | `var/secrets/clickhouse/<user>_password` | Database read/write per service |
 | Producer tokens | `var/secrets/tokens/<producer>.token`, digests in `var/secrets/producers.json` | Ability to inject telemetry |
 | Local CA key, gateway key | `var/tls/ca.key`, `var/tls/gateway.key` | Ability to impersonate the gateway |
@@ -73,7 +73,6 @@ flowchart LR
   subgraph TB1["TB-1 Internet (third parties, outbound HTTPS only)"]
     GHAPI["GitHub REST API"]
     JEV["TypeSafe Jev API"]
-    GEM["Google Gemini API"]
   end
 
   subgraph MAC["macOS host: operator workstation (trust anchor)"]
@@ -101,12 +100,12 @@ flowchart LR
         API["analyst API"]
         FE["console (Next.js)"]
         GRAF["Grafana"]
-        AIW["ai-worker"]
       end
       subgraph TB3["TB-3 data network (internal: true, no egress)"]
         CH[("ClickHouse")]
         WRITER["writer"]
         DET["detector"]
+        AIW["ai-worker"]
         SPOOL[("SQLite spool volume")]
       end
       subgraph TB6["TB-6 kind cluster extorq-lab (lab asset)"]
@@ -137,7 +136,6 @@ flowchart LR
   OTEL --> KAPI
   GHCOL -->|"HTTPS polling"| GHAPI
   AIW -->|"TB-8 sanitised context"| JEV
-  API -->|"TB-8 on-demand summary"| GEM
   TB5 -.->|"10.0.2.2 reaches host loopback (F-01)"| TB2
   TB6 -.->|"host.docker.internal reaches host loopback (F-01)"| TB2
   SECRETS -.-> LINCOL & GHCOL & K8SINV
@@ -147,7 +145,7 @@ flowchart LR
 
 | ID | Boundary | Crossing | Control at the boundary |
 |---|---|---|---|
-| TB-1 | Mac to internet | GitHub API polling; Jev/Gemini requests | Outbound TLS only; no inbound listener; tokens/keys from files |
+| TB-1 | Mac to internet | GitHub API polling; approved Jev requests | Outbound TLS only; no inbound listener; tokens/keys from files |
 | TB-2 | Host loopback to Docker services | Published ports | `127.0.0.1` binding (compose, kind, QEMU); every service authenticates (see F-01) |
 | TB-3 | `edge` to `data` network | Services that need ClickHouse | `data` is `internal: true`; ClickHouse attached to `data` only |
 | TB-4 | Producers to gateway | `POST /v1/ingest`, `POST /v1/otlp/v1/logs` | TLS (local CA), per-producer bearer token, per-record authorization, validation, quarantine |
@@ -162,7 +160,7 @@ flowchart LR
 
 1. Collectors on the Mac pull from their sources (native commands, SSH
    dispatcher, Kubernetes API, GitHub API, scanner containers), normalise to
-   the schema 1.1 contracts and send batches to the gateway over TLS. Host and
+   the schema 2.0 contracts and send batches to the gateway over TLS. Host and
    Kubernetes collectors also discover services from evidence (units, launchd
    jobs, processes, listening sockets, known configuration, Kubernetes objects)
    and send `service` / `service_instance` records and `service.*` events.
@@ -174,7 +172,7 @@ flowchart LR
    links and rule runs as `extorq_detect`; correlation builds hashed
    InvestigationContexts.
 5. The ai-worker sends sanitised context projections to Jev for advisory
-   triage; the API asks Gemini for summaries on analyst request. Results go to
+   triage when the opt-in overlay is deployed. Results go to
    `ai_assessments` only.
 6. The analyst API serves the console (via its server) and Grafana reads
    analytics tables with a read-only user.
@@ -228,6 +226,9 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
 * **Mitigations.**
   * Bearer token per producer, compared as SHA-256 digests with
     `hmac.compare_digest` against every registered producer (no early exit);
+    configured digests must be unique across producers. The gateway derives a
+    separate, producer-scoped identity for every accepted event and quarantines
+    different evidence claiming the same canonical key.
     the registry stores digests only (implemented:
     `backend/src/extorq/ingest/registry.py`).
   * Per-record authorisation of kind, asset pattern and source type; a scan
@@ -421,7 +422,7 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
   * AI output: cleaned again, markdown links and images removed, URLs
     defanged; every cited evidence id is checked against the bundle and
     unknown ids are marked unverified (implemented:
-    `backend/src/extorq/ai/sanitize.py`, `backend/src/extorq/ai/gemini.py`).
+    `backend/src/extorq/ai/sanitize.py`, `backend/src/extorq/ai/jev.py`).
   * AI has no tools and no write path except `ai_assessments` (T17).
 * **Residual risk.** Persuasive injected text can still bias advisory output
   (a plausible benign explanation). AI output is labelled advisory and never
@@ -435,21 +436,14 @@ Repudiation, Information disclosure, Denial of service, Elevation of privilege.
 * **Threat.** Sensitive data leaves the lab in AI requests: secrets, raw logs,
   personal data.
 * **Mitigations.**
-  * Providers disabled by default; enabled by flags; daily call caps (Jev 300,
-    Gemini 50) enforced under a lock (implemented:
-    `backend/src/extorq/ai/settings.py`, `backend/src/extorq/ai/budget.py`).
-  * Gemini runs only on an analyst request (`POST /alerts/{id}/summary`
-    requires the analyst role; verified by
-    `tests/security/test_security_api_authz.py`).
+  * Jev is disabled by default. The optional Compose overlay requires an approved
+    daily request cap, enforced under a lock by `ai/budget.py`.
   * Raw evidence excerpts are dropped unless explicitly enabled; text is
     redacted (A's patterns, E's patterns, exact scrubbing of configured keys)
     (implemented: `backend/src/extorq/ai/sanitize.py`, `settings.py`).
-  * Keys reach only the service that uses them: Jev key to `ai-worker`, Gemini
-    key to `api` (verified: `compose.yaml` via
-    `test_ai_secrets_reach_only_ai_services`).
-* **Residual risk.** When enabled, lab telemetry (user names, IP addresses,
-  repository and host names, commit messages) is sent to TypeSafe and Google
-  and is subject to their retention. Redaction is pattern-based.
+  * The private file secret is mounted only in the opted-in Jev worker.
+* **Residual risk.** When enabled, selected telemetry from the lab reaches
+  TypeSafe and is subject to its retention. Redaction is pattern-based.
 * **Verification.** Code review; planned (E) unit tests with synthetic secrets.
 
 ### T10 Database injection (T I E)

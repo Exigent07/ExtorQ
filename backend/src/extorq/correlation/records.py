@@ -32,11 +32,11 @@ EVENT_COLUMNS = """
     resource_type, resource_name, resource_namespace, resource_path,
     process_name, process_executable,
     http_method, http_route, http_status, http_request_id, http_user_agent,
-    k8s_cluster, k8s_namespace, k8s_pod_name, k8s_pod_uid, k8s_verb, k8s_resource,
+    k8s_cluster, k8s_namespace, k8s_pod_name, k8s_pod_uid, k8s_node, k8s_verb, k8s_resource,
     k8s_subresource, k8s_object_name, k8s_audit_id, k8s_response_code, k8s_user,
     k8s_source_ips,
     gh_repository, gh_ref, gh_commit_sha, gh_workflow_path, gh_workflow_run_id, gh_actor_login,
-    simulation_run_id, message, attributes,
+    message, attributes,
     if(service_id IS NULL, nullIf(JSONExtractString(payload, 'service', 'service_id'), ''),
        service_id) AS svc_id,
     if(service_name IS NULL, nullIf(JSONExtractString(payload, 'service', 'name'), ''),
@@ -47,7 +47,6 @@ EVENT_COLUMNS = """
 """
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
-_SIM_ID = re.compile(r"^[a-z0-9]{8,32}$")
 #: k8s identities that are not principals (anonymous access).
 _ANONYMOUS = frozenset({"system:anonymous", "system:unauthenticated"})
 _SYSTEMD_DIRS = ("/etc/systemd/", "/lib/systemd/", "/usr/lib/systemd/", "/run/systemd/")
@@ -113,6 +112,7 @@ class EventRecord:
     k8s_namespace: str | None = None
     k8s_pod_name: str | None = None
     k8s_pod_uid: str | None = None
+    k8s_node: str | None = None
     k8s_verb: str | None = None
     k8s_resource: str | None = None
     k8s_subresource: str | None = None
@@ -127,7 +127,6 @@ class EventRecord:
     gh_workflow_path: str | None = None
     gh_workflow_run_id: int | None = None
     gh_actor_login: str | None = None
-    simulation_run_id: str | None = None
     message: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     service_id: str | None = None
@@ -363,7 +362,6 @@ def record_from_row(row: dict[str, Any]) -> EventRecord | None:
         return None
     svc = _str(row.get("svc_id"))
     inst = _str(row.get("svc_instance_id"))
-    sim = _str(row.get("simulation_run_id"))
     run_id = row.get("gh_workflow_run_id")
     return EventRecord(
         event_id=event_id,
@@ -395,6 +393,7 @@ def record_from_row(row: dict[str, Any]) -> EventRecord | None:
         k8s_namespace=_str(row.get("k8s_namespace")),
         k8s_pod_name=_str(row.get("k8s_pod_name")),
         k8s_pod_uid=_str(row.get("k8s_pod_uid")),
+        k8s_node=_str(row.get("k8s_node")),
         k8s_verb=_str(row.get("k8s_verb")),
         k8s_resource=_str(row.get("k8s_resource")),
         k8s_subresource=_str(row.get("k8s_subresource")),
@@ -413,7 +412,6 @@ def record_from_row(row: dict[str, Any]) -> EventRecord | None:
         gh_workflow_path=_str(row.get("gh_workflow_path")),
         gh_workflow_run_id=run_id if isinstance(run_id, int) else None,
         gh_actor_login=_str(row.get("gh_actor_login")),
-        simulation_run_id=sim if sim and _SIM_ID.match(sim) else None,
         message=_str(row.get("message")),
         attributes=_attributes(row.get("attributes")),
         service_id=svc if svc and _HEX32.match(svc) else None,

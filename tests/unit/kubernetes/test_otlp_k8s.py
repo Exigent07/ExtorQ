@@ -122,6 +122,7 @@ def test_psa_denied_privileged_pod_maps_every_field() -> None:
 
     k = ev.kubernetes
     assert k is not None
+    assert k.node_name == "extorq-lab-control-plane"
     assert (k.cluster, k.verb, k.resource, k.subresource) == ("extorq-lab", "create", "pods", None)
     assert (k.namespace, k.object_name) == ("extorq-restricted", "b2-fixture-privileged")
     assert k.api_group == ""  # core group
@@ -167,7 +168,7 @@ def test_psa_denied_privileged_pod_maps_every_field() -> None:
     assert summary["run_as_root"] == ["shell"]
     assert ev.provenance.raw_sha256 == sha256_hex(raw_line)
     assert ev.provenance.parser == "otlp-k8s-audit"
-    assert ev.simulation is None
+    assert "simulation" not in ev.model_dump()
 
 
 def test_request_bodies_never_reach_the_event() -> None:
@@ -388,20 +389,16 @@ def test_event_ids_are_deterministic_and_unique() -> None:
     assert len({e.event_id for e in first}) == len(first)
 
 
-def test_simulation_marker_from_object_name_and_subjects() -> None:
-    # Derived variants of real lines (only names changed) to exercise the marker.
-    run_id = "a1b2c3d4e5f6"
-    line = audit_line("rbac_crb_cluster_admin_create").replace(
-        "b2-fixture-crb", f"extorq-sim-{run_id}"
-    )
-    events, _ = normalize_otlp_logs(wrap_audit(line), producer_id=PRODUCER, received_at=RECEIVED)
-    assert events[0].simulation is not None and events[0].simulation.run_id == run_id
-    line = audit_line("rbac_crb_cluster_admin_create").replace(
-        "b2-fixture-sa", f"extorq-sim-{run_id}"
-    )
-    events, _ = normalize_otlp_logs(wrap_audit(line), producer_id=PRODUCER, received_at=RECEIVED)
-    assert events[0].simulation is not None and events[0].simulation.run_id == run_id
-    assert one_audit_event("rbac_crb_cluster_admin_create").simulation is None
+@pytest.mark.parametrize("original", ["b2-fixture-crb", "b2-fixture-sa"])
+def test_legacy_marker_text_remains_ordinary_audit_evidence(original: str) -> None:
+    marker = "extorq-sim-a1b2c3d4e5f6"
+    line = audit_line("rbac_crb_cluster_admin_create").replace(original, marker)
+    events, fail = normalize_otlp_logs(wrap_audit(line), producer_id=PRODUCER, received_at=RECEIVED)
+    assert fail == []
+    (event,) = events
+    assert marker in event.model_dump_json()
+    assert "simulation" not in event.model_dump()
+    assert event.provenance.raw_sha256 == sha256_hex(line)
 
 
 def test_real_audit_otlp_document() -> None:

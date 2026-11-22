@@ -87,7 +87,7 @@ def _match_stored(
     rows: list[RuleRow],
     store: DetectionStore,
     window_start: datetime,
-) -> tuple[dict[int, DetectionAlert | None], dict[str, dict[str, str]]]:
+) -> tuple[dict[int, DetectionAlert | None], dict[str, dict[str, datetime]]]:
     bucketed = rule.metadata.dedup.strategy is DedupStrategy.WINDOW_BUCKET
     identities = {id(r): alert_identity(rule, r) for r in rows}
     existing = store.load_alerts(
@@ -152,8 +152,7 @@ def run(
         lines.append(f"row {n}: alert {identity} {state}")
         lines.append(
             f"  group {sanitize(r.group_key, 160)}; {r.first_seen.isoformat()} .. "
-            f"{r.last_seen.isoformat()}; confidence {r.confidence.value}; "
-            f"simulation runs {', '.join(r.simulation_run_ids) or 'none'}"
+            f"{r.last_seen.isoformat()}; confidence {r.confidence.value}"
         )
         produced = _describe(read_client, r.evidence_event_ids)
         lines.append(

@@ -1,8 +1,7 @@
 # ExtorQ Architecture
 
 Owner: agent F (documentation). Living document; baseline 2026-11-21, updated
-for contract schema **1.1** (service-aware monitoring, PLAN section 10) and
-re-checked on 2026-11-22 (build session 3).
+for contract schema **2.0**, including the service model introduced in schema 1.1.
 Authoritative interfaces: [`docs/team/PLAN.md`](team/PLAN.md) and the Pydantic
 contracts in [`backend/src/extorq/contracts/`](../backend/src/extorq/contracts/).
 
@@ -26,7 +25,7 @@ monitors four asset classes:
 | macOS host (the Mac itself) | `macos:workstation-01` | native collector running as the operator user (unified log, launchd, inventory, posture) |
 | Ubuntu 24.04 VM under QEMU/HVF | `linux:lab-vm-01` | agentless SSH pull through a forced-command dispatcher |
 | kind cluster `extorq-lab` | `k8s:extorq-lab`, nodes `k8s:extorq-lab/node/<name>` | OTel Collector DaemonSet (audit + container logs) and a read-only inventory collector |
-| GitHub lab repository | `github:<owner>/extorq-lab` (lab: private `Exigent07/extorq-lab`) | REST API polling; the lab uses the approved gh CLI token fallback, a fine-grained read-only token is preferred ([known limitations](known-limitations.md) C8) |
+| GitHub lab repository | `github:<owner>/extorq-lab` (lab: private `Exigent07/extorq-lab`) | REST API polling with a dedicated, fine-grained read-only token ([known limitations](known-limitations.md) C8) |
 
 Design principle: **deterministic collection and detection establish the
 evidence; AI assists interpretation and is never authoritative.** Unknown values
@@ -46,7 +45,6 @@ flowchart LR
   subgraph HostSide["Mac host processes"]
     COL["extorq-collect runner<br/>(macOS, Linux SSH, K8s inventory, GitHub)"]
     SCAN["extorq-scan<br/>(Trivy, Gitleaks, Semgrep in pinned containers)"]
-    SIM["simulations"]
   end
 
   subgraph Compose["docker compose project 'extorq'"]
@@ -68,7 +66,6 @@ flowchart LR
   K8S -->|"OTLP/HTTP JSON (DaemonSet)"| GW
   COL -->|"TLS + producer token"| GW
   SCAN -->|"TLS + producer token"| GW
-  SIM -->|"simulation_run records"| GW
   GW --> SP --> WR --> CH
   DET <--> CH
   AIW <--> CH
@@ -79,20 +76,20 @@ flowchart LR
 
 | Component | Code | Owner | Status |
 |---|---|---|---|
-| Contracts, catalog, identities | `backend/src/extorq/contracts/` | lead | implemented (schema 1.1) |
-| ClickHouse schema | `infra/clickhouse/migrations/0001..0006` | lead (0001, 0004, 0006), A (0002), C3 (0003, 0005) | implemented, 0001-0006 applied on the running stack |
+| Contracts, catalog, identities | `backend/src/extorq/contracts/` | lead | implemented (schema 2.0) |
+| ClickHouse schema | `infra/clickhouse/migrations/` | platform and schema owners | implemented; current ledger requires live verification |
 | Bootstrap (secrets, CA, producers) | `scripts/bootstrap.py` | A | implemented |
-| Ingest gateway | `backend/src/extorq/ingest/` | A (B2 for `otlp_k8s.py`) | implemented (schema 1.1 record kinds, service identity binding, 90-day event age limit) |
+| Ingest gateway | `backend/src/extorq/ingest/` | A (B2 for `otlp_k8s.py`) | implemented (schema 2.0 intake, event and service identity binding, 90-day event age limit) |
 | Spool and writer | `backend/src/extorq/pipeline/` | A | implemented (incl. service rows) |
 | Collector SDK and runner | `collectors/src/extorq_collectors/sdk/`, `cli.py` | A | implemented (runner, outbox, sender, `extorq-collect` CLI) |
 | Shared service-discovery interface | `collectors/src/extorq_collectors/services/` | lead, then B1 | implemented (interface + planned adapters) |
 | Linux VM, dispatcher, collector | `infra/vm/`, `collectors/src/extorq_collectors/linux/` | B1 | implemented (VM, dispatcher, parsers, collector, discovery, adapters); live verification by B1 |
-| Kubernetes lab, OTel, normaliser, inventory | `infra/kind/`, `backend/src/extorq/ingest/otlp_k8s.py`, `collectors/src/extorq_collectors/kubernetes/` | B2 | implemented (cluster, audit policy, RBAC, DaemonSet, normaliser, inventory collector, hierarchy, K8S-001/K8S-002 simulations) |
+| Kubernetes lab, OTel, normaliser, inventory | `infra/kind/`, `backend/src/extorq/ingest/otlp_k8s.py`, `collectors/src/extorq_collectors/kubernetes/` | B2 | implemented (cluster, audit policy, RBAC, DaemonSet, normaliser, inventory collector, hierarchy, per-node delivery health) |
 | macOS collector | `collectors/src/extorq_collectors/macos/` | B3 | implemented (parsers, collector, discovery, sshd and Screen Sharing adapters) |
 | GitHub collector | `collectors/src/extorq_collectors/github/` | C1 | implemented (client, poller, workflow analyser, posture) |
-| Detection, rules, correlation | `backend/src/extorq/detection/`, `backend/src/extorq/correlation/`, `rules/` | C2 | implemented (engine with late-data catch-up, SQL guard, VM-001, VM-002, K8S-001, K8S-002, GH-001, experimental HTTP-001, APP-001, MAC-001, CORR-002, context builder, scenario verification tooling) |
+| Detection, rules, correlation | `backend/src/extorq/detection/`, `backend/src/extorq/correlation/`, `rules/` | C2 | implemented (engine with late-data catch-up, bounded result pages, SQL guard, 22 SQL rules, context builder) |
 | Scanners | `scanners/` | C3 | implemented (normalisers, runner, lifecycle views 0003 and 0005) |
-| AI (Jev, Gemini) | `backend/src/extorq/ai/` | E | implemented (providers, sanitiser, budgets, worker) |
+| Jev triage | `backend/src/extorq/ai/` | E | implemented (sanitiser, budgets, worker) |
 | Analyst API, Grafana | `backend/src/extorq/api/`, `infra/grafana/` | D1 | implemented (API incl. service endpoints; Grafana image, provisioning, dashboards) |
 | Security console | `frontend/` | D2 | implemented views: overview, assets, services, detections, investigations, health; `frontend/Dockerfile` present (compose container not yet verified end to end) |
 
@@ -123,9 +120,8 @@ flowchart LR
    `InvestigationContext` (evidence, timeline, relationships with explicit
    confidence, coverage and gaps) whose canonical hash (`input_hash`) pins
    exactly what any later AI assessment saw (`backend/src/extorq/correlation/`).
-6. **Enrich (optional).** The ai-worker asks Jev for advisory triage; the API
-   asks Gemini for a summary only when an analyst requests it. Both receive a
-   sanitised allow-list projection of the context and write only
+6. **Enrich (optional).** The opt-in worker sends a sanitized allow-list projection
+   of the context to Jev for advisory triage and stores its result in
    `ai_assessments` (`backend/src/extorq/ai/`).
 7. **Present.** The analyst API serves the console's server side; Grafana reads
    analytics tables as a read-only user without access to raw payloads.
@@ -134,12 +130,15 @@ Health is first-class telemetry: every collector cycle emits a
 `CollectorHealth` record, pipeline components emit `PipelineHealth`, and
 collectors emit `extorq.collector.gap_detected` events when their source lost
 data (rotated past an offset, invalidated cursor, truncated history).
+The Kubernetes node Collector reports delivery and queue pressure from its
+[local metrics](telemetry/kubernetes.md#31-delivery-health). Collector readiness,
+gateway acknowledgement and storage visibility are separate observations.
 
 ## 4. Contracts, identities and storage
 
 * Every cross-boundary record is one of the contract models
   (`IngestRecord` kinds: `event`, `asset`, `inventory_item`, `finding`,
-  `scan_run`, `collector_health`, `simulation_run`, and in 1.1 `service`,
+  `scan_run`, `collector_health`, `service`,
   `service_instance`). Models forbid extra fields, require timezone-aware UTC
   timestamps and reject NaN/Infinity.
 * The event catalog (`contracts/catalog.py`) fixes, per event type, the
@@ -147,10 +146,11 @@ data (rotated past an offset, invalidated cursor, truncated history).
 * Identities are deterministic hashes (`contracts/identity.py`): `event_id`,
   `finding_id`, `alert_id(rule_id, group_key, bucket)`, `context_id`,
   `assessment_id`, `scope_hash`, and in 1.1 `service_id` and `instance_id`.
-  Re-sending the same record produces the same id, which is what makes
-  at-least-once delivery safe (ADR 0008).
-* ClickHouse tables are append-only `MergeTree` (events) or
-  `ReplacingMergeTree` (latest-state tables), read through `v_*` views that use
+  The gateway assigns a versioned, producer-bound event storage ID and records
+  an evidence fingerprint in SQLite. Existing evidence and alert references retain
+  their IDs. See [data flow](data-flow.md#3-ingest-gateway-post-v1ingest).
+* ClickHouse stores events in a `ReplacingMergeTree` keyed by asset, type,
+  event time and ID. Latest-state tables are read through `v_*` views that use
   `FINAL`/`argMax`. Queries count `uniqExact(event_id)`. Column names in the
   migrations are the contract for rule SQL, API queries and dashboards.
 

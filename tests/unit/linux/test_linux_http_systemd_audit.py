@@ -18,7 +18,7 @@ from extorq_collectors.linux.journal import JournalEntry
 
 def _probe_line(path: str) -> JournalEntry:
     for entry in entries("journal/nginx.ndjson"):
-        if f'"uri":"{path}"' in entry.message and "extorq-sim-" in entry.message:
+        if f'"uri":"{path}"' in entry.message and "extorq-test-" in entry.message:
             return entry
     raise AssertionError(path)
 
@@ -30,7 +30,7 @@ def test_nginx_access_probe_line() -> None:
     assert event.http.route == "/.git/config" and event.http.status_code == 404
     assert event.http.method == "GET" and len(event.http.request_id) == 32
     assert event.network.src_ip == "10.0.2.2"  # SLIRP gateway, reported as logged
-    assert event.simulation.run_id == "fff5113314b3"
+    assert "extorq-test-fff5113314b3" in (event.http.user_agent or "")
     assert event.outcome.value == "failure"
     assert event.event_time.tzinfo is not None
 
@@ -67,7 +67,6 @@ def test_lab_portal_login_failed_propagated_request_id() -> None:
     assert event.attributes["reason"] == "invalid_password"
     assert event.attributes["request_id_source"] == "propagated"
     assert len(event.http.request_id) == 32 and event.http.route == "/login"
-    assert event.simulation is not None  # from the User-Agent
     assert "password" not in (event.raw or "").lower().replace("invalid_password", "")
 
 
@@ -136,7 +135,7 @@ def test_apache_error_format() -> None:
 
 
 def test_apache_adapter_is_implemented_but_not_deployed() -> None:
-    assert ApacheAdapter.support.value == "implemented" and ApacheAdapter.deployed_in_lab is False
+    assert ApacheAdapter.support.value == "implemented" and ApacheAdapter.validated_live is False
 
 
 def test_systemd_pid1_lines() -> None:
@@ -176,12 +175,12 @@ def test_audit_vm002_unit_file_watch_and_root_exec() -> None:
     assert len(watch) == 1
     (unit_write,) = watch
     assert unit_write.attributes["audit_key"] == "extorq_systemd"
-    assert unit_write.resource.path.startswith("/etc/systemd/system/extorq-sim-")
+    assert unit_write.resource.path.startswith("/etc/systemd/system/extorq-test-")
     assert unit_write.attributes["syscall"] == "openat" and unit_write.actor.name == "extorq-admin"
-    assert unit_write.simulation is not None
     execs = [e for e in result.events if e.event_type == "process.audit.exec"]
-    commands = [e.process.command_line for e in execs]
-    assert any(c and c.startswith("systemctl enable extorq-sim-") for c in commands)
+    assert any(e.process.executable == "/usr/bin/systemctl" for e in execs)
+    assert all(e.process.command_line is None for e in execs)
+    assert all("type=EXECVE" not in (e.raw or "") for e in execs)
     assert all(e.actor.id == "1000" for e in execs)
     assert result.held_back == 0 and result.malformed_lines == 0
 

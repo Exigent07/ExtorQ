@@ -1,0 +1,96 @@
+rule_id: GH-005
+version: 1.0.0
+title: Credential committed to a repository
+description: >-
+  A commit added a credential-shaped string to a monitored repository (cloud keys, GitHub or
+  GitLab tokens, private keys, JWTs, passwords assigned in configuration). The GitHub
+  collector scans only the lines a commit adds and stores the pattern name, file, line and a
+  redacted match, never the value. A credential that reached the history is exposed even if
+  a later commit removes it: it must be revoked. Confidence: high for provider-specific
+  formats (fixed prefix, length and alphabet); medium for generic key/value assignments,
+  where a value was assigned to a credential-named key but whether it is a live credential
+  rather than a placeholder is not established.
+severity: high
+status: stable
+mitre_techniques: [T1552.001]
+asset_types: [github_repository]
+requires:
+  - source_type: github.api
+    event_types: [github.secret.exposed]
+schedule:
+  interval_seconds: 120
+  lookback_seconds: 7200
+  late_tolerance_seconds: 3600
+dedup:
+  strategy: event
+group_by: [repository, path, commit_sha]
+params:
+  # Pattern names of extorq.common.redaction with a provider-specific format.
+  specific_patterns:
+    - private_key
+    - github_token
+    - gitlab_token
+    - aws_access_key
+    - aws_secret_key
+    - slack_token
+    - google_api_key
+    - extorq_token
+false_positives:
+  - >-
+    Example values, documentation placeholders and test fixtures that look like credentials.
+    Handling: generic key/value matches are medium confidence; provider-format matches stay
+    high because revoked or example tokens of real formats still need checking. No path or
+    file-name allowlist: paths are chosen by the committer and fixtures are a common hiding
+    place.
+  - >-
+    Random high-entropy strings that are not credentials (checksums, hashes, UUIDs). Handling:
+    the collector matches credential shapes and credential-named keys only, never entropy
+    alone, so a SHA-256 line does not produce an event.
+  - >-
+    Secrets passed correctly as Actions expressions (token: ${{ secrets.X }}). Handling: the
+    collector does not treat an expression as a value (DET-IC-2).
+blind_spots:
+  - >-
+    Credentials in formats the redaction patterns do not know, credentials split across lines,
+    encoded (base64) or in binary files.
+  - >-
+    History rewritten before the collector polled it, commits on branches that are not
+    monitored, and secrets added through pull requests from forks before merge.
+  - Whether the credential is valid or was used is not checked.
+references:
+  - https://attack.mitre.org/techniques/T1552/001/
+  - https://docs.github.com/en/code-security/secret-scanning/about-secret-scanning
+query: GH-005.sql
+summary_template: >-
+  Credential-shaped string(s) committed to {path} in {repository} at commit {commit_sha} by
+  {actor}: patterns {patterns} on lines {lines} ({redacted_matches}); provider-specific
+  format: {provider_specific_format}
+tests:
+  - name: matrix-fake-aws-key-committed
+    description: >-
+      Matrix positive: a generated (fake) AWS-shaped access key id and secret committed to
+      deploy/extorq-test-<id>.env; the collector reports two matches (aws_access_key,
+      aws_secret_key) with redacted text only. One alert for the file and commit: high.
+    fixture: tests/GH-005/positive_matrix_fake_aws_key.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    features:
+      patterns: [aws_access_key, aws_secret_key]
+      provider_specific_format: true
+      lines: [1, 2]
+      matches: 2
+  - name: generic-password-assignment
+    description: A password assigned in a configuration file (generic pattern), medium.
+    fixture: tests/GH-005/positive_generic_password_assignment.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      provider_specific_format: false
+  - name: matrix-control-checksum-line
+    description: >-
+      Matrix negative control: a SHA-256 checksum line committed (high entropy, not a
+      credential): the collector records the commit but no exposed secret.
+    fixture: tests/GH-005/negative_matrix_checksum_commit.jsonl
+    expect: no_alert

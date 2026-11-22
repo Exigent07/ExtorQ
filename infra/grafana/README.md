@@ -39,11 +39,25 @@ baked into the image, so a rebuild is needed after regenerating.
 
 | uid | Title | Content |
 |---|---|---|
-| `extorq-security-overview` | ExtorQ - Security Overview | events/alerts/assets in range, open findings, event volume by source type, alerts by severity and by rule, open findings by severity/scanner/asset, events by asset and source, recent alerts with analyst state, services by coverage state and by asset/kind |
-| `extorq-collector-health` | ExtorQ - Collector & Pipeline Health | collector last success + staleness (3 x interval), collector lag and buffered records, ingestion lag p95, spool queue depth and oldest queued age, pipeline components, rule latest run and failures, quarantine by producer and reason, ingest auth decisions, telemetry freshness of monitored services |
-| `extorq-linux` | ExtorQ - Linux Investigation | SSH failures by source IP and per source (distinct connections, users), successful logins, sudo, systemd persistence (inventory diff + auditd watch), HTTP status classes, route probing, probing sources, app auth failures, services on Linux hosts with endpoints and coverage |
-| `extorq-kubernetes` | ExtorQ - Kubernetes Investigation | audit verbs, 403 denials by user and in detail (Pod Security), resources by verb, RBAC changes (audit + inventory risk flags), workload auth failures, container log volume, nodes, workloads vs Kubernetes Services, Pods/containers |
-| `extorq-github` | ExtorQ - GitHub Investigation | commits, workflow runs by conclusion, workflow modifications with permission deltas (write-all, added write scopes, triggers), recent runs, settings/branch protection changes, repository findings |
+| `extorq-security-overview` | ExtorQ - Security Overview | events, alerts, assets reporting and open findings (stats); event volume by source type; alerts by severity and by rule (id + title); open findings by severity and by asset and scanner; events by asset and source; recent alerts with analyst state; services by coverage state and by asset and kind |
+| `extorq-collector-health` | ExtorQ - Collector & Pipeline Health | collector freshness table (stale = no success for 3 x interval); Kubernetes OpenTelemetry delivery by node and source; collector lag and buffered records; ingestion lag p95; spool queue depth and oldest queued age (dashed thresholds); pipeline components; rules latest run (with titles) and failures; quarantine by producer and reason; ingest decisions; telemetry freshness of monitored services |
+| `extorq-linux` | ExtorQ - Linux Investigation | SSH failures by source and per source (connections, users), successful logins; sudo; local accounts and cron changes (VM-003, VM-004); systemd persistence (inventory diff + auditd watch, VM-002); HTTP status classes, route probing and probing sources (HTTP-001); application login failures (APP-001); services on Linux hosts |
+| `extorq-kubernetes` | ExtorQ - Kubernetes Investigation | audit verbs; 403 denials by user and in detail (K8S-001); resources by verb; RBAC changes (K8S-002); exec/attach into Pods (K8S-003); secret access incl. cluster-wide lists (K8S-004); Pod creations with admission outcome (K8S-001, K8S-005); workload authentication failures; container log volume; nodes, workloads vs Kubernetes Services, Pods/containers |
+| `extorq-github` | ExtorQ - GitHub Investigation | commits; workflow runs by conclusion; workflow modifications with permission, trigger and risk-flag deltas (GH-001 to GH-004); credential-shaped strings committed, redacted (GH-005); recent runs; settings and branch protection changes; repository findings |
+| `extorq-macos` | ExtorQ - macOS Investigation | launch item changes (MAC-001, MAC-002); listening sockets with exposure (MAC-003); sudo, local and SSH authentication failures (MAC-004); applications installed and removed with code signature (MAC-005); services on macOS hosts |
+
+Panel clarity rules (also enforced by the unit test): every description says what the panel
+shows, where the data comes from (`Source:` / `Sources:` with the table or view and the
+telemetry source) and its caveats; durations carry `s`/`ms` units; volume stats are neutral
+while alert and open-finding stats turn orange above zero; lag, backlog and queue-age charts
+draw dashed thresholds; state columns are coloured by meaning (`VALUE_COLOURS`: severity,
+health, freshness, rule status, coverage, finding state, analyst status, risk flags, code
+signature, listener exposure); cross-asset tables show the inventory name (`v_assets.name`)
+with the asset id as the last column, and per-class dashboards name the host or repository
+by the natural name inside the asset id (`linux:lab-vm-01` -> `lab-vm-01`). Unknown booleans
+(for example an unreported code signature) are shown as `unknown` / `not reported`, never as
+`no`. No panel names the storage dropped by migration 0008 (`simulation_run_id`,
+`scenario_id`, `simulation_run_ids`, `simulation_runs`).
 
 Query rules (enforced by `tests/unit/api/test_grafana_dashboards.py`):
 
@@ -68,6 +82,7 @@ The console/API additionally checks collector staleness per telemetry source
 | Least-privilege data access | `extorq_grafana`: `readonly=2` profile with caps + quota; SELECT on analytics tables, column grant on `events` without `raw`/`payload`, quarantine without `payload_excerpt`; no access to `analyst_actions`, `investigation_contexts` |
 | Datasource locked | provisioned with `editable: false` |
 | Datasource secret | `secureJsonData.password: $__file{/run/secrets/extorq_grafana_password}`: read from the compose file secret at provisioning, stored encrypted in Grafana's DB, never in env, image or repo |
+| Secret encryption key | `GF_SECURITY_SECRET_KEY__FILE=/run/secrets/grafana_secret_key` uses the per-deployment key generated by bootstrap |
 | Admin password | `GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password` (compose) |
 | No anonymous access / sign-up / org creation | `GF_AUTH_ANONYMOUS_ENABLED=false`, `GF_USERS_ALLOW_SIGN_UP=false`, `GF_USERS_ALLOW_ORG_CREATE=false` |
 | Clickjacking / cookies | `GF_SECURITY_ALLOW_EMBEDDING=false` (X-Frame-Options deny), `GF_SECURITY_COOKIE_SAMESITE=strict`, CSP enabled, sessions 8 h inactive / 24 h max |
@@ -81,17 +96,14 @@ The console/API additionally checks collector staleness per telemetry source
 
 | Command | Proves |
 |---|---|
-| `uv run pytest tests/unit/api/test_grafana_dashboards.py -q` | generated JSON is current; every panel follows the query rules; provisioning and Dockerfile settings |
-| `uv run pytest tests/integration/api/test_grafana_sql_clickhouse.py -m integration -q` | every panel query runs on a throwaway ClickHouse as the real `extorq_grafana` role (synthetic rows) and returns the expected, duplicate-safe results |
+| `uv run pytest tests/unit/api/test_grafana_dashboards.py -q` | generated JSON is current; every panel follows the query and clarity rules (sources named, units, thresholds, names, no dropped storage or removed wording); provisioning and Dockerfile settings |
+| `uv run pytest tests/integration/api/test_grafana_sql_clickhouse.py -m integration -q` | every panel query runs on a throwaway ClickHouse with the current migrations as the real `extorq_grafana` role (synthetic rows) and returns the expected, duplicate-safe results, including the asset-name joins |
 | `uv run pytest tests/integration/api/test_grafana_live.py -m integration -q` | against the running Grafana: datasource health, plugin version/signature, provisioning, every panel query through `/api/ds/query` as `extorq_grafana`, denied privileged reads/writes, effective hardening settings |
 
 ## Known limitations
 
 * The hop Grafana -> ClickHouse is plain HTTP on the internal `data` network (no egress,
-  never published); ClickHouse TLS is not configured in the lab stack.
-* Grafana uses its built-in default `secret_key` to encrypt the stored datasource password;
-  a per-deployment key needs a new bootstrap secret (requested from A in
-  `docs/team/interface-changes/D1.md`).
+  never published); ClickHouse TLS is not configured in this single-host stack.
 * The official image's `__FILE` mechanism exports the admin password into the server
   process environment (readable only by the same non-root user inside the container). The
   admin password is applied when the Grafana database is first created; rotating the

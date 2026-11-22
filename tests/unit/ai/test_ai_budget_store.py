@@ -1,4 +1,4 @@
-"""Budget guard, cooldowns and ai_assessments persistence (fake ClickHouse, no network)."""
+"""Daily-cap guard and ai_assessments persistence (fake ClickHouse, no network)."""
 
 from __future__ import annotations
 
@@ -11,15 +11,8 @@ import pytest
 from ai_fakes import FakeClickHouse, answering_client, enabled_settings, jev_key, ssh_context
 
 from extorq.ai import store
-from extorq.ai.budget import (
-    BudgetExceeded,
-    BudgetGuard,
-    BudgetUnavailable,
-    CooldownTracker,
-    cooldown_remaining,
-    utc_day_start,
-)
-from extorq.ai.jev import JevTriageProvider
+from extorq.ai.budget import BudgetExceeded, BudgetGuard, BudgetUnavailable, utc_day_start
+from extorq.ai.jev import TRIAGE_PROMPT_VERSION, JevTriageProvider
 from extorq.contracts.ai import AIAssessment, AIProvider, AIStatus, AITask
 from extorq.contracts.common import HealthStatus
 from extorq.contracts.health import PipelineHealth
@@ -31,7 +24,7 @@ NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
 
 
 def test_cap_counts_persisted_inflight_and_unsaved_attempts() -> None:
-    guard = BudgetGuard(AIProvider.GEMINI, 3, clock=lambda: NOW)
+    guard = BudgetGuard(AIProvider.JEV, 3, clock=lambda: NOW)
     first = guard.try_reserve(lambda day: 1)  # 1 persisted + this reservation
     second = guard.try_reserve(lambda day: 1)
     with pytest.raises(BudgetExceeded) as excinfo:
@@ -105,7 +98,7 @@ def test_unsaved_attempts_reset_on_a_new_utc_day() -> None:
 
 
 def test_concurrent_reservations_never_exceed_the_cap() -> None:
-    guard = BudgetGuard(AIProvider.GEMINI, 5, clock=lambda: NOW)
+    guard = BudgetGuard(AIProvider.JEV, 5, clock=lambda: NOW)
     granted: list[object] = []
     lock = threading.Lock()
 
@@ -123,17 +116,6 @@ def test_concurrent_reservations_never_exceed_the_cap() -> None:
     for t in threads:
         t.join()
     assert len(granted) == 5
-
-
-def test_cooldown_remaining() -> None:
-    assert cooldown_remaining(None, NOW, 300) == 0
-    assert cooldown_remaining(NOW - timedelta(seconds=100), NOW, 300) == 200
-    assert cooldown_remaining(NOW - timedelta(seconds=400), NOW, 300) == 0
-    assert cooldown_remaining(NOW, NOW, 0) == 0
-    tracker = CooldownTracker()
-    tracker.note("x", NOW)
-    assert tracker.last("x") == NOW
-    assert tracker.last("y") is None
 
 
 # ── store ─────────────────────────────────────────────────────────────
@@ -178,7 +160,8 @@ def test_row_flattens_recommendation_and_bounds_counters() -> None:
     assert row["uncertain"] == 0
     assert row["input_tokens"] == 2**32 - 1
     output = json.loads(row["output"])
-    assert set(output) == {"requested_model", "triage", "summary", "validation"}
+    assert set(output) == {"requested_model", "triage"}
+    assert output["triage"]["recommendation"] == "priority_investigation"
 
 
 def test_save_assessment_inserts_one_row_with_declared_columns() -> None:
@@ -196,26 +179,23 @@ def test_queries_bind_every_value_as_a_parameter() -> None:
     def handler(sql: str, params: dict[str, Any]) -> list[tuple[Any, ...]]:
         if "uniqExact(assessment_id) FROM" in sql:
             return [(0,)]
-        if "max(created_at), count()" in sql:
-            return [(None, 0)]
         return []
 
     ch = FakeClickHouse(handler)
-    store.count_attempts_since(ch, AIProvider.GEMINI, NOW)
-    store.last_attempt_at(ch, alert_id=hostile, provider=AIProvider.GEMINI, task=AITask.SUMMARY)
+    store.count_attempts_since(ch, AIProvider.JEV, NOW)
     store.list_assessments(ch, hostile)
     store.find_reusable(
         ch,
         alert_id=hostile,
         provider=AIProvider.JEV,
         task=AITask.TRIAGE,
-        prompt_version="triage-v1",
+        prompt_version=TRIAGE_PROMPT_VERSION,
         context_input_hash="0" * 64,
         model="jev-1.14.0",
     )
     store.pending_triage(
         ch,
-        prompt_version="triage-v1",
+        prompt_version=TRIAGE_PROMPT_VERSION,
         limit=10_000,
         max_failed=3,
         backoff_seconds=600,
@@ -247,7 +227,7 @@ def test_find_reusable_matches_requested_or_reported_model() -> None:
         alert_id=a.alert_id,
         provider=AIProvider.JEV,
         task=AITask.TRIAGE,
-        prompt_version="triage-v1",
+        prompt_version=TRIAGE_PROMPT_VERSION,
         context_input_hash=a.context_input_hash,
         model="jev-1.14.0",
     )
@@ -258,7 +238,7 @@ def test_find_reusable_matches_requested_or_reported_model() -> None:
             alert_id=a.alert_id,
             provider=AIProvider.JEV,
             task=AITask.TRIAGE,
-            prompt_version="triage-v1",
+            prompt_version=TRIAGE_PROMPT_VERSION,
             context_input_hash=a.context_input_hash,
             model="jev-2.0.0",
         )
@@ -276,14 +256,13 @@ def test_unreadable_rows_are_skipped() -> None:
     assert len(store.list_assessments(ch, "a" * 32)) == 1
 
 
-def test_last_attempt_none_without_rows() -> None:
-    ch = FakeClickHouse(lambda sql, params: [(datetime(1970, 1, 1), 0)])
-    assert (
-        store.last_attempt_at(
-            ch, alert_id="a" * 32, provider=AIProvider.GEMINI, task=AITask.SUMMARY
-        )
-        is None
-    )
+def test_rows_of_removed_providers_or_schemas_are_skipped() -> None:
+    """History written by older versions (e.g. a retired provider) never breaks a reader."""
+    good = _select_row(_assessment(), "jev-1.14.0")
+    removed_provider = (*good[:4], "retired-provider", "model-x", "retired-task", *good[7:])
+    not_an_object = (*good[:9], "[1, 2]", *good[10:])
+    ch = FakeClickHouse(lambda sql, params: [removed_provider, not_an_object, good])
+    assert [a.provider for a in store.list_assessments(ch, "a" * 32)] == [AIProvider.JEV]
 
 
 def test_pipeline_health_row() -> None:

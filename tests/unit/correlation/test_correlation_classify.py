@@ -15,10 +15,8 @@ NGINX_SVC = "b" * 32
 SSH_INSTANCE = "c" * 32
 
 
-def profile(*events, asset=VM, sims=()):
-    return EvidenceProfile.from_events(
-        asset, T0, events, nat_ips=DEFAULT_SHARED_NAT_IPS, simulation_run_ids=sims
-    )
+def profile(*events, asset=VM):
+    return EvidenceProfile.from_events(asset, T0, events, nat_ips=DEFAULT_SHARED_NAT_IPS)
 
 
 def ssh_failure(ip="203.0.113.45", **kw):
@@ -111,6 +109,21 @@ def test_commit_sha_must_be_in_the_same_repository():
     assert classify(fork, profile(evidence, asset="github:org/a")) is None
 
 
+def test_github_workflow_run_id_is_scoped_to_the_repository() -> None:
+    evidence = ev("github.workflow_run.observed", asset_id="github:org/a", gh_workflow_run_id=77)
+    fork = ev("github.workflow_run.observed", asset_id="github:org/b", gh_workflow_run_id=77)
+    assert classify(fork, profile(evidence, asset=evidence.asset_id)) is None
+
+
+def test_pod_uid_can_link_cluster_and_node_but_never_distinct_clusters() -> None:
+    evidence = ev("k8s.api.request", asset_id=K8S, k8s_pod_uid="pod-uid-1")
+    same = ev("app.auth.login_failed", asset_id=f"{K8S}/node/worker", k8s_pod_uid="pod-uid-1")
+    other = ev("app.auth.login_failed", asset_id="k8s:other/node/worker", k8s_pod_uid="pod-uid-1")
+    rel = classify(same, profile(evidence, asset=K8S))
+    assert rel and B.SHARED_POD_UID in rel.bases
+    assert classify(other, profile(evidence, asset=K8S)) is None
+
+
 def test_non_nat_source_ip_on_same_asset_is_moderate_candidate():
     success = ev(
         "auth.ssh.login_succeeded",
@@ -161,17 +174,17 @@ def test_kind_docker_gateway_is_a_shared_nat_address():
     assert B.SHARED_NAT_SOURCE_IP in rel.bases
 
 
-def test_simulation_marker_makes_a_weak_candidate_even_through_nat():
-    sim = "fixture0corr02"
-    evidence = ssh_failure(ip="10.0.2.2", simulation_run_id=sim)
-    probe = ev(
-        "http.request", -60, source_type="linux.nginx", src_ip="10.0.2.2", simulation_run_id=sim
-    )
+def test_detection_test_traffic_through_nat_is_not_linked_by_any_marker():
+    """Schema 2.0: there is no simulation basis. Two detection-test steps from the Mac share
+    only the QEMU gateway address, which never establishes a common origin."""
+    assert not hasattr(B, "SIMULATION_RUN")
+    evidence = ssh_failure(ip="10.0.2.2")
+    probe = ev("http.request", -60, source_type="linux.nginx", src_ip="10.0.2.2")
     rel = classify(probe, profile(evidence))
     assert rel is not None
-    assert rel.relationship_type is T.CANDIDATE and rel.strength == "weak"
-    assert B.SIMULATION_RUN in rel.bases and B.SHARED_NAT_SOURCE_IP in rel.bases
-    assert "not proof" in rel.explanation
+    assert rel.relationship_type is T.UNESTABLISHED and rel.strength == "weak"
+    assert B.SHARED_NAT_SOURCE_IP in rel.bases and B.SHARED_SOURCE_IP not in rel.bases
+    assert "does not establish a common origin" in rel.explanation
 
 
 def test_temporal_proximity_only_is_unestablished():

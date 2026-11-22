@@ -11,7 +11,7 @@ For every raw record of a batch, in order:
    any timestamp > now+1d on other kinds                            -> quarantine
 6. secret redaction of free-text fields (count -> provenance)      -> re-validated
 7. storage compatibility (``rows.to_row`` must succeed)             -> quarantine
-8. identity (``record_identity``) for deduplication in the spool
+8. server-owned event identity or the existing key for inventory-style records
 
 Authorization failures reject the whole batch: a producer sending records
 outside its registration is misconfigured or compromised, and accepting the
@@ -44,6 +44,7 @@ from pydantic import ValidationError
 
 from extorq.common.redaction import redact_text, sanitize_untrusted, truncate_bytes
 from extorq.contracts.catalog import validate_event_semantics
+from extorq.contracts.compat import upgrade_record
 from extorq.contracts.event import SecurityEvent
 from extorq.contracts.identity import (
     canonical_json,
@@ -60,6 +61,7 @@ from extorq.contracts.ingest import (
     record_identity,
 )
 from extorq.contracts.service import Service, ServiceInstance
+from extorq.ingest.event_identity import EventReceipt, identify_event
 from extorq.ingest.registry import ProducerEntry
 from extorq.storage.rows import RowError, to_row
 
@@ -76,7 +78,6 @@ _TIME_FIELDS: dict[str, tuple[str, ...]] = {
     "finding": ("observed_at",),
     "scan_run": ("started_at", "finished_at"),
     "collector_health": ("reported_at", "last_attempt_at", "last_success_at"),
-    "simulation_run": ("started_at", "finished_at"),
     "service": ("first_seen", "last_seen", "last_telemetry_at"),
     "service_instance": ("observed_at", "started_at"),
 }
@@ -103,6 +104,7 @@ class Candidate:
     kind: str
     record_key: str
     payload: str
+    event_receipt: EventReceipt | None = None
 
 
 @dataclass
@@ -120,6 +122,8 @@ class PreparedBatch:
     quarantined: list[QuarantineEntry] = field(default_factory=list)
     denials: list[str] = field(default_factory=list)
     redactions: int = 0
+    #: Records that arrived stamped with a legacy 1.x wire version and were upgraded.
+    legacy_upgraded: int = 0
 
     @property
     def denied(self) -> bool:
@@ -218,6 +222,7 @@ def redact_record_data(kind: str, data: dict[str, Any]) -> int:
     """Redact secrets in-place in the JSON form of a record; return replacement count."""
     r = _Redactor()
     if kind == "event":
+        r.text(data.get("source"), "source_native_id", 256)
         r.text(data, "message", 2048)
         r.text(data, "raw", 16384)
         r.text(data.get("process"), "command_line", 2048)
@@ -252,9 +257,6 @@ def redact_record_data(kind: str, data: dict[str, Any]) -> int:
         r.text(data, "last_error", 2048)
         r.text(data, "checkpoint_summary", 256)
         r.mapping(data.get("details"), 2048, 512)
-    elif kind == "simulation_run":
-        r.text(data, "description", 2048)
-        r.text_list(data, "notes", 2048)
     elif kind in ("asset", "inventory_item"):
         r.mapping(data.get("attributes"), 2048, 512)
         if kind == "asset":
@@ -278,7 +280,8 @@ def _time_problem(record: IngestRecord, now: datetime, limits: Limits) -> str | 
     if isinstance(data, SecurityEvent):
         if data.event_time > now + limits.max_future:
             return "time: event_time_in_future"
-        if data.event_time < now - limits.retention:
+        # ClickHouse computes the TTL from toDateTime(event_time), at second precision.
+        if data.event_time.replace(microsecond=0) <= now - limits.retention:
             days = limits.retention.total_seconds() / 86400
             return (
                 f"{OLDER_THAN_RETENTION}: event_time is older than the events retention "
@@ -356,13 +359,23 @@ def _check_and_key(
         )
     except RowError as exc:
         return f"storage_constraint: {exc}"
-    # 8. identity + canonical payload (both may raise on values canonical JSON refuses)
+    # 8. The authenticated producer, rather than the submitted ID, owns this key.
     try:
+        receipt = None
+        if isinstance(record.data, SecurityEvent):
+            identity = identify_event(producer.producer_id, record.data)
+            key = identity.key
+            expires_at = (record.data.event_time + limits.retention + limits.max_future).timestamp()
+            receipt = EventReceipt(identity, key, expires_at)
+            data_json["event_id"] = key
+        else:
+            key = record_identity(record)
         candidate = Candidate(
             index=index,
             kind=kind,
-            record_key=record_identity(record),
+            record_key=key,
             payload=canonical_json({"kind": kind, "data": data_json}),
+            event_receipt=receipt,
         )
     except (TypeError, ValueError) as exc:
         return f"record_not_serialisable:{type(exc).__name__}"
@@ -405,7 +418,10 @@ def prepare_batch(
         if size > MAX_RECORD_BYTES:
             quarantine(index, raw, f"record_too_large:{size}>{MAX_RECORD_BYTES}")
             continue
-        # 2. strict validation
+        # 2. strict validation (legacy 1.x wire versions are upgraded first, then validated
+        #    exactly like native 2.0 records; see contracts/compat.py)
+        raw, was_legacy = upgrade_record(raw)
+        out.legacy_upgraded += int(was_legacy)
         try:
             record = INGEST_RECORD_ADAPTER.validate_python(raw)
         except ValidationError as exc:

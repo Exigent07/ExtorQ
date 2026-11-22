@@ -22,12 +22,13 @@ Domains: `linux`, `kubernetes`, `github`, `http`, `macos`, `correlation`.
 2. **Parameters only.** Values reach SQL as server-side placeholders `{name:Type}`; window
    bounds `{window_start:DateTime64(3, 'UTC')}` / `{window_end:DateTime64(3, 'UTC')}` are
    mandatory. No string building, no `SETTINGS`, no table functions, no tables outside
-   `events, assets, inventory_items, finding_observations, scan_runs, simulation_runs`.
+   `events, assets, inventory_items, finding_observations, scan_runs`.
    `extorq rules validate` enforces this; the readonly ClickHouse identity
    `extorq_rules_ro` is the real boundary.
 3. **Duplicate-safe.** `LIMIT 1 BY event_id` on every input, `uniqExact` for counts. Rows
    in `events` can be duplicated until ReplacingMergeTree merges.
-4. **Never filter simulation telemetry.** `extorq-sim-<run_id>` marks genuine telemetry.
+4. **Include controlled validation telemetry.** Native events from approved detection tests
+   use the same rule predicates as other activity. Internal validation reports preserve provenance.
 5. **Confidence = evidence completeness** (e.g. two independent sources agree, source IP
    attributable), never a maliciousness guess. Shared NAT/gateway sources
    (`10.0.2.2`, `172.18.0.1`, `10.244.0.1`, loopback) lower attribution.
@@ -59,6 +60,7 @@ docker compose --profile full restart detector        # load changed rules (owne
 ```
 
 Rule identity (`alert_id`) excludes the rule version: bump `version` (semver) for any
-logic change; open alerts are extended, not duplicated. Stored alerts keep the evidence and
-summary their version wrote (append-only); check a change against stored telemetry with the
-dry run before deploying it. Update `docs/detection-catalog.md` in the same change.
+logic change. A different version matching an open alert updates its confidence and
+features under the same ID, preserving its evidence associations and creation time.
+Check a change against stored telemetry with the dry run before deploying it. Update
+`docs/detection-catalog.md` in the same change.

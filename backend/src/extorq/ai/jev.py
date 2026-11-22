@@ -510,11 +510,9 @@ class JevTriageProvider:
         return self._key
 
     def _secrets(self) -> tuple[str, ...]:
-        values: list[str] = []
-        for key in (self._key, get_provider_key("GEMINI_API_KEY")):
-            if key is not None and key.value is not None:
-                values.append(key.value.get_secret_value())
-        return tuple(values)
+        """Values scrubbed verbatim from the state and from errors (the Jev key)."""
+        key = self._provider_key()
+        return (key.value.get_secret_value(),) if key.value is not None else ()
 
     def availability(self) -> tuple[bool, str]:
         """(usable, reason) without contacting the provider."""
@@ -526,6 +524,7 @@ class JevTriageProvider:
         return True, "enabled"
 
     def build_state(self, ctx: InvestigationContext) -> tuple[Projection, QuestionSet]:
+        """Jev's state for ``ctx`` and the question set of its domain (no network)."""
         # The projection shrinks itself to the configured state cap (never above JEV_LIMITS).
         limits = replace(
             JEV_LIMITS, max_chars=min(JEV_LIMITS.max_chars, self._settings.jev_max_state_chars)
@@ -535,7 +534,6 @@ class JevTriageProvider:
             limits,
             known_secrets=self._secrets(),
             include_excerpts=self._settings.ai_include_excerpts,
-            include_simulation_marker=False,
         )
         return projection, question_set(projection.domain)
 

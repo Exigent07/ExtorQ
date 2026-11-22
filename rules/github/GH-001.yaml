@@ -1,17 +1,20 @@
 rule_id: GH-001
-version: 1.1.0
-title: GitHub Actions workflow privilege escalation
+version: 2.0.0
+title: GitHub Actions workflow permission escalation
 description: >-
-  A commit changed a GitHub Actions workflow so that it gains privileges: it adds
-  `permissions: write-all`, adds a sensitive write scope (contents, actions, packages,
-  id-token, ...), adds a privileged trigger (pull_request_target, workflow_run, ...) or adds
-  a checkout of untrusted pull-request code under a privileged trigger. Evidence is the
-  collector's before/after analysis of the workflow file at that commit. A workflow that
-  cannot be parsed is compared lexically by the collector (fail closed,
-  analysis = lexical_fallback) and still alerts, with confidence medium.
+  A commit changed a GitHub Actions workflow so that its GITHUB_TOKEN gains privileges: it
+  adds `permissions: write-all` or adds a sensitive write scope (contents, actions, packages,
+  id-token, ...) to the effective permissions. Evidence is the collector's before/after
+  analysis of the workflow file at that commit. A workflow that cannot be parsed is compared
+  lexically by the collector (fail closed, analysis = lexical_fallback) and still alerts.
+  Since v2.0.0 this rule is permission escalation only: privileged triggers with untrusted
+  checkout are GH-002, unpinned actions GH-003 and script injection GH-004. Confidence: high
+  when both versions parsed and the effective permissions are known; medium for a lexical
+  comparison or unknown repository default permissions; low when a version did not parse
+  and no lexical comparison was made.
 severity: high
 status: stable
-mitre_techniques: [T1195.002, T1098]
+mitre_techniques: [T1098, T1195.002]
 asset_types: [github_repository]
 requires:
   - source_type: github.api
@@ -36,62 +39,59 @@ params:
     - pull-requests
     - security-events
     - statuses
-  dangerous_triggers: [pull_request_target, workflow_run]
 false_positives:
   - >-
-    Legitimate release or deployment workflows that need contents/packages/id-token write
-    (review the commit author and whether the scope is limited to the job that needs it).
+    Release or deployment workflows that need contents, packages or id-token write.
+    Handling: reported once per commit and workflow; the alert shows the permissions before
+    and after so the reviewer can check that the scope is limited to the job that needs it.
+    No path or actor allowlist (both are chosen by the committer).
   - >-
-    Repository maintainers adding pull_request_target for labelling bots that never check
-    out untrusted code (still review it: the trigger runs with a write token).
+    Write scopes that only appear because the repository default token permission is
+    write and a workflow without a permissions block was added. Handling: confidence stays
+    high only when the default is known; the fix is a read-only repository default.
 blind_spots:
-  - Privilege changes made outside workflow files (repository or organisation default
-    workflow permissions, environment protection rules) are not workflow commits; they
-    appear as github.repo.settings_changed, not here.
-  - Only commits on monitored branches that the collector polls are analysed; force-pushed
-    or deleted history between polls can be missed (the collector reports such gaps).
-  - Reusable workflows referenced from other repositories are analysed only as references.
-  - Effective permissions depend on the repository default; when it is unknown the
-    analysis is marked effective_permissions_unknown (confidence medium).
   - >-
-    Lexical fallback (unparseable workflow) cannot tell which job a permissions block or
-    checkout belongs to and examines a bounded prefix of very large files
-    (features.lexical_scan_truncated); it over-reports rather than under-reports.
+    Privilege changes made outside workflow files (repository or organisation default
+    workflow permissions, environment protection rules) appear as
+    github.repo.settings_changed, not here.
+  - >-
+    Only commits on monitored branches that the collector polls are analysed; force-pushed or
+    deleted history between polls can be missed (the collector reports such gaps).
+  - Reusable workflows referenced from other repositories are analysed only as references.
+  - >-
+    Lexical fallback (unparseable workflow) cannot tell which job a permissions block belongs
+    to and examines a bounded prefix of very large files (features.lexical_scan_truncated);
+    it over-reports rather than under-reports.
 references:
   - https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
-  - https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
+  - https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/controlling-permissions-for-github_token
 query: GH-001.sql
 summary_template: >-
-  Workflow {workflow_path} in {repository} gained privileges at commit {commit_sha} by
-  {actor}: write-all {write_all_added}; scopes {sensitive_scopes_added}; triggers
-  {risky_triggers_added}; untrusted checkout {untrusted_checkout_added}; analysis
-  {analysis_methods}
+  Workflow {workflow_path} in {repository} gained token permissions at commit {commit_sha}
+  by {actor}: write-all {write_all_added}; sensitive scopes {sensitive_scopes_added};
+  permissions {permissions_before} -> {permissions_after}; analysis {analysis_methods}
 tests:
-  - name: write-all-added
-    fixture: tests/GH-001/positive_write_all.jsonl
+  - name: matrix-ci-workflow-write-all
+    description: >-
+      Matrix positive: the CI workflow's `permissions: contents: read` replaced by
+      `permissions: write-all` (attributes computed by the collector's workflow analyser).
+    fixture: tests/GH-001/positive_matrix_write_all.jsonl
     expect: alert
     alerts: 1
     confidence: high
-  - name: pull-request-target-added-sim
-    description: Dangerous trigger added (simulation-tagged commit).
-    fixture: tests/GH-001/positive_pull_request_target_sim.jsonl
-    expect: alert
-    alerts: 1
+    features:
+      write_all_added: true
   - name: id-token-write-default-unknown
     description: Sensitive scope added while the repository default permission is unknown.
     fixture: tests/GH-001/positive_scope_unknown_default.jsonl
     expect: alert
     alerts: 1
     confidence: medium
-  - name: benign-workflow-edits
-    description: Workflow edits that do not add privileges (step change, read scope, push trigger).
-    fixture: tests/GH-001/negative_benign_edits.jsonl
-    expect: no_alert
   - name: lexical-fallback-write-all
     description: >-
-      The new workflow version is unparseable (duplicate mapping key) but adds
-      permissions write-all and pull_request_target; C1's analyser compares it lexically
-      (analysis = lexical_fallback, effective permissions unknown): alert, medium.
+      The new workflow version is unparseable (duplicate mapping key) but adds permissions
+      write-all; the analyser compares it lexically (analysis = lexical_fallback, effective
+      permissions unknown): alert, medium.
     fixture: tests/GH-001/positive_lexical_fallback_write_all.jsonl
     expect: alert
     alerts: 1
@@ -99,37 +99,25 @@ tests:
     features:
       analysis_methods: [lexical_fallback]
       write_all_added: true
-      risky_triggers_added: [pull_request_target]
       effective_permissions_unknown: true
     summary_contains: "analysis lexical_fallback"
+  - name: matrix-control-permissions-reduced
+    description: >-
+      Matrix negative control: the revert, which reduces permissions from write-all back to
+      contents: read.
+    fixture: tests/GH-001/negative_matrix_permissions_reduced.jsonl
+    expect: no_alert
+  - name: benign-workflow-edits
+    description: Workflow edits that do not add privileges (step change, read scope, push trigger).
+    fixture: tests/GH-001/negative_benign_edits.jsonl
+    expect: no_alert
   - name: lexical-fallback-benign
     description: An unparseable edit whose lexical comparison adds no privilege.
     fixture: tests/GH-001/negative_lexical_fallback_benign.jsonl
     expect: no_alert
-  - name: c1-collector-output-gh001-scenario
+  - name: privileged-trigger-is-gh002-not-gh001
     description: >-
-      C1's tests/fixtures/github/gh001_collector_output.jsonl copied verbatim (synthetic
-      GitHub API fake, real collector code path): baseline commit, the escalation commit
-      (write-all, pull_request_target, untrusted checkout) and the cleanup commit. Exactly
-      one alert, high, for the escalation; none for baseline or cleanup.
-      tests/rules/test_gh001_collector_contract.py runs the same check on C1's current file.
-    fixture: tests/GH-001/c1_collector_output.jsonl
-    expect: alert
-    alerts: 1
-    confidence: high
-    entities:
-      commit_sha: cc816a42e0fc91f07530c6c94bc28b27f2ea8ae7
-  - name: c1-collector-output-lexical-fallback
-    description: >-
-      C1's tests/fixtures/github/gh001_lexical_fallback.jsonl copied verbatim: the same
-      scenario with an unparseable escalation commit (compared lexically by analyser 1.1.0)
-      and a cleanup commit. Exactly one alert, medium, for the escalation.
-    fixture: tests/GH-001/c1_lexical_fallback.jsonl
-    expect: alert
-    alerts: 1
-    confidence: medium
-    entities:
-      commit_sha: 20cf45b8869252ee1559dc36478c2a165be76788
-    features:
-      analysis_methods: [lexical_fallback]
-
+      pull_request_target with a checkout of the pull request head added, permissions
+      unchanged: GH-002's case, not a permission escalation.
+    fixture: tests/GH-001/negative_privileged_trigger_only.jsonl
+    expect: no_alert

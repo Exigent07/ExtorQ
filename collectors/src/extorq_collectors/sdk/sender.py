@@ -11,8 +11,8 @@ Rules:
 * 401 keeps everything buffered (token problem) with a long backoff.
 * 400/404/405/415/422 are *systemic*: the SDK builds the envelope itself and
   validated every record with the same contracts, so such an answer means
-  version skew or misconfiguration (e.g. a gateway that does not yet accept
-  schema 1.1), never one bad record. The batch stays buffered with a long
+  version skew or misconfiguration (e.g. collector and gateway built from
+  different contract schema versions), never one bad record. The batch stays buffered with a long
   backoff and the error is surfaced in CollectorHealth; nothing is dropped.
 * 403 (unauthorized records) bisects the batch so authorized records still
   flow; a single unauthorized record moves to ``outbox_dead``. 413 splits the

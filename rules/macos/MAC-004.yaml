@@ -1,0 +1,89 @@
+rule_id: MAC-004
+version: 1.0.0
+title: Burst of sudo authentication failures on macOS
+description: >-
+  sudo on a macOS host rejected the password of one account at least three times within five
+  minutes (one sudo invocation reports up to three attempts in its "N incorrect password
+  attempts" line, so three single failures or one exhausted prompt both count). Password
+  guessing against sudo is how a foothold with a user's session tries to become root.
+  Authorisation denials (not in sudoers, command not allowed) and non-interactive sudo -n
+  are not password guesses and are not counted. Confidence: high when opendirectoryd
+  password-verification failures for the same account corroborate the burst (two
+  subsystems agree); medium for sudo's log alone. The alert also reports whether the account
+  ran sudo successfully afterwards.
+severity: medium
+status: stable
+mitre_techniques: [T1110.001, T1548.003]
+asset_types: [macos_host]
+requires:
+  - source_type: macos.unified_log
+    event_types: [auth.sudo.failure, auth.local.failure, auth.sudo.command]
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 300
+group_by: [asset_id, account]
+params:
+  window_seconds: 300
+  min_failed_attempts: 3
+  corroboration_seconds: 60
+  # Reasons that are failed password checks (RE2, case-insensitive).
+  auth_failure_pattern: "(?i)incorrect password attempt|authentication failure"
+false_positives:
+  - >-
+    A person mistyping the sudo password three times. Handling: the threshold is sudo's own
+    limit (three attempts) inside five minutes; sudo_success_after shows that the same
+    account succeeded right afterwards, the typical typo pattern, so the alert can be closed
+    quickly. No account allowlist (the guessed account is the target, not the attacker).
+  - >-
+    Scripts that call sudo with a stale or wrong password on stdin. Handling: reported; the
+    ttys feature shows that no terminal was involved.
+blind_spots:
+  - >-
+    Guessing slower than three attempts per five minutes, and password checks outside sudo
+    (screen unlock, authorization prompts) that are not sudo failures.
+  - >-
+    sudo configured with a cached timestamp or NOPASSWD rules never asks for a password and
+    therefore never fails.
+  - Unified-log records the collector missed (log rotation before collection is a gap event).
+references:
+  - https://attack.mitre.org/techniques/T1548/003/
+  - https://attack.mitre.org/techniques/T1110/001/
+query: MAC-004.sql
+summary_template: >-
+  {failed_attempts} failed sudo password attempts for {account} on {asset_id} within
+  {window_seconds}s ({sudo_failure_records} sudo records; opendirectoryd failures
+  {opendirectory_failures}); succeeded afterwards: {sudo_success_after}
+tests:
+  - name: matrix-three-wrong-passwords-via-sudo-S
+    description: >-
+      Matrix positive: sudo -k, then three `sudo -S -v` invocations with a wrong password
+      (each logs "1 incorrect password attempt"), each also rejected by opendirectoryd: high.
+    fixture: tests/MAC-004/positive_matrix_three_wrong_passwords.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {account: labuser}
+    features:
+      failed_attempts: 3
+      sudo_success_after: false
+  - name: one-exhausted-prompt-then-success
+    description: >-
+      One interactive sudo that exhausted its three tries ("3 incorrect password attempts"),
+      then a successful sudo: alerted (medium, sudo log only) with sudo_success_after = true.
+    fixture: tests/MAC-004/positive_exhausted_prompt_then_success.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      failed_attempts: 3
+      sudo_success_after: true
+  - name: matrix-control-single-failed-attempt
+    description: >-
+      Matrix negative control: a single failed sudo attempt, plus an authorisation denial
+      (not in sudoers) and screen-unlock failures that are not sudo password checks.
+    fixture: tests/MAC-004/negative_matrix_single_failure.jsonl
+    expect: no_alert

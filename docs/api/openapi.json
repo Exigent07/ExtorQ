@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "ExtorQ Analyst API",
-    "description": "\nRead API over ExtorQ's ClickHouse store plus two audited analyst mutations.\n\n**Authentication.** Every `/api/v1` call needs `Authorization: Bearer <api service token>`\n(held only by the console's Next.js server), `X-ExtorQ-User` and `X-ExtorQ-Role`\n(`analyst` | `viewer`). Viewers cannot mutate (403). Mutations write an\n`analyst_actions` audit row before the change.\n\n**Data honesty.** Values come from stored telemetry; unknown values are `null`; empty\nsources yield empty lists plus explicit flags. All strings are untrusted: render as text.\n\n**Lifecycle.** Assets and collectors carry `lifecycle_state` (`active` | `stale` |\n`retired`). Retired assets (no collector reports for them and not observed within the\nretirement window, 24 h by default) are never deleted, but the asset list, the overview\nrollups and the health collector list leave them out unless `include_retired=true`.\n\n**Caching.** Aggregate GET responses (overview, health, assets, services, rules) are reused\nfor up to `EXTORQ_API_CACHE_TTL_SECONDS` (default 15 s); `X-ExtorQ-Cache: hit|miss|off` and\n`X-ExtorQ-Cache-Age` say so, and `generated_at` is the computation time. Analyst mutations\nclear the cache.\n",
+    "description": "\nRead API over ExtorQ's ClickHouse store. The only analyst mutation is the workflow state of\nan alert (`POST /alerts/{alert_id}/state`); an investigation context built on demand for an\nanalyst is also persisted. Both are audited.\n\n**AI is advisory and read-only here.** Jev triage assessments are written by the ai-worker\nand listed by `GET /alerts/{alert_id}/assessments`; the API never calls an AI provider and\nAI output never changes an alert.\n\n**Authentication.** Every `/api/v1` call needs `Authorization: Bearer <api service token>`\n(held only by the console's Next.js server), `X-ExtorQ-User` and `X-ExtorQ-Role`\n(`analyst` | `viewer`). Viewers cannot mutate (403). Mutations write an\n`analyst_actions` audit row before the change.\n\n**Data honesty.** Values come from stored telemetry; unknown values are `null`; empty\nsources yield empty lists plus explicit flags. All strings are untrusted: render as text.\n\n**Lifecycle.** Assets and collectors carry `lifecycle_state` (`active` | `stale` |\n`retired`). Retired assets (no collector reports for them and not observed within the\nretirement window, 24 h by default) are never deleted, but the asset list, the overview\nrollups and the health collector list leave them out unless `include_retired=true`.\n\n**Caching.** Aggregate GET responses (overview, health, assets, services, rules) are reused\nfor up to `EXTORQ_API_CACHE_TTL_SECONDS` (default 15 s); `X-ExtorQ-Cache: hit|miss|off` and\n`X-ExtorQ-Cache-Age` say so, and `generated_at` is the computation time. Analyst mutations\nclear the cache.\n",
     "version": "0.1.0"
   },
   "paths": {
@@ -915,10 +915,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by service id (32 hex, schema 1.1).",
+              "description": "Filter by service id (32 hex).",
               "title": "Service Id"
             },
-            "description": "Filter by service id (32 hex, schema 1.1)."
+            "description": "Filter by service id (32 hex)."
           },
           {
             "name": "X-ExtorQ-User",
@@ -1555,23 +1555,6 @@
             "description": "Exclude closed_* analyst statuses."
           },
           {
-            "name": "simulation_run_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "pattern": "^[a-z0-9]{8,32}$"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Simulation Run Id"
-            }
-          },
-          {
             "name": "sort",
             "in": "query",
             "required": false,
@@ -1600,10 +1583,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by service id (32 hex, schema 1.1).",
+              "description": "Filter by service id (32 hex).",
               "title": "Service Id"
             },
-            "description": "Filter by service id (32 hex, schema 1.1)."
+            "description": "Filter by service id (32 hex)."
           },
           {
             "name": "X-ExtorQ-User",
@@ -1989,7 +1972,7 @@
         "tags": [
           "alerts"
         ],
-        "summary": "AI assessments (advisory) recorded for an alert",
+        "summary": "Advisory Jev triage assessments recorded for an alert (newest first)",
         "operationId": "list_alert_assessments",
         "security": [
           {
@@ -2111,164 +2094,6 @@
           },
           "404": {
             "description": "Alert not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/alerts/{alert_id}/summary": {
-      "post": {
-        "tags": [
-          "alerts"
-        ],
-        "summary": "Request an evidence-grounded AI summary (analyst only, advisory)",
-        "operationId": "request_alert_summary",
-        "security": [
-          {
-            "ServiceToken": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "alert_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{32}$",
-              "description": "32-hex alert id.",
-              "title": "Alert Id"
-            },
-            "description": "32-hex alert id."
-          },
-          {
-            "name": "X-ExtorQ-User",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 128
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Signed-in console user, set by the Next.js server.",
-              "title": "X-Extorq-User"
-            },
-            "description": "Signed-in console user, set by the Next.js server."
-          },
-          {
-            "name": "X-ExtorQ-Role",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 16
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Role of the console user: `analyst` (may mutate) or `viewer` (read-only).",
-              "title": "X-Extorq-Role"
-            },
-            "description": "Role of the console user: `analyst` (may mutate) or `viewer` (read-only)."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SummaryResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid parameters",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing/invalid bearer token or user header",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Viewer role",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Request validation failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "AI unavailable or disabled",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Alert not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Summary already in progress",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Per-user rate limit",
             "content": {
               "application/json": {
                 "schema": {
@@ -2656,23 +2481,6 @@
             "description": "Exact IP (also matches k8s source IPs)."
           },
           {
-            "name": "simulation_run_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "pattern": "^[a-z0-9]{8,32}$"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Simulation Run Id"
-            }
-          },
-          {
             "name": "service_id",
             "in": "query",
             "required": false,
@@ -2686,10 +2494,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by service id (32 hex, schema 1.1).",
+              "description": "Filter by service id (32 hex).",
               "title": "Service Id"
             },
-            "description": "Filter by service id (32 hex, schema 1.1)."
+            "description": "Filter by service id (32 hex)."
           },
           {
             "name": "X-ExtorQ-User",
@@ -2799,7 +2607,7 @@
         "tags": [
           "events"
         ],
-        "summary": "One stored SecurityEvent (contract schema 1.0/1.1) with ingest metadata",
+        "summary": "One stored SecurityEvent (contract schema 2.0) with ingest metadata",
         "operationId": "get_event",
         "security": [
           {
@@ -4025,9 +3833,9 @@
         "properties": {
           "schema_version": {
             "type": "string",
-            "pattern": "^1\\.[01]$",
+            "pattern": "^2\\.0$",
             "title": "Schema Version",
-            "default": "1.1"
+            "default": "2.0"
           },
           "assessment_id": {
             "type": "string",
@@ -4072,26 +3880,6 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/JevTriageResult"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/InvestigationSummary"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "validation": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SummaryValidation"
               },
               {
                 "type": "null"
@@ -4189,8 +3977,7 @@
       "AIProvider": {
         "type": "string",
         "enum": [
-          "typesafe-jev",
-          "google-gemini"
+          "typesafe-jev"
         ],
         "title": "AIProvider"
       },
@@ -4225,6 +4012,28 @@
               }
             ],
             "title": "Enabled"
+          },
+          "runtime_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HealthStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runtime_reported_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Reported At"
           },
           "window_hours": {
             "type": "integer",
@@ -4292,7 +4101,8 @@
           "window_hours",
           "status_counts"
         ],
-        "title": "AIProviderHealth"
+        "title": "AIProviderHealth",
+        "description": "One AI provider/task: configuration as the API process sees it, the state of the\ncomponent that actually runs it (the ai-worker for Jev triage) and recent outcomes."
       },
       "AIStatus": {
         "type": "string",
@@ -4311,8 +4121,7 @@
       "AITask": {
         "type": "string",
         "enum": [
-          "triage",
-          "summary"
+          "triage"
         ],
         "title": "AITask"
       },
@@ -4435,6 +4244,13 @@
             "type": "array",
             "title": "Unresolved Evidence Ids"
           },
+          "expired_evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Expired Evidence Ids"
+          },
           "evidence_total": {
             "type": "integer",
             "title": "Evidence Total"
@@ -4529,13 +4345,6 @@
             "type": "array",
             "title": "Mitre Techniques"
           },
-          "simulation_run_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Simulation Run Ids"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -4589,7 +4398,6 @@
           "event_count",
           "entities",
           "mitre_techniques",
-          "simulation_run_ids",
           "created_at",
           "updated_at",
           "analyst_status",
@@ -4728,13 +4536,6 @@
             "type": "array",
             "title": "Mitre Techniques"
           },
-          "simulation_run_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Simulation Run Ids"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -4780,7 +4581,6 @@
           "evidence_event_ids",
           "evidence_truncated",
           "mitre_techniques",
-          "simulation_run_ids",
           "created_at",
           "updated_at",
           "detector_version"
@@ -5027,7 +4827,8 @@
           "invalid_records",
           "source"
         ],
-        "title": "AssessmentListResponse"
+        "title": "AssessmentListResponse",
+        "description": "Advisory Jev triage assessments of one alert, newest first.\n\nJev never changes severity, suppresses, closes or counts anything: these records sit\nnext to the deterministic alert and cite the ``context_input_hash`` they were computed\nfrom."
       },
       "AssetBrief": {
         "properties": {
@@ -5854,8 +5655,7 @@
           "api_watch",
           "file_tail",
           "otel_filelog",
-          "scanner",
-          "simulation_control"
+          "scanner"
         ],
         "title": "CollectionMethod"
       },
@@ -6080,9 +5880,9 @@
         "properties": {
           "schema_version": {
             "type": "string",
-            "pattern": "^1\\.[01]$",
+            "pattern": "^2\\.0$",
             "title": "Schema Version",
-            "default": "1.1"
+            "default": "2.0"
           },
           "alert_id": {
             "type": "string",
@@ -6239,15 +6039,6 @@
             "type": "array",
             "maxItems": 16,
             "title": "Mitre Techniques"
-          },
-          "simulation_run_ids": {
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z0-9]{8,32}$"
-            },
-            "type": "array",
-            "maxItems": 16,
-            "title": "Simulation Run Ids"
           },
           "created_at": {
             "type": "string",
@@ -6928,28 +6719,6 @@
               }
             ],
             "title": "Adapter Id"
-          },
-          "simulation_run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Simulation Run Id"
-          },
-          "scenario_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scenario Id"
           },
           "message": {
             "anyOf": [
@@ -7659,28 +7428,6 @@
             ],
             "title": "Adapter Id"
           },
-          "simulation_run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Simulation Run Id"
-          },
-          "scenario_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scenario Id"
-          },
           "message": {
             "anyOf": [
               {
@@ -7743,44 +7490,6 @@
           "outcome"
         ],
         "title": "EvidenceEvent"
-      },
-      "EvidenceStatement": {
-        "properties": {
-          "text": {
-            "type": "string",
-            "maxLength": 2048,
-            "title": "Text"
-          },
-          "evidence_ids": {
-            "items": {
-              "type": "string",
-              "maxLength": 256
-            },
-            "type": "array",
-            "maxItems": 32,
-            "title": "Evidence Ids"
-          },
-          "verified": {
-            "type": "boolean",
-            "title": "Verified",
-            "default": false
-          },
-          "unverified_ids": {
-            "items": {
-              "type": "string",
-              "maxLength": 256
-            },
-            "type": "array",
-            "maxItems": 32,
-            "title": "Unverified Ids"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "text"
-        ],
-        "title": "EvidenceStatement"
       },
       "FindingCategory": {
         "type": "string",
@@ -8610,9 +8319,9 @@
         "properties": {
           "schema_version": {
             "type": "string",
-            "pattern": "^1\\.[01]$",
+            "pattern": "^2\\.0$",
             "title": "Schema Version",
-            "default": "1.1"
+            "default": "2.0"
           },
           "context_id": {
             "type": "string",
@@ -8774,15 +8483,6 @@
             "maxItems": 32,
             "title": "Limitations"
           },
-          "simulation_run_ids": {
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z0-9]{8,32}$"
-            },
-            "type": "array",
-            "maxItems": 16,
-            "title": "Simulation Run Ids"
-          },
           "truncated": {
             "additionalProperties": {
               "type": "boolean"
@@ -8812,91 +8512,6 @@
           "relationships"
         ],
         "title": "InvestigationContext"
-      },
-      "InvestigationSummary": {
-        "properties": {
-          "what_happened": {
-            "items": {
-              "$ref": "#/components/schemas/EvidenceStatement"
-            },
-            "type": "array",
-            "maxItems": 12,
-            "title": "What Happened"
-          },
-          "timeline": {
-            "items": {
-              "$ref": "#/components/schemas/SummaryTimelineItem"
-            },
-            "type": "array",
-            "maxItems": 40,
-            "title": "Timeline"
-          },
-          "why_rule_fired": {
-            "$ref": "#/components/schemas/EvidenceStatement"
-          },
-          "related_activity": {
-            "items": {
-              "$ref": "#/components/schemas/EvidenceStatement"
-            },
-            "type": "array",
-            "maxItems": 12,
-            "title": "Related Activity"
-          },
-          "benign_explanations": {
-            "items": {
-              "type": "string",
-              "maxLength": 2048
-            },
-            "type": "array",
-            "maxItems": 8,
-            "title": "Benign Explanations"
-          },
-          "missing_information": {
-            "items": {
-              "type": "string",
-              "maxLength": 2048
-            },
-            "type": "array",
-            "maxItems": 12,
-            "title": "Missing Information"
-          },
-          "limitations": {
-            "items": {
-              "type": "string",
-              "maxLength": 2048
-            },
-            "type": "array",
-            "maxItems": 12,
-            "title": "Limitations"
-          },
-          "recommended_next_steps": {
-            "items": {
-              "type": "string",
-              "maxLength": 2048
-            },
-            "type": "array",
-            "maxItems": 12,
-            "title": "Recommended Next Steps"
-          },
-          "overall_confidence": {
-            "type": "string",
-            "enum": [
-              "low",
-              "medium",
-              "high"
-            ],
-            "title": "Overall Confidence"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "what_happened",
-          "timeline",
-          "why_rule_fired",
-          "overall_confidence"
-        ],
-        "title": "InvestigationSummary"
       },
       "JevAnswer": {
         "properties": {
@@ -9815,8 +9430,7 @@
           "same_service",
           "same_service_instance",
           "cross_service_same_asset",
-          "cross_asset",
-          "simulation_run"
+          "cross_asset"
         ],
         "title": "RelationshipBasis"
       },
@@ -10778,9 +10392,9 @@
         "properties": {
           "schema_version": {
             "type": "string",
-            "pattern": "^1\\.[01]$",
+            "pattern": "^2\\.0$",
             "title": "Schema Version",
-            "default": "1.1"
+            "default": "2.0"
           },
           "event_id": {
             "type": "string",
@@ -11004,16 +10618,6 @@
           },
           "provenance": {
             "$ref": "#/components/schemas/Provenance"
-          },
-          "simulation": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SimulationTag"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "additionalProperties": false,
@@ -12378,34 +11982,6 @@
         "type": "object",
         "title": "SeverityCounts"
       },
-      "SimulationTag": {
-        "properties": {
-          "run_id": {
-            "type": "string",
-            "pattern": "^[a-z0-9]{8,32}$",
-            "title": "Run Id"
-          },
-          "scenario_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 256
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scenario Id"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "run_id"
-        ],
-        "title": "SimulationTag",
-        "description": "Set only when the telemetry itself carries an ExtorQ simulation marker\n(``extorq-sim-<run_id>``). The event remains genuine telemetry."
-      },
       "SourceCoverage": {
         "properties": {
           "source_type": {
@@ -12547,8 +12123,7 @@
           "scanner.trivy",
           "scanner.gitleaks",
           "scanner.semgrep",
-          "extorq.pipeline",
-          "extorq.simulation"
+          "extorq.pipeline"
         ],
         "title": "SourceType"
       },
@@ -12619,106 +12194,6 @@
           "reachable"
         ],
         "title": "StorageHealth"
-      },
-      "SummaryResponse": {
-        "properties": {
-          "alert_id": {
-            "type": "string",
-            "title": "Alert Id"
-          },
-          "assessment": {
-            "$ref": "#/components/schemas/AIAssessment"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "alert_id",
-          "assessment"
-        ],
-        "title": "SummaryResponse"
-      },
-      "SummaryTimelineItem": {
-        "properties": {
-          "time": {
-            "type": "string",
-            "maxLength": 256,
-            "title": "Time"
-          },
-          "description": {
-            "type": "string",
-            "maxLength": 2048,
-            "title": "Description"
-          },
-          "evidence_ids": {
-            "items": {
-              "type": "string",
-              "maxLength": 256
-            },
-            "type": "array",
-            "maxItems": 32,
-            "title": "Evidence Ids"
-          },
-          "verified": {
-            "type": "boolean",
-            "title": "Verified",
-            "default": false
-          },
-          "unverified_ids": {
-            "items": {
-              "type": "string",
-              "maxLength": 256
-            },
-            "type": "array",
-            "maxItems": 32,
-            "title": "Unverified Ids"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "time",
-          "description"
-        ],
-        "title": "SummaryTimelineItem"
-      },
-      "SummaryValidation": {
-        "properties": {
-          "schema_valid": {
-            "type": "boolean",
-            "title": "Schema Valid"
-          },
-          "evidence_ids_cited": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Evidence Ids Cited"
-          },
-          "evidence_ids_verified": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Evidence Ids Verified"
-          },
-          "evidence_ids_rejected": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Evidence Ids Rejected"
-          },
-          "statements_without_evidence": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Statements Without Evidence"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "schema_valid",
-          "evidence_ids_cited",
-          "evidence_ids_verified",
-          "evidence_ids_rejected",
-          "statements_without_evidence"
-        ],
-        "title": "SummaryValidation"
       },
       "TelemetryRequirement": {
         "properties": {

@@ -1,4 +1,4 @@
-"""Agentless Linux collector for the ExtorQ lab VM (owner B1).
+"""Agentless Linux collector (the Ubuntu VM ``linux:lab-vm-01``, or any host with the boundary).
 
 Telemetry is read over SSH through the VM's read-only dispatch boundary
 (``/usr/local/sbin/extorq-collect-dispatch``, source ``infra/vm/files/``):

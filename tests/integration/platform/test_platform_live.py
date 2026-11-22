@@ -14,6 +14,7 @@ import pytest
 from clickhouse_connect.driver.exceptions import DatabaseError, Error
 from platform_live import (
     ASSET,
+    accepted_event_id,
     batch,
     client,
     event_counts,
@@ -73,13 +74,13 @@ def test_https_ingest_round_trip_into_clickhouse() -> None:
             .query(
                 "SELECT producer_id, asset_id, labels['synthetic'], schema_version "
                 "FROM extorq.events WHERE event_id = {id:String}",
-                parameters={"id": event["event_id"]},
+                parameters={"id": accepted_event_id(event)},
             )
             .result_rows
         ),
         lambda r: bool(r),
     )
-    assert rows == [("macos-workstation-01", ASSET, "true", "1.1")]
+    assert rows == [("macos-workstation-01", ASSET, "true", "2.0")]
 
 
 def test_duplicate_batches_and_events_do_not_inflate_counts() -> None:
@@ -92,7 +93,7 @@ def test_duplicate_batches_and_events_do_not_inflate_counts() -> None:
     assert replay.status_code == 202 and replay.json()["replayed"] is True
     again = post(batch([{"kind": "event", "data": e} for e in events]), bearer=token())
     assert again.json()["duplicates"] == 3 and again.json()["accepted"] == 0
-    ids = [e["event_id"] for e in events]
+    ids = [accepted_event_id(e) for e in events]
     counts = wait_for(lambda: event_counts(ids), lambda c: c[0] == 3)
     assert counts == (3, 3)  # gateway dedup: no duplicate rows at all, not only uniqExact
 
@@ -154,7 +155,7 @@ def test_valid_token_sending_another_assets_records_is_403_and_audited() -> None
         lambda r: bool(r),
     )
     assert ("forbidden", "macos-workstation-01") in rows
-    assert event_counts([event["event_id"]]) == (0, 0)  # nothing from the batch stored
+    assert event_counts([accepted_event_id(event)]) == (0, 0)  # nothing from the batch stored
 
 
 def test_selftest_producer_cannot_send_events() -> None:
@@ -237,7 +238,7 @@ def test_service_users_have_readonly_profiles_and_quotas() -> None:
     assert float(rows[0][0]) > 0
 
 
-def test_gateway_status_reports_schema_1_1_and_no_secrets() -> None:
+def test_gateway_status_reports_schema_2_0_and_no_secrets() -> None:
     import httpx
     from platform_live import GATEWAY, tls
 
@@ -249,7 +250,7 @@ def test_gateway_status_reports_schema_1_1_and_no_secrets() -> None:
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["schema_version"] == "1.1"
+    assert body["schema_version"] == "2.0" and body["accepted_schema_versions"] == ["2.0"]
     assert body["producer_id"] == "extorq-selftest"
     assert token("extorq-selftest") not in response.text
 
@@ -270,7 +271,7 @@ def test_live_gateway_quarantines_forged_service_identity() -> None:
         "discovered_via": ["systemd_unit"],
         "adapter_support": "none",
         "monitoring_status": "unmonitored",
-        "coverage_note": "SYNTHETIC forged identity probe (agent A)",
+        "coverage_note": "SYNTHETIC forged identity probe (platform test)",
         "first_seen": now,
         "last_seen": now,
         "observed_by": "extorq-platform-test",
@@ -320,9 +321,9 @@ def test_live_gateway_quarantines_events_older_than_the_events_retention() -> No
     )
     assert len(rows) == 1 and rows[0][1] == "event"
     assert rows[0][0].startswith("older_than_retention")
-    counts = wait_for(lambda: event_counts([recent["event_id"]]), lambda c: c[0] == 1)
+    counts = wait_for(lambda: event_counts([accepted_event_id(recent)]), lambda c: c[0] == 1)
     assert counts == (1, 1)
-    assert event_counts([old["event_id"]]) == (0, 0)
+    assert event_counts([accepted_event_id(old)]) == (0, 0)
 
 
 def test_live_redaction_keeps_json_booleans_in_attributes() -> None:
@@ -339,7 +340,7 @@ def test_live_redaction_keeps_json_booleans_in_attributes() -> None:
             .query(
                 "SELECT JSONExtractString(attributes, 'request_summary') FROM extorq.events "
                 "WHERE event_id = {id:String}",
-                parameters={"id": event["event_id"]},
+                parameters={"id": accepted_event_id(event)},
             )
             .result_rows
         ),
@@ -364,3 +365,41 @@ def test_live_gateway_status_reports_the_acceptance_window() -> None:
     )
     limits = response.json()["limits"]
     assert limits["event_retention_days"] == 90 and limits["max_future_seconds"] == 86400
+
+
+# ── clean-slate commands (read-only variants; `make reset-data` uses the same wiring) ──
+
+
+def _compose_run(service: str, *args: str) -> dict[str, object]:
+    """``extorq <args>`` in a one-off container of ``service``; its single JSON line."""
+    import subprocess
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[3]
+    proc = subprocess.run(
+        ["docker", "compose", "run", "--rm", "--no-deps", "-T", service, *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-500:]
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_data_counts_runs_with_the_admin_identity_and_sees_every_data_table() -> None:
+    from extorq.storage.reset import DATA_TABLES, PROTECTED_TABLES
+
+    result = _compose_run("migrate", "data", "counts")
+    tables = result["tables"]
+    assert isinstance(tables, dict)
+    assert set(DATA_TABLES) <= set(tables) and set(PROTECTED_TABLES) <= set(tables)
+    assert all(isinstance(v, int) and v >= 0 for v in tables.values())
+    assert "simulation_runs" not in tables  # migration 0008 applied
+
+
+def test_spool_status_reads_the_shared_spool_volume() -> None:
+    result = _compose_run("writer", "spool", "status")
+    assert result["exists"] is True
+    assert set(result["tables"]) == {"records", "dead_letter", "dedup", "batches", "counters"}

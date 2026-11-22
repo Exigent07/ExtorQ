@@ -4,18 +4,16 @@ Bases (contracts.context.RelationshipBasis) are collected first, then mapped to 
 
 DIRECT (verified shared identifier; strength strong, or moderate for a unit-name match)
     shared_request_id   propagated HTTP request id (nginx ``$request_id``)
-    shared_pod_uid      same Kubernetes pod
-    shared_audit_id     same kube-apiserver request (another audit stage)
+    shared_pod_uid      same Kubernetes pod within a cluster
+    shared_audit_id     same kube-apiserver request within a cluster (another audit stage)
     shared_commit_sha   same commit in the same repository
-    shared_workflow_run same GitHub Actions run
+    shared_workflow_run same GitHub Actions run within a repository
     shared_resource     same resource on the same asset (file path, systemd unit,
                         Kubernetes object, workflow file)
 CANDIDATE (plausible but inferred: same asset + context window + a shared
 non-identifying attribute)
     shared_source_ip    same source IP that is NOT a shared NAT/gateway address
     shared_principal    same principal name (across assets: only authenticated names)
-    simulation_run      same ExtorQ simulation marker (a lab scenario tag, attacker-
-                        controllable text, never proof)
 UNESTABLISHED (considered, shown for completeness, no supported link)
     shared_nat_source_ip  IP match only through a shared NAT/gateway/loopback address
     same_asset_time_window / same_service / same_service_instance alone
@@ -50,10 +48,10 @@ IDENTIFIER_BASES: tuple[RelationshipBasis, ...] = (
     B.SHARED_WORKFLOW_RUN,
     B.SHARED_RESOURCE,
 )
+#: Shared non-identifying attributes: a CANDIDATE link at best (never DIRECT).
 ATTRIBUTE_BASES: tuple[RelationshipBasis, ...] = (
     B.SHARED_SOURCE_IP,
     B.SHARED_PRINCIPAL,
-    B.SIMULATION_RUN,
 )
 #: Fixed output order of bases (deterministic, most specific first).
 BASIS_ORDER: tuple[RelationshipBasis, ...] = (
@@ -91,17 +89,16 @@ class EvidenceProfile:
     anchor: datetime
     event_ids: frozenset[str]
     request_ids: frozenset[str]
-    pod_uids: frozenset[str]
-    audit_ids: frozenset[str]
+    pod_uids: frozenset[tuple[str, str]]
+    audit_ids: frozenset[tuple[str, str]]
     commit_shas: frozenset[tuple[str, str]]
-    run_ids: frozenset[int]
+    run_ids: frozenset[tuple[str, int]]
     resource_keys: frozenset[tuple[str, ...]]
     source_ips: frozenset[str]
     principals: frozenset[str]
     authenticated_principals: frozenset[str]
     service_ids: frozenset[str]
     instance_ids: frozenset[str]
-    simulation_run_ids: frozenset[str]
     nat_ips: frozenset[str]
 
     @property
@@ -116,8 +113,12 @@ class EvidenceProfile:
         events: Iterable[EventRecord],
         *,
         nat_ips: Iterable[str],
-        simulation_run_ids: Iterable[str] = (),
     ) -> EvidenceProfile:
+        """Profile of ``events`` (the evidence) anchored at ``anchor`` (the alert's first_seen).
+
+        Resource identities (paths, units, objects) are taken only from evidence on the
+        alert's own asset: the same path on another host is a different file.
+        """
         items = list(events)
         unit_keys = {k for e in items for k in e.resource_keys() if e.asset_id == asset_id}
         return cls(
@@ -125,13 +126,17 @@ class EvidenceProfile:
             anchor=anchor,
             event_ids=frozenset(e.event_id for e in items),
             request_ids=frozenset(e.http_request_id for e in items if e.http_request_id),
-            pod_uids=frozenset(e.k8s_pod_uid for e in items if e.k8s_pod_uid),
-            audit_ids=frozenset(e.k8s_audit_id for e in items if e.k8s_audit_id),
+            pod_uids=frozenset((_cluster_asset(e), e.k8s_pod_uid) for e in items if e.k8s_pod_uid),
+            audit_ids=frozenset(
+                (_cluster_asset(e), e.k8s_audit_id) for e in items if e.k8s_audit_id
+            ),
             commit_shas=frozenset(
                 (e.gh_repository or e.asset_id, e.gh_commit_sha) for e in items if e.gh_commit_sha
             ),
             run_ids=frozenset(
-                e.gh_workflow_run_id for e in items if e.gh_workflow_run_id is not None
+                (e.asset_id, e.gh_workflow_run_id)
+                for e in items
+                if e.gh_workflow_run_id is not None
             ),
             resource_keys=frozenset(unit_keys),
             source_ips=frozenset(ip for e in items for ip in e.ips),
@@ -141,11 +146,16 @@ class EvidenceProfile:
             ),
             service_ids=frozenset(sid for e in items for sid in e.all_service_ids),
             instance_ids=frozenset(e.service_instance_id for e in items if e.service_instance_id),
-            simulation_run_ids=frozenset(
-                {*simulation_run_ids, *(e.simulation_run_id for e in items if e.simulation_run_id)}
-            ),
             nat_ips=frozenset(nat_ips),
         )
+
+
+def _cluster_asset(event: EventRecord) -> str:
+    return (
+        event.asset_id.partition("/node/")[0]
+        if event.asset_id.startswith("k8s:")
+        else event.asset_id
+    )
 
 
 def collect_bases(event: EventRecord, profile: EvidenceProfile) -> set[RelationshipBasis]:
@@ -154,15 +164,18 @@ def collect_bases(event: EventRecord, profile: EvidenceProfile) -> set[Relations
     same_asset = event.asset_id == profile.asset_id
     if event.http_request_id and event.http_request_id in profile.request_ids:
         bases.add(B.SHARED_REQUEST_ID)
-    if event.k8s_pod_uid and event.k8s_pod_uid in profile.pod_uids:
+    if event.k8s_pod_uid and (_cluster_asset(event), event.k8s_pod_uid) in profile.pod_uids:
         bases.add(B.SHARED_POD_UID)
-    if event.k8s_audit_id and event.k8s_audit_id in profile.audit_ids:
+    if event.k8s_audit_id and (_cluster_asset(event), event.k8s_audit_id) in profile.audit_ids:
         bases.add(B.SHARED_AUDIT_ID)
     if event.gh_commit_sha and (event.gh_repository or event.asset_id, event.gh_commit_sha) in (
         profile.commit_shas
     ):
         bases.add(B.SHARED_COMMIT_SHA)
-    if event.gh_workflow_run_id is not None and event.gh_workflow_run_id in profile.run_ids:
+    if (
+        event.gh_workflow_run_id is not None
+        and (event.asset_id, event.gh_workflow_run_id) in profile.run_ids
+    ):
         bases.add(B.SHARED_WORKFLOW_RUN)
     if same_asset and event.resource_keys() & profile.resource_keys:
         bases.add(B.SHARED_RESOURCE)
@@ -177,8 +190,6 @@ def collect_bases(event: EventRecord, profile: EvidenceProfile) -> set[Relations
             bases.add(B.SHARED_PRINCIPAL)
     elif event.authenticated_principals() & profile.authenticated_principals:
         bases.add(B.SHARED_PRINCIPAL)
-    if event.simulation_run_id and event.simulation_run_id in profile.simulation_run_ids:
-        bases.add(B.SIMULATION_RUN)
 
     if event.service_instance_id and event.service_instance_id in profile.instance_ids:
         bases.add(B.SAME_SERVICE_INSTANCE)
@@ -209,12 +220,9 @@ def _type_and_strength(
     if not attributes:
         return RelationshipType.UNESTABLISHED, "weak"
     if cross_asset:
-        identity = [b for b in attributes if b in (B.SHARED_SOURCE_IP, B.SHARED_PRINCIPAL)]
-        if not identity:
-            # e.g. only a simulation tag across assets: shown, but not an identity link.
-            return RelationshipType.UNESTABLISHED, "weak"
-        return RelationshipType.CANDIDATE, "moderate" if len(identity) >= 2 else "weak"
-    if B.SHARED_SOURCE_IP in bases or len(attributes) >= 2:
+        # Another asset: one shared attribute is a weak hint, both (IP and principal) moderate.
+        return RelationshipType.CANDIDATE, "moderate" if len(attributes) >= 2 else "weak"
+    if B.SHARED_SOURCE_IP in bases:
         return RelationshipType.CANDIDATE, "moderate"
     return RelationshipType.CANDIDATE, "weak"
 
@@ -246,8 +254,6 @@ def _explain(
             if B.CROSS_ASSET in bases
             else "Same principal name as the evidence."
         )
-    if B.SIMULATION_RUN in bases:
-        parts.append("Carries the same ExtorQ simulation marker (lab scenario tag, not proof).")
     if B.SAME_SERVICE_INSTANCE in bases:
         parts.append("Same service instance as the evidence.")
     elif B.SAME_SERVICE in bases:

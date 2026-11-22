@@ -219,7 +219,8 @@ def test_journal_entry_filter_drops_unlisted_fields() -> None:
 def test_unit_directive_allow_list_excludes_environment(tmp_path: Path) -> None:
     unit = tmp_path / "x.service"
     unit.write_text(
-        "[Service]\nType=oneshot\nEnvironment=PASSWORD=hunter2\nExecStart=/bin/true\n"
+        "[Service]\nType=oneshot\nEnvironment=PASSWORD=hunter2\n"
+        "ExecStart=-/bin/true synthetic-argument\nExecStart=relative synthetic-other\n"
         "User=nobody\n[Install]\nWantedBy=multi-user.target\n"
     )
     details = d._unit_details(str(unit))
@@ -230,3 +231,4 @@ def test_unit_directive_allow_list_excludes_environment(tmp_path: Path) -> None:
         "WantedBy": ["multi-user.target"],
     }
     assert "hunter2" not in str(details)
+    assert "synthetic-argument" not in str(details)

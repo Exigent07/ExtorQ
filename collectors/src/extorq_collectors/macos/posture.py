@@ -664,13 +664,13 @@ def evaluate_exposure(
                 category=FindingCategory.EXPOSURE,
                 resource_key=key,
                 qualifier=key,
-                evidence=f"{key} bound to {listener.address} ({listener.bind_scope})"
+                evidence=f"{key} bound to {listener.address} (exposure {listener.exposure})"
                 + (f" by {', '.join(procs)}" if procs else " (process attribution unavailable)"),
                 attributes={
                     "listener": key,
                     "processes": procs or None,
                     "executables": sorted(listener.executables) or None,
-                    "bind_scope": listener.bind_scope,
+                    "exposure": listener.exposure,
                     "application_firewall": firewall_state,
                 },
             )

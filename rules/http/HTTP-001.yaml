@@ -1,20 +1,28 @@
 rule_id: HTTP-001
-version: 1.0.0
+version: 1.1.0
 title: Web probing from one source
 description: >-
   One source receives at least 10 client-error (4xx) responses from one asset within five
-  minutes (sliding window), and at least 5 of the requested routes are probe-like paths
-  (.env, .git, wp-login.php, phpmyadmin, server-status, admin consoles, ...). Evidence is
-  the web server or application access log (nginx/Apache/lab app on Linux hosts, lab
-  application container logs in Kubernetes).
+  minutes (sliding window), and at least 5 of the requested routes are distinct probe-like
+  paths (.env, .git, wp-login.php, phpmyadmin, server-status, admin consoles, ...). Evidence
+  is the web server or application access log (nginx/Apache/the web application on Linux
+  hosts, the web application's container log in Kubernetes). Both conditions are required:
+  ordinary 404s (missing assets) never count as probe routes and successful requests never
+  count at all. Confidence: high when the source is attributable; medium when it is a shared
+  NAT/gateway address (the probing is real, its origin is not attributable).
 severity: low
-status: experimental
+status: stable
 mitre_techniques: [T1595.003]
 asset_types: [linux_host, kubernetes_cluster]
 requires:
-  # linux.apache and linux.app access lines are also accepted by the SQL when present.
   - source_type: linux.nginx
     event_types: [http.request]
+  - source_type: linux.apache
+    event_types: [http.request]
+    optional: true
+  - source_type: linux.app
+    event_types: [http.request]
+    optional: true
   - source_type: k8s.container_log
     event_types: [http.request]
     optional: true
@@ -36,14 +44,18 @@ params:
   shared_nat_ips: ["10.0.2.2", "172.18.0.1", "10.244.0.1", "127.0.0.1", "::1"]
 false_positives:
   - >-
-    Authorised vulnerability scanners and uptime checkers that request well-known paths
-    (identify them by source address and user agent, and keep them on a documented list).
+    Authorised vulnerability scanners and uptime checkers that request well-known paths.
+    Handling: no source-address allowlist (addresses are not identities); the alert lists the
+    probe routes, statuses and user agents so a scheduled scan is recognisable, and the
+    severity is low because probing alone changes nothing on the host.
   - >-
     Broken links or a misconfigured client repeatedly requesting missing admin or config
-    paths; the probe-route list keeps ordinary 404s (favicon, assets) from counting.
+    paths. Handling: both thresholds must hold (10 client errors AND 5 distinct probe-like
+    routes in 5 minutes); ordinary 404s for assets and pages never match the probe pattern.
   - >-
-    Behind a shared NAT or proxy address (10.0.2.2 for the lab VM, 10.244.0.1 for kind
-    NodePort traffic) many clients share one source IP (confidence medium).
+    Behind a shared NAT or proxy address (10.0.2.2 for the VM, 10.244.0.1 for traffic that
+    reaches the cluster web application through the NodePort) many clients share one source
+    IP. Handling: confidence medium for configured shared addresses.
 blind_spots:
   - >-
     Slow or distributed probing below 10 client errors / 5 probe routes per 5 minutes per
@@ -62,6 +74,18 @@ summary_template: >-
   {probe_routes_distinct} probe-like routes ({probe_routes}) between {first_seen} and
   {last_seen}; shared NAT source: {src_ip_shared_nat}
 tests:
+  - name: matrix-probe-paths-via-qemu-nat
+    description: >-
+      Matrix positive: twelve probe-like paths (/.env, /.git/config, /wp-login.php,
+      /phpmyadmin/, /server-status, /admin, ...) requested from the Mac; nginx answers 404 or
+      403 and logs the QEMU gateway 10.0.2.2 as the client: medium.
+    fixture: tests/HTTP-001/positive_matrix_probe_nat.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    entities: {src_ip: 10.0.2.2}
+    features:
+      src_ip_shared_nat: true
   - name: probe-from-external-source
     description: Twelve probe-like paths from one documentation-range address, all 404.
     fixture: tests/HTTP-001/positive_external_probe.jsonl
@@ -69,14 +93,12 @@ tests:
     alerts: 1
     confidence: high
     entities: {src_ip: 203.0.113.70}
-  - name: probe-through-qemu-nat-like-b1-scenario
+  - name: matrix-control-normal-requests
     description: >-
-      Shape of B1's http_probe.sh: 6 probe paths and 5 failed POST /login from 10.0.2.2
-      (simulation-tagged user agent).
-    fixture: tests/HTTP-001/positive_nat_b1_shape_sim.jsonl
-    expect: alert
-    alerts: 1
-    confidence: medium
+      Matrix negative control: twenty ordinary requests (home page, login page, static
+      assets, health) answered 2xx from the same gateway.
+    fixture: tests/HTTP-001/negative_matrix_normal_requests.jsonl
+    expect: no_alert
   - name: ordinary-404s
     description: Twelve 404s for assets and pages that are not probe-like paths.
     fixture: tests/HTTP-001/negative_ordinary_404.jsonl

@@ -1,8 +1,9 @@
 """Native macOS endpoint collector (asset ``macos:workstation-01``).
 
-Sources: unified logging (``macos.unified_log``), LaunchAgents/LaunchDaemons
+Source types: unified logging (``macos.unified_log``), LaunchAgents/LaunchDaemons
 (``macos.launchd``), host posture (``macos.posture``) and inventory
-(``macos.inventory``). Everything runs as the logged-in user with supported,
+(``macos.inventory``: listening sockets, processes, accounts, services, applications
+and application-folder changes). Everything runs as the logged-in user with supported,
 read-only interfaces: no sudo, no Full Disk Access, no configuration profiles.
 Standard tools do not provide EDR-grade process telemetry; see
 docs/telemetry/macos.md for the explicit list of collection gaps.

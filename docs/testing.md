@@ -1,5 +1,9 @@
 # Testing
 
+The [release verification record](team/status/release-verification.md) contains the
+current candidate's commands, observed results and outstanding gates. Dated run
+records below describe earlier revisions and are retained for provenance.
+
 Owner: agent F. Strategy for every test layer and a results log that contains
 **only results that were actually produced**: each row names the exact command,
 when it ran, its outcome and who recorded it. Owners record their runs in

@@ -1,7 +1,7 @@
 {
   "uid": "extorq-github",
   "title": "ExtorQ - GitHub Investigation",
-  "description": "Commits, workflow modifications with permission deltas, workflow runs and repository findings. Commit and workflow text is attacker-controllable.",
+  "description": "GitHub repositories: commits, workflow changes with permission and trigger deltas, credential-shaped strings in commits (redacted), workflow runs, settings changes and repository findings. Source: github.api (GitHub collector, read-only API polling). Commit and workflow text is attacker-controllable.",
   "tags": [
     "extorq"
   ],
@@ -54,7 +54,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Commits by repository",
-      "description": "Commits observed by the GitHub collector (time = commit event time).",
+      "description": "Commits observed by the GitHub collector per repository (time = commit time as GitHub reports it). Source: github.api.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -89,12 +89,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -104,6 +105,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -127,7 +131,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Workflow runs by conclusion",
-      "description": "Observed workflow runs.",
+      "description": "Observed GitHub Actions workflow runs per conclusion (success, failure, cancelled, pending). Source: github.api.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -162,12 +166,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -177,6 +182,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -199,7 +207,7 @@
     {
       "id": 4,
       "type": "row",
-      "title": "Workflow security",
+      "title": "Workflow and commit security",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -213,7 +221,7 @@
       "id": 5,
       "type": "table",
       "title": "Workflow modifications and permission deltas",
-      "description": "GH-001 inputs: write-all, added write scopes and dangerous triggers per workflow change.",
+      "description": "Every commit that changed a workflow, with the permission analysis before/after: write-all added, added write scopes, dangerous triggers (pull_request_target) and risk flags such as untrusted checkout, unpinned third-party actions or untrusted context in run steps (GH-001 to GH-004 inputs). Source: github.api.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -235,7 +243,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT event_time, gh_repository AS repository, gh_workflow_path AS workflow,\n       gh_commit_sha AS commit, gh_actor_login AS actor,\n       multiIf(NOT JSONHas(attributes, 'write_all_added'), 'not reported',\n               JSONExtractBool(attributes, 'write_all_added'), 'YES', 'no') AS write_all_added,\n       arrayStringConcat(JSONExtract(attributes, 'added_write_scopes', 'Array(String)'), ', ')\n           AS added_write_scopes,\n       arrayStringConcat(JSONExtract(attributes, 'triggers_added', 'Array(String)'), ', ')\n           AS triggers_added,\n       arrayStringConcat(JSONExtract(attributes, 'risk_flags', 'Array(String)'), ', ')\n           AS risk_flags\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND event_type = 'github.workflow.modified'\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+          "rawSql": "SELECT event_time, gh_repository AS repository, gh_workflow_path AS workflow,\n       gh_commit_sha AS commit, gh_actor_login AS actor,\n       multiIf(JSONType(attributes, 'write_all_added') != 'Bool', 'not reported', JSONExtractBool(attributes, 'write_all_added'), 'YES', 'no') AS write_all_added,\n       arrayStringConcat(JSONExtract(attributes, 'added_write_scopes', 'Array(String)'), ', ') AS added_write_scopes,\n       arrayStringConcat(JSONExtract(attributes, 'triggers_added', 'Array(String)'), ', ') AS triggers_added,\n       arrayStringConcat(JSONExtract(attributes, 'risk_flags', 'Array(String)'), ', ') AS risk_flags\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND event_type = 'github.workflow.modified'\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
         }
       ],
       "fieldConfig": {
@@ -248,7 +256,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -259,7 +267,101 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "write_all_added"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "YES": {
+                        "color": "red",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Credential-shaped strings committed (redacted)",
+      "description": "Commits that added a string matching a credential pattern (GH-005 inputs). Source: github.api. Only the pattern name, file, line and a redacted match are stored, never the value. Gitleaks findings on the repository are under Findings.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT event_time, gh_repository AS repository, gh_commit_sha AS commit,\n       gh_actor_login AS actor, resource_path AS path,\n       JSONExtractString(attributes, 'pattern') AS pattern,\n       JSONExtractString(attributes, 'line') AS line,\n       JSONExtractString(attributes, 'redacted_match') AS redacted_match\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND event_type = 'github.secret.exposed'\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -273,10 +375,10 @@
       }
     },
     {
-      "id": 6,
+      "id": 7,
       "type": "table",
       "title": "Recent workflow runs",
-      "description": "Latest workflow runs.",
+      "description": "Latest workflow runs with their trigger event and conclusion. Source: github.api.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -285,7 +387,7 @@
         "h": 8,
         "w": 14,
         "x": 0,
-        "y": 19
+        "y": 27
       },
       "targets": [
         {
@@ -311,7 +413,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -322,7 +424,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -336,10 +439,10 @@
       }
     },
     {
-      "id": 7,
+      "id": 8,
       "type": "table",
       "title": "Repository setting changes",
-      "description": "Repository settings and branch protection changes.",
+      "description": "Repository settings and branch protection changes detected between polls. Source: github.api. Organisation audit logs are not available to the collector.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -348,7 +451,7 @@
         "h": 8,
         "w": 10,
         "x": 14,
-        "y": 19
+        "y": 27
       },
       "targets": [
         {
@@ -374,7 +477,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -385,7 +488,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -399,7 +503,7 @@
       }
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "row",
       "title": "Findings (current)",
       "collapsed": false,
@@ -407,15 +511,15 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 35
       },
       "panels": []
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "table",
       "title": "Repository findings",
-      "description": "Current lifecycle state (not time-filtered): open = seen in the latest succeeded scan; unverified = presence cannot be confirmed (failed/partial scan).",
+      "description": "Current state, not time-filtered: open = seen by the latest succeeded scan; unverified = presence cannot be confirmed (failed or partial scan). Source: v_findings_current (Gitleaks, Semgrep, Trivy and repository posture checks).",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -424,7 +528,7 @@
         "h": 9,
         "w": 16,
         "x": 0,
-        "y": 28
+        "y": 36
       },
       "targets": [
         {
@@ -437,7 +541,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT asset_id AS repository, scanner, severity, state, check_id, title,\n       resource_path AS path, last_observed_at, latest_scan_status\nFROM extorq.v_findings_current\nWHERE startsWith(asset_id, 'github:') AND state IN ('open', 'unverified')\nORDER BY multiIf(severity = 'critical', 4, severity = 'high', 3, severity = 'medium', 2, severity = 'low', 1, 0) DESC, last_observed_at DESC\nLIMIT 200"
+          "rawSql": "SELECT replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS repository, scanner, severity, state, check_id, title,\n       resource_path AS path, last_observed_at, latest_scan_status\nFROM extorq.v_findings_current\nWHERE startsWith(asset_id, 'github:') AND state IN ('open', 'unverified')\nORDER BY multiIf(severity = 'critical', 4, severity = 'high', 3, severity = 'medium', 2, severity = 'low', 1, 0) DESC, last_observed_at DESC\nLIMIT 200"
         }
       ],
       "fieldConfig": {
@@ -450,7 +554,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -461,7 +565,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": [
@@ -508,6 +613,42 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "state"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "open": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "unverified": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "resolved": {
+                        "color": "green",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
           }
         ]
       },
@@ -520,10 +661,10 @@
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "bargauge",
       "title": "Open findings by scanner",
-      "description": "Current lifecycle state (not time-filtered).",
+      "description": "Current state, not time-filtered: open repository findings per scanner. Source: v_findings_current.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -532,7 +673,7 @@
         "h": 9,
         "w": 8,
         "x": 16,
-        "y": 28
+        "y": 36
       },
       "targets": [
         {
@@ -558,7 +699,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]

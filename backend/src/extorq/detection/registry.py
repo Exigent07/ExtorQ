@@ -7,7 +7,9 @@ loader keys:
 
 ``query``            SQL file name, relative to the YAML file (must stay inside the rules root)
 ``summary_template`` deterministic alert summary, ``{placeholder}`` syntax (see templates.py)
-``tests``            fixture-driven test cases used by ``extorq rules test``
+``tests``            fixture-driven test cases used by ``extorq rules test``; a case may
+                     override declared ``params`` (e.g. to exercise an allowlist without
+                     putting test values into the production rule)
 ``enabled``          optional, default ``true``; disabled rules are registered but never run
 
 Validation (all problems are collected, not just the first): YAML shape, the
@@ -20,7 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -59,6 +61,8 @@ class RuleTestCase:
     features: dict[str, Any] = field(default_factory=dict)
     #: Substrings every alert summary of the case must contain.
     summary_contains: tuple[str, ...] = ()
+    #: Overrides of declared rule params for this case only (same names and JSON types).
+    params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -87,6 +91,16 @@ class LoadedRule:
     @property
     def required_source_types(self) -> list[str]:
         return sorted({req.source_type.value for req in self.metadata.requires})
+
+    def with_params(self, overrides: dict[str, Any]) -> LoadedRule:
+        """Copy of the rule with some declared params replaced (used by test cases only).
+
+        The SQL and its digest are unchanged; only the server-side parameter values differ.
+        """
+        if not overrides:
+            return self
+        params = {**self.metadata.params, **overrides}
+        return replace(self, metadata=self.metadata.model_copy(update={"params": params}))
 
     def query_parameters(self, window_start: datetime, window_end: datetime) -> dict[str, Any]:
         """Server-side parameters for one evaluation (window bounds + declared params)."""
@@ -156,7 +170,29 @@ def _inside(root: Path, candidate: Path) -> bool:
         return False
 
 
-def _parse_tests(raw: Any, yaml_path: Path, root: Path, problems: list[str]) -> list[RuleTestCase]:
+def _param_override_problem(name: str, value: Any, declared: dict[str, Any]) -> str | None:
+    """Why ``value`` cannot override param ``name`` (None when it can)."""
+    if name not in declared:
+        return f"overrides undeclared param {name!r}"
+    default = declared[name]
+    if isinstance(default, list):
+        ok = isinstance(value, list) and all(_is_feature_value(v) for v in value)
+    elif isinstance(default, bool):
+        ok = isinstance(value, bool)
+    elif isinstance(default, int):
+        ok = isinstance(value, int) and not isinstance(value, bool)
+    else:
+        ok = isinstance(value, type(default))
+    return None if ok else f"param {name!r} override has the wrong type"
+
+
+def _parse_tests(
+    raw: Any,
+    yaml_path: Path,
+    root: Path,
+    problems: list[str],
+    declared_params: dict[str, Any] | None = None,
+) -> list[RuleTestCase]:
     if raw is None:
         return []
     if not isinstance(raw, list):
@@ -179,6 +215,7 @@ def _parse_tests(raw: Any, yaml_path: Path, root: Path, problems: list[str]) -> 
             "description",
             "features",
             "summary_contains",
+            "params",
         }
         if unknown:
             problems.append(f"tests[{i}] has unknown keys: {sorted(unknown)}")
@@ -234,6 +271,18 @@ def _parse_tests(raw: Any, yaml_path: Path, root: Path, problems: list[str]) -> 
         ):
             problems.append(f"tests[{i}].summary_contains must be a string or list of strings")
             continue
+        overrides = item.get("params") or {}
+        if not isinstance(overrides, dict):
+            problems.append(f"tests[{i}].params must be a mapping")
+            continue
+        bad = [
+            msg
+            for key, value in overrides.items()
+            if (msg := _param_override_problem(str(key), value, declared_params or {}))
+        ]
+        if bad:
+            problems.extend(f"tests[{i}].params: {msg}" for msg in bad)
+            continue
         now_raw = item.get("now")
         now: datetime | None = None
         if now_raw is not None:
@@ -262,6 +311,7 @@ def _parse_tests(raw: Any, yaml_path: Path, root: Path, problems: list[str]) -> 
                 description=str(item.get("description") or ""),
                 features=dict(features),
                 summary_contains=tuple(summary_raw),
+                params={str(k): v for k, v in overrides.items()},
             )
         )
     return cases
@@ -391,7 +441,8 @@ def load_rule_file(yaml_path: Path, root: Path) -> tuple[LoadedRule | None, list
         problems.append("enabled must be a boolean")
         enabled = True
 
-    tests = _parse_tests(doc.get("tests"), yaml_path, root, problems)
+    declared = dict(metadata.params) if metadata is not None else {}
+    tests = _parse_tests(doc.get("tests"), yaml_path, root, problems, declared)
 
     if problems or metadata is None:
         return done()

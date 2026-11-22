@@ -1,4 +1,4 @@
-# ExtorQ operator entry point (owner: agent A). `make help` lists the targets.
+# ExtorQ operator entry point (owner: platform). `make help` lists the targets.
 #
 # Conventions: Python runs through `uv run`; Docker through `docker compose` (project "extorq").
 # Nothing here prints secrets. Targets owned by other teams only delegate to their scripts and
@@ -11,8 +11,9 @@ SHELL := /bin/bash
 COMPOSE ?= docker compose
 UV ?= uv
 PYTEST := $(UV) run pytest
-# Python paths checked by lint/format/typecheck (frontend has its own toolchain).
-PY_PATHS := backend/src collectors/src scanners/src tests scripts eval
+# Python paths checked by lint/format (frontend has its own toolchain). detection_tests/ is
+# the detection-test runner (`make test-detections`), included once it exists.
+PY_PATHS := backend/src collectors/src scanners/src tests scripts eval $(wildcard detection_tests)
 # Services of the "full" profile (frontend: frontend/Dockerfile, grafana: infra/grafana/Dockerfile).
 FULL_SERVICES := detector ai-worker api frontend grafana
 CORE_SERVICES := clickhouse migrate ingest writer
@@ -33,7 +34,7 @@ endef
 
 .PHONY: help
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-27s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 .PHONY: bootstrap rotate rotate-apply
@@ -59,13 +60,11 @@ build: ## Build the backend image
 up: ## Start the core stack: clickhouse, migrate, ingest (8443), writer
 	$(COMPOSE) up -d --build --wait $(CORE_SERVICES)
 
-up-full: ## EVERYTHING: core + detector, ai-worker, api 8000, console 3000, grafana 3001 (AI flags OFF)
+up-full: ## EVERYTHING: core + detector, ai-worker, api 8000, console 3000, grafana 3001 (AI triage OFF)
 	$(COMPOSE) --profile full up -d --build $(WAIT) $(CORE_SERVICES) $(FULL_SERVICES)
 
-up-demo: ## up-full with AI ON (Jev triage in ai-worker, Gemini summaries in api): live calls, daily caps
-	@# Only the two flags differ from up-full; `make up-full` switches AI off again.
-	EXTORQ_JEV_ENABLED=true EXTORQ_GEMINI_ENABLED=true \
-		$(COMPOSE) --profile full up -d --build $(WAIT) $(CORE_SERVICES) $(FULL_SERVICES)
+up-demo: ## up-full with Jev AI triage ON in the ai-worker (live, budgeted calls with a daily cap)
+	$(COMPOSE) -f compose.yaml -f compose.jev.yaml --profile full up -d --build $(WAIT) $(CORE_SERVICES) $(FULL_SERVICES)
 
 up-debug: ## Start the loopback-only ClickHouse debug proxy on 127.0.0.1:18123 (never in demos)
 	$(COMPOSE) --profile debug up -d clickhouse-debug
@@ -113,42 +112,39 @@ sdk-selftest: ## Heartbeat example through the real gateway (producer extorq-sel
 scan: ## Run every configured scanner (owner: C3)
 	$(UV) run extorq-scan run all $(ARGS)
 
-# ── lab assets (delegated) ────────────────────────────────────────────────────
+# ── monitored assets (delegated) ──────────────────────────────────────────────
 .PHONY: vm-up vm-down vm-ssh vm-status kind-up kind-down kind-status
-vm-up: ## Start the Ubuntu lab VM (owner: B1)
-	$(call delegate,infra/vm/vm.sh,B1,up)
-vm-down: ## Stop the lab VM (owner: B1)
-	$(call delegate,infra/vm/vm.sh,B1,down)
-vm-ssh: ## SSH into the lab VM as the admin user (owner: B1)
-	$(call delegate,infra/vm/vm.sh,B1,ssh $(ARGS))
-vm-status: ## Lab VM status (owner: B1)
-	$(call delegate,infra/vm/vm.sh,B1,status)
-kind-up: ## Create/refresh the extorq-lab kind cluster (owner: B2; never touches other clusters)
-	$(call delegate,infra/kind/kind.sh,B2,up)
-kind-down: ## Delete ONLY the extorq-lab cluster (owner: B2)
-	$(call delegate,infra/kind/kind.sh,B2,down)
-kind-status: ## extorq-lab cluster status (owner: B2)
-	$(call delegate,infra/kind/kind.sh,B2,status)
+vm-up: ## Start the Ubuntu VM linux:lab-vm-01 (owner: Linux telemetry)
+	$(call delegate,infra/vm/vm.sh,Linux telemetry,up)
+vm-down: ## Stop the Ubuntu VM (owner: Linux telemetry)
+	$(call delegate,infra/vm/vm.sh,Linux telemetry,down)
+vm-ssh: ## SSH into the Ubuntu VM as the admin user (owner: Linux telemetry)
+	$(call delegate,infra/vm/vm.sh,Linux telemetry,ssh $(ARGS))
+vm-status: ## Ubuntu VM status (owner: Linux telemetry)
+	$(call delegate,infra/vm/vm.sh,Linux telemetry,status)
+kind-up: ## Create/refresh the extorq-lab kind cluster (owner: Kubernetes telemetry; never other clusters)
+	$(call delegate,infra/kind/kind.sh,Kubernetes telemetry,up)
+kind-down: ## Delete ONLY the extorq-lab cluster (owner: Kubernetes telemetry)
+	$(call delegate,infra/kind/kind.sh,Kubernetes telemetry,down)
+kind-status: ## extorq-lab cluster status (owner: Kubernetes telemetry)
+	$(call delegate,infra/kind/kind.sh,Kubernetes telemetry,status)
 
-# ── simulations (delegated; ARGS="--run-id ..." passes options through) ───────
-.PHONY: sim-vm-001 sim-vm-002 sim-http sim-k8s-001 sim-k8s-002 sim-gh-001 sim-mac-001 sim-cleanup
-sim-vm-001: ## VM-001 failed SSH authentication burst (owner: B1)
-	$(call delegate,simulations/vm/vm_001*.sh,B1,$(ARGS))
-sim-vm-002: ## VM-002 systemd persistence (owner: B1; revert with sim-cleanup)
-	$(call delegate,simulations/vm/vm_002*.sh,B1,$(ARGS))
-sim-http: ## HTTP probing against the lab web app (owner: B1)
-	$(call delegate,simulations/http/http_probe*.sh,B1,$(ARGS))
-sim-k8s-001: ## K8S-001 privileged pod denied (owner: B2)
-	$(call delegate,simulations/k8s/k8s_001*.sh,B2,$(ARGS))
-sim-k8s-002: ## K8S-002 risky RBAC (owner: B2)
-	$(call delegate,simulations/k8s/k8s_002*.sh,B2,$(ARGS))
-sim-gh-001: ## GH-001 workflow permission escalation in the lab repo (owner: C1)
-	$(call delegate,simulations/github/gh_001*.sh,C1,$(ARGS))
-sim-mac-001: ## MAC-001 macOS persistence (owner: B3)
-	$(call delegate,simulations/macos/mac_001*.sh,B3,$(ARGS))
-sim-cleanup: ## Revert a scenario: make sim-cleanup SCENARIO=vm-002 RUN_ID=<id>
-	@test -n "$(SCENARIO)" -a -n "$(RUN_ID)" || { echo "usage: make sim-cleanup SCENARIO=<vm-001|vm-002|k8s-001|k8s-002|gh-001|mac-001> RUN_ID=<id>" >&2; exit 2; }
-	@$(MAKE) --no-print-directory sim-$(SCENARIO) ARGS="--cleanup --run-id $(RUN_ID)"
+# ── detection tests (real activity on the monitored assets; PLAN section 12) ─
+# Each test performs genuine activity, then the runner verifies by asset, rule and time
+# window that the rule fired (positive) or stayed silent (negative control), and cleans up.
+# Reports: var/reports/detection-tests-*.json (read by `make demo-check`). ARGS passes options.
+.PHONY: test-detections test-detections-linux test-detections-kubernetes \
+	test-detections-github test-detections-macos
+test-detections: ## Detection-test matrix on EVERY asset (real activity, negative controls, cleanup)
+	$(UV) run python -m detection_tests run --asset all $(ARGS)
+test-detections-linux: ## Detection tests on the Ubuntu VM (SSH, systemd, account, cron, HTTP, app)
+	$(UV) run python -m detection_tests run --asset linux $(ARGS)
+test-detections-kubernetes: ## Detection tests on the extorq-lab kind cluster
+	$(UV) run python -m detection_tests run --asset kubernetes $(ARGS)
+test-detections-github: ## Detection tests in the private repository Exigent07/extorq-lab
+	$(UV) run python -m detection_tests run --asset github $(ARGS)
+test-detections-macos: ## Detection tests on this Mac (never sudo, never loads launch items)
+	$(UV) run python -m detection_tests run --asset macos $(ARGS)
 
 # ── frontend (owner: D2) ──────────────────────────────────────────────────────
 .PHONY: frontend-dev frontend-build
@@ -184,6 +180,9 @@ test-security: ## Security assurance suite (owner F)
 	$(PYTEST) -q tests/security
 
 # ── demo ──────────────────────────────────────────────────────────────────────
-.PHONY: demo-check
-demo-check: ## Read-only readiness report: stack health, gateway, collectors, data freshness
+.PHONY: demo-check reset-data
+demo-check: ## Read-only readiness report: stack, telemetry per asset, collectors, rules, detection tests
 	$(UV) run python scripts/demo_check.py $(ARGS)
+
+reset-data: ## Clean-slate reset plan. Authorized reset needs YES=1 and recovery flags from docs/recovery.md
+	$(UV) run python scripts/reset_data.py $(if $(filter 1 yes true,$(YES)),--yes) $(ARGS)

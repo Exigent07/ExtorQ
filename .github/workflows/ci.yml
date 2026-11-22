@@ -1,4 +1,4 @@
-# ExtorQ CI (owner: agent A). Least privilege: read-only token, no secrets, no
+# ExtorQ CI (owner: platform). Least privilege: read-only token, no secrets, no
 # pull_request_target, credentials not persisted, every third-party action pinned to
 # a full commit SHA (resolved with `gh api repos/<repo>/commits/<tag>` on 2026-11-21;
 # the tag is noted next to each pin), scanner images pinned by tag AND digest.
@@ -38,8 +38,13 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install (locked)
         run: uv sync --frozen
-      - name: ruff check
-        run: uv run ruff check backend/src collectors/src scanners/src tests scripts eval
+      - name: ruff check + format check
+        # Same paths as `make lint`; detection_tests/ (the detection-test runner) once present.
+        run: |
+          paths="backend/src collectors/src scanners/src tests scripts eval"
+          if [ -d detection_tests ]; then paths="$paths detection_tests"; fi
+          uv run ruff check $paths
+          uv run ruff format --check $paths
 
   mypy:
     name: typecheck (mypy)
@@ -55,8 +60,13 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install (locked)
         run: uv sync --frozen
-      - name: mypy
+      - name: mypy (packages from pyproject)
         run: uv run mypy
+      - name: mypy (operator scripts and the detection-test runner)
+        # Not packages in pyproject: checked explicitly so they stay typed too.
+        run: |
+          uv run mypy scripts/*.py
+          if [ -d detection_tests ]; then uv run mypy detection_tests; fi
 
   pytest:
     name: tests (unit, security, rules)
@@ -74,7 +84,8 @@ jobs:
       - name: Install (locked)
         run: uv sync --frozen
       - name: pytest (markers integration/lab/live_ai/failure are excluded by default)
-        # No live stack, no AI keys: integration, lab, live_ai and failure tests never run here.
+        # No live stack, no AI key, no monitored assets: integration, lab, live_ai and failure
+        # tests and the real detection tests (`make test-detections`) never run here.
         run: uv run pytest -q
 
   frontend:

@@ -138,8 +138,19 @@ def test_viewer_cannot_mutate(app: FastAPI, service_token: str) -> None:
         f"/api/v1/alerts/{alert_id}/state", headers=viewer, json={"status": "acknowledged"}
     )
     assert state.status_code == 403
-    summary = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=viewer, json={})
-    assert summary.status_code == 403
+
+
+def test_retired_summary_route_is_unavailable_to_analysts(app: FastAPI, service_token: str) -> None:
+    response = _client(app).post(
+        f"/api/v1/alerts/{'0' * 32}/summary",
+        headers={
+            "Authorization": f"Bearer {service_token}",
+            "X-ExtorQ-User": "analyst",
+            "X-ExtorQ-Role": "analyst",
+        },
+        json={},
+    )
+    assert response.status_code == 404
 
 
 def test_error_responses_never_echo_the_token(app: FastAPI, service_token: str) -> None:

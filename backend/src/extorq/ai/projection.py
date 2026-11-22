@@ -1,42 +1,37 @@
-"""Allow-list projection of an InvestigationContext into AI provider input.
+"""Allow-list projection of an InvestigationContext into Jev's state.
 
-Provider inputs are built ONLY from :class:`InvestigationContext` and only from
-the fields listed here. Nothing else (raw events, payloads, secrets, file
-contents, repository access, SQL) is ever reachable by a provider.
+Jev's input is built ONLY from :class:`InvestigationContext` and only from the fields
+listed here. Nothing else (raw events, payloads, secrets, file contents, repository
+access, SQL) is ever reachable by the provider.
 
 Trust model of the projected payload:
 
-* ExtorQ-generated identifiers and enums (event ids, rule ids, severities,
-  outcomes, catalogued event/source types, validated IPs, timestamps, counts)
-  are passed as plain JSON values.
-* Every string that can carry telemetry content (log-derived summaries, actor
-  names, HTTP paths, user agents, commit messages, Kubernetes fields, entity
-  values, finding titles, free-form feature strings) is sanitised by
+* ExtorQ-generated identifiers and enums (event ids, rule ids, severities, outcomes,
+  catalogued event/source types, validated IPs, timestamps, counts) are passed as plain
+  JSON values.
+* Every string that can carry telemetry content (log-derived summaries, actor names,
+  HTTP paths, user agents, commit messages, Kubernetes fields, entity values, finding
+  titles, free-form feature strings) is sanitised by
   :func:`extorq.ai.sanitize.clean_untrusted`, truncated, and wrapped as
   ``{"untrusted": "<text>"}`` so it is unmistakably delimited data.
 * Raw evidence excerpts are dropped unless ``ai_include_excerpts`` is enabled.
-* Evidence ``key_fields`` are normalised before any allow-list, deny-list or size
-  limit is applied: the correlation builder keys them by dotted catalog path
+* Evidence ``key_fields`` are normalised before any allow-list, deny-list or size limit
+  is applied: the correlation builder keys them by dotted catalog path
   (``kubernetes.verb``, ``attributes.request_summary``, ``http.route``), synthetic
-  contexts by flattened or leaf names (``http_route``, ``verb``). Every accepted
-  spelling maps to ONE canonical name (:func:`canonical_key_field`), so the same
-  field is never projected twice and real evidence reaches the providers. Keys
-  that map to no catalog field or documented correlation extra are dropped and
-  counted.
-* Services (contract 1.1, ``InvestigationContext.services``) are projected as
-  name (untrusted text), kind, category, adapter support, monitoring status,
-  role and parent asset id only: never service attributes, configuration paths,
-  endpoints or versions. Each service gets a local alias (``svc-1``...) that
-  evidence events reference, so 32-hex service ids never appear in provider
-  input (they could be confused with citable evidence ids). Enumerated values
-  outside the contract enums become ``"unrecognised"``.
-* Related assets (cross-asset correlation, 1.1) carry id, type and criticality only.
-* The total serialised size is capped; lowest-priority related events, then
-  middle evidence events, then findings and features are dropped first, and the
-  number of omitted events is stated in the payload.
-
-Simulation markers are excluded from the Jev triage state (activity is judged
-on its merits) but stated as a fact for Gemini summaries.
+  contexts by flattened or leaf names (``http_route``, ``verb``). Every accepted spelling
+  maps to ONE canonical name (:func:`canonical_key_field`), so the same field is never
+  projected twice and real evidence reaches the provider. Keys that map to no catalog
+  field or documented correlation extra are dropped and counted.
+* Services (``InvestigationContext.services``) are projected as name (untrusted text),
+  kind, category, adapter support, monitoring status, role and parent asset id only:
+  never service attributes, configuration paths, endpoints or versions. Each service
+  gets a local alias (``svc-1``...) that evidence events reference, so the only 32-hex
+  values in the state are ExtorQ's event and alert ids. Enumerated values outside the
+  contract enums become ``"unrecognised"``.
+* Related assets (cross-asset correlation) carry id, type and criticality only.
+* The total serialised size is capped; lowest-priority related events, then middle
+  evidence events, then findings and features are dropped first, and the number of
+  omitted events is stated in the payload.
 """
 
 from __future__ import annotations
@@ -78,50 +73,61 @@ from extorq.contracts.service import AdapterSupport, MonitoringStatus, ServiceCa
 
 
 class Domain(StrEnum):
+    """Question-set variant: decides which domain-specific Noul Jev is asked."""
+
     GITHUB = "github"
     SSH_HTTP = "ssh_http"
     K8S = "k8s"
     GENERIC = "generic"
 
 
-_GITHUB_ASSETS = {AssetType.GITHUB_REPOSITORY, AssetType.GITHUB_ACCOUNT}
-_K8S_ASSETS = {
-    AssetType.KUBERNETES_CLUSTER,
-    AssetType.KUBERNETES_NODE,
-    AssetType.KUBERNETES_NAMESPACE,
-    AssetType.KUBERNETES_WORKLOAD,
-}
-#: CORR-002 (PLAN 10.2): HTTP probing -> SSH auth failures -> systemd change on one host.
-_SSH_HTTP_RULES = {"VM-001", "HTTP-001", "CORR-001", "CORR-002"}
+#: Evidence families that have a dedicated question variant (lead sentence + domain Noul).
+_GITHUB_WORKFLOW_EVENTS = ("github.workflow.",)
+_K8S_API_EVENTS = ("k8s.api.", "k8s.resource.")
+#: Linux-host rules about SSH and/or HTTP activity on one host. CORR-002 (PLAN 10.2) is the
+#: ordered sequence HTTP probing -> SSH auth failures -> systemd change.
+_SSH_HTTP_RULES = frozenset({"VM-001", "HTTP-001", "APP-001", "CORR-001", "CORR-002"})
 #: Evidence on a Linux host with these event types uses the SSH + HTTP question variant.
 _SSH_HTTP_EVENT_PREFIXES = ("auth.ssh.", "http.", "app.auth.", "app.authz.")
 
 
-def _context_event_types(ctx: InvestigationContext) -> set[str]:
-    types = {e.event_type for e in ctx.evidence}
-    types.update(t.event_type for t in ctx.timeline)
-    return types
-
-
 def classify_domain(ctx: InvestigationContext) -> Domain:
-    """Pick the triage question variant from the rule, asset type and event types."""
+    """Pick the triage question variant from what the evidence is about.
+
+    Each variant's lead sentence and domain question describe one kind of activity
+    (workflow changes, Kubernetes API privilege activity, SSH/HTTP activity on a Linux
+    host), so the variant follows the evidence event types, not the rule prefix or the
+    asset alone. Otherwise a GitHub alert about a committed credential would be framed as
+    a workflow change, and a web-login alert from the Kubernetes-hosted app as an API
+    privilege question; both get the neutral generic variant instead. Only when a context
+    carries no evidence summaries (e.g. expired events) does the rule family decide.
+    """
     rule_id = ctx.alert.rule_id
-    asset_type = ctx.alert.asset_type
-    if rule_id.startswith("GH-") or asset_type in _GITHUB_ASSETS:
+    linux = ctx.alert.asset_type is AssetType.LINUX_HOST
+    types = {e.event_type for e in ctx.evidence}
+    if types:
+        github = any(t.startswith(_GITHUB_WORKFLOW_EVENTS) for t in types)
+        k8s_api = any(t.startswith(_K8S_API_EVENTS) for t in types)
+        ssh_http = linux and (
+            rule_id in _SSH_HTTP_RULES or any(t.startswith(_SSH_HTTP_EVENT_PREFIXES) for t in types)
+        )
+    else:
+        github = rule_id.startswith("GH-")
+        k8s_api = rule_id.startswith("K8S-")
+        ssh_http = linux and rule_id in _SSH_HTTP_RULES
+    if github:
         return Domain.GITHUB
-    if rule_id.startswith("K8S") or asset_type in _K8S_ASSETS:
+    if k8s_api:
         return Domain.K8S
-    if rule_id in _SSH_HTTP_RULES:
+    if ssh_http:
         return Domain.SSH_HTTP
-    if asset_type is AssetType.LINUX_HOST:
-        evidence_types = {e.event_type for e in ctx.evidence}
-        if any(t.startswith(_SSH_HTTP_EVENT_PREFIXES) for t in evidence_types):
-            return Domain.SSH_HTTP
     return Domain.GENERIC
 
 
 @dataclass(frozen=True)
 class ProjectionLimits:
+    """Item and size bounds of one projection (``max_chars`` caps the serialised JSON)."""
+
     max_evidence: int
     max_related: int
     max_findings: int
@@ -133,6 +139,8 @@ class ProjectionLimits:
     max_related_assets: int = 8
 
 
+#: Jev's bounds. The provider sees at most 8 evidence and 8 related events; the
+#: ``max_chars`` default is lowered further by ``EXTORQ_JEV_MAX_STATE_CHARS`` when set.
 JEV_LIMITS = ProjectionLimits(
     max_evidence=8,
     max_related=8,
@@ -144,21 +152,12 @@ JEV_LIMITS = ProjectionLimits(
     max_services=12,
     max_related_assets=8,
 )
-GEMINI_LIMITS = ProjectionLimits(
-    max_evidence=25,
-    max_related=25,
-    max_findings=10,
-    max_features=48,
-    max_list_items=10,
-    max_key_fields=24,
-    max_chars=60_000,
-    max_services=24,
-    max_related_assets=16,
-)
 
 
 @dataclass
 class Projection:
+    """The state sent to Jev plus counters describing what minimisation removed."""
+
     domain: Domain
     payload: dict[str, Any]
     presented_event_ids: tuple[str, ...]
@@ -189,7 +188,7 @@ class Projection:
 
 #: Catalog key fields not projected as fields: the evidence item already carries the
 #: service as a local alias (``service_ref``) or as untrusted ``service_name``, and service
-#: ids never reach providers.
+#: ids never reach Jev.
 _NOT_PROJECTED_PATHS = frozenset({"service.service_id", "service.name"})
 
 #: Documented non-catalog correlation keys (synthetic contexts, correlation extras).
@@ -289,7 +288,7 @@ def _build_key_tables() -> _KeyTables:
 
 _KEYS = _build_key_tables()
 
-#: Canonical key-field names that may reach providers (catalog fields + documented extras;
+#: Canonical key-field names that may reach Jev (catalog fields + documented extras;
 #: leaves that stay ambiguous are accepted under their own name).
 ALLOWED_KEY_FIELDS: frozenset[str] = (
     frozenset(_KEYS.canonical.values()) | EXTRA_KEY_FIELDS | _KEYS.ambiguous_leaves
@@ -485,7 +484,7 @@ def _evidence_event(
     return item
 
 
-# ── services and related assets (contract 1.1) ───────────────────────
+# ── services and related assets ──────────────────────────────────────
 
 LIMIT_SERVICE_NAME = 80
 _SERVICE_KINDS = frozenset(k.value for k in ServiceKind)
@@ -612,9 +611,12 @@ def project_context(
     *,
     known_secrets: Iterable[str] = (),
     include_excerpts: bool = False,
-    include_simulation_marker: bool = False,
 ) -> Projection:
-    """Build the sanitised, size-capped provider payload for ``ctx``."""
+    """Build the sanitised, size-capped Jev state for ``ctx``.
+
+    Raises ``ValueError`` when the payload cannot fit ``limits.max_chars`` even after
+    minimisation; the caller then makes no provider call.
+    """
     b = _Builder(
         limits=limits, known_secrets=tuple(known_secrets), include_excerpts=include_excerpts
     )
@@ -720,11 +722,6 @@ def project_context(
         ],
         "context_truncated": {k: v for k, v in sorted(ctx.truncated.items()) if _SAFE_KEY.match(k)},
     }
-    if include_simulation_marker:
-        payload["simulation_marker_present"] = bool(
-            ctx.simulation_run_ids or alert.simulation_run_ids
-        )
-
     omitted = omitted_evidence + omitted_related
     omitted += _shrink_to_fit(payload, limits.max_chars)
     payload["omitted_events"] = omitted

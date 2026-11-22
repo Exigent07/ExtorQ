@@ -59,7 +59,6 @@ def _event(event_id: str, seconds: float, event_type: str, **kw: Any) -> dict[st
         "svc_id": None,
         "svc_name": None,
         "svc_instance_id": None,
-        "simulation_run_id": None,
     }
     row.update(kw)
     return row
@@ -185,7 +184,9 @@ class FakeDb:
                 ]
             ),
             b.COLLECTOR_WINDOW_SQL: lambda p: QueryRows(
-                ["collector_id", "bad", "reports"], [], [("linux-ssh-lab-vm-01", 0, 40)]
+                ["collector_id", "asset_id", "bad", "reports"],
+                [],
+                [("linux-ssh-lab-vm-01", VM, 0, 40)],
             ),
             b.GAP_EVENTS_SQL: lambda p: QueryRows(["gap_source"], [], []),
             b.SOURCES_PRESENT_SQL: lambda p: QueryRows(
@@ -276,6 +277,70 @@ def test_stale_collector_is_reported():
     cov = ctx.coverage[0]
     assert cov.stale is True and "stale" in (cov.note or "")
     assert any("stale or had a gap" in x for x in ctx.limitations)
+
+
+def test_collector_health_does_not_borrow_another_assets_reports():
+    db = FakeDb(
+        {
+            b.COLLECTORS_SQL: lambda p: _qr(
+                [
+                    {
+                        "collector_id": "linux-other",
+                        "asset_id": "linux:other",
+                        "source_types": ["linux.journald"],
+                        "status": "ok",
+                        "last_success_at": NOW,
+                        "interval_seconds": 30,
+                    }
+                ]
+            ),
+        }
+    )
+    ctx = _build(db)
+    [coverage] = ctx.coverage
+    assert coverage.collector_id is None and coverage.status.value == "unknown"
+
+
+def test_gap_events_are_scoped_to_the_coverage_asset_and_source():
+    db = FakeDb(
+        {
+            b.GAP_EVENTS_SQL: lambda p: QueryRows(
+                ["asset_id", "source_type"],
+                [],
+                [("linux:other", "linux.journald"), (VM, "linux.auditd")],
+            ),
+        }
+    )
+    [coverage] = _build(db).coverage
+    assert coverage.gap_during_window is False
+
+
+def test_kubernetes_delivery_scope_uses_the_node_of_each_source() -> None:
+    cluster = "k8s:extorq-lab"
+    rows = [
+        _event("a" * 32, 10, "k8s.api.request", asset_id=cluster, source_type="k8s.audit"),
+        _event(
+            "b" * 32,
+            11,
+            "app.auth.login_failed",
+            asset_id=cluster,
+            source_type="k8s.container_log",
+            k8s_node="worker-1",
+        ),
+        _event(
+            "c" * 32,
+            12,
+            "app.auth.login_failed",
+            asset_id="k8s:other",
+            source_type="k8s.container_log",
+            k8s_node="unrelated",
+        ),
+    ]
+    evidence = b._records(_qr(rows))
+    assert b._coverage_assets(cluster, evidence) == {
+        "k8s.audit": {cluster},
+        "k8s.container_log": {f"{cluster}/node/worker-1"},
+    }
 
 
 def test_missing_required_source_is_reported():

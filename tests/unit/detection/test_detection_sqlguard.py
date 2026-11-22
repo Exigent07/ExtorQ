@@ -52,6 +52,11 @@ def test_every_repository_rule_passes_the_guard() -> None:
         assert result.ok, (path.name, result.errors)
 
 
+def test_detector_owns_the_result_limit() -> None:
+    bad(f"SELECT event_id FROM events {W} LIMIT 1000", "top-level LIMIT")
+    ok(f"WITH seen AS (SELECT event_id FROM events {W} LIMIT 1 BY event_id) SELECT * FROM seen")
+
+
 @pytest.mark.parametrize(
     ("sql", "needle"),
     [

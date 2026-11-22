@@ -10,8 +10,10 @@ that every source applies the same rules:
 * free text is redacted (:func:`extorq.common.redaction.redact_text`) and then
   sanitised/truncated (:func:`sanitize_untrusted`); the redaction count is kept
   in ``provenance.redaction_count``;
-* attribute maps are bounded to the contract limits before validation;
-* the ``extorq-sim-<run_id>`` marker sets ``simulation`` (telemetry stays genuine).
+* attribute maps are bounded to the contract limits before validation.
+
+There is no simulation marker (contract schema 2.0): detection tests are real activity on
+this Mac and their telemetry is recorded exactly like any other activity.
 """
 
 from __future__ import annotations
@@ -36,7 +38,6 @@ from extorq.contracts import (
     SecurityEvent,
     ServiceRef,
     Severity,
-    SimulationTag,
     SourceInfo,
     SourceType,
 )
@@ -56,7 +57,6 @@ MAX_ATTR_LIST_ITEM = 512
 MAX_MESSAGE = 2048
 MAX_RAW = 4096
 
-_SIM_MARKER = re.compile(r"extorq-sim-([a-z0-9]{8,32})(?![a-z0-9])")
 _ATTR_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 
 
@@ -87,34 +87,6 @@ def clean_text(text: str | None, limit: int) -> tuple[str | None, int]:
     redacted, count = redact_text(text)
     cleaned = sanitize_untrusted(redacted, limit)
     return (cleaned or None), count
-
-
-def simulation_tag(*texts: str | None) -> SimulationTag | None:
-    """``SimulationTag`` when any text carries an ``extorq-sim-<run_id>`` marker."""
-    for text in texts:
-        if not text:
-            continue
-        match = _SIM_MARKER.search(text)
-        if match:
-            return SimulationTag(run_id=match.group(1))
-    return None
-
-
-#: Reverse-DNS spelling of the marker for launchd labels / plist names (MAC-001):
-#: ``com.extorq.sim.<run_id>`` (launchd labels conventionally avoid ``extorq-sim-``).
-_SIM_LAUNCHD_LABEL = re.compile(r"com\.extorq\.sim\.([a-z0-9]{8,32})(?:\.plist)?")
-
-
-def launchd_simulation_tag(path: str | None, label: str | None) -> SimulationTag | None:
-    """Simulation tag for a launchd item: the generic marker, or the exact label form."""
-    tag = simulation_tag(path, label)
-    if tag is not None:
-        return tag
-    for text in (label, path.rsplit("/", 1)[-1] if path else None):
-        match = _SIM_LAUNCHD_LABEL.fullmatch(text or "")
-        if match:
-            return SimulationTag(run_id=match.group(1))
-    return None
 
 
 def _bound_value(value: Any) -> Any:
@@ -183,7 +155,6 @@ def make_event(
     process: ProcessInfo | None = None,
     attributes: Mapping[str, Any] | None = None,
     labels: Mapping[str, str] | None = None,
-    simulation: SimulationTag | None = None,
     redaction_count: int = 0,
     truncated: bool = False,
     source_native_id: str | None = None,
@@ -236,7 +207,6 @@ def make_event(
             or (clean_raw is not None and raw is not None and len(raw) > MAX_RAW),
             redaction_count=redaction_count + message_redactions + raw_redactions,
         ),
-        simulation=simulation,
     )
 
 

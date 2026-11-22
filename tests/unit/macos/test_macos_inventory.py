@@ -157,3 +157,51 @@ def test_listener_event_fields(src: SourceContext) -> None:
     )
     assert closed.event_type == "network.listener.closed" and closed.network is not None
     assert closed.network.dst_ip == "0.0.0.0"  # noqa: S104 - wildcard bind address observed
+
+
+# SYNTHETIC lsof -F record in the real field format of inventory/lsof_tcp_listen.txt: a user's
+# python3 accept-and-close listener on all interfaces (the MAC-003 positive shape) and the same
+# program on loopback (its negative control). Not captured: opening such a listener on the
+# reference Mac would be the live detection test itself.
+MAC003_LSOF = (
+    "p4242\ncpython3.12\nLtestuser\n"
+    "f3\ntIPv4\nPTCP\nn*:48765\nTST=LISTEN\nTQR=0\nTQS=0\n"
+    "f4\ntIPv4\nPTCP\nn127.0.0.1:48766\nTST=LISTEN\nTQR=0\nTQS=0\n"
+)
+
+
+def test_listener_exposure_bind_address_and_owner(src: SourceContext) -> None:
+    listeners = listeners_from_lsof(parse_lsof_fields(MAC003_LSOF))
+    wide, local = listeners["tcp:0.0.0.0:48765"], listeners["tcp:127.0.0.1:48766"]
+    assert wide.exposure == "any" and local.exposure == "loopback"
+    opened = listener_event(
+        "opened", "tcp:0.0.0.0:48765", wide, None, src, observed_at=NOW, snapshot="s"
+    )
+    attrs = opened.attributes
+    assert attrs["bind_address"] == "0.0.0.0"  # noqa: S104 - observed wildcard bind
+    assert attrs["exposure"] == "any" and attrs["port"] == 48765
+    assert attrs["processes"] == ["python3.12"] and attrs["pids"] == [4242]
+    assert attrs["process_attribution"] == "lsof" and attrs["users"] == ["testuser"]
+    assert opened.process is not None
+    assert (opened.process.name, opened.process.pid) == ("python3.12", 4242)
+    assert opened.network is not None and opened.network.dst_port == 48765
+    loopback = listener_event(
+        "opened", "tcp:127.0.0.1:48766", local, None, src, observed_at=NOW, snapshot="s"
+    )
+    assert loopback.attributes["exposure"] == "loopback"
+    # A closed socket keeps its bind address and exposure (from the stored summary).
+    closed = listener_event(
+        "closed", "tcp:0.0.0.0:48765", None, wide.summary(), src, observed_at=NOW, snapshot="s2"
+    )
+    assert closed.attributes["exposure"] == "any"
+    assert closed.attributes["processes"] == ["python3.12"]
+
+
+def test_unparseable_truncated_address_has_unknown_exposure() -> None:
+    rows = parse_netstat(
+        "tcp6       0      0  fe80::aede:48ff:.49153 *.*  LISTEN  "
+        "131072 131072 0 0 launchd:1 00102 00000000 0 0 0 1 0 0\n"
+    )
+    (listener,) = listeners_from_rows(rows, include_udp=False).values()
+    assert not listener.address_valid and listener.exposure == "unknown"
+    assert listener.attributes()["address_truncated"] is True

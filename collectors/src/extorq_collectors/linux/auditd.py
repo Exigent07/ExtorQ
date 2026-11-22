@@ -37,13 +37,13 @@ from extorq.contracts import (
     SecurityEvent,
     SourceType,
 )
-from extorq_collectors.linux.common import ParseContext, build_event, clean, redact_clean, to_ms
+from extorq.contracts.identity import sha256_hex
+from extorq_collectors.linux.common import ParseContext, build_event, clean, to_ms
 
 PARSER_AUDIT = "linux-auditd"
 AUID_UNSET = 4294967295
 HOLDBACK_SECONDS = 10
 MAX_GROUP_RECORDS = 64
-MAX_EXEC_ARGS = 256
 
 RECORD_RE = re.compile(
     r"^(?:node=(?P<node>\S{1,64}) )?type=(?P<type>[A-Z0-9_]{2,32}) "
@@ -210,29 +210,12 @@ def _abs_path(name: str | None, cwd: str | None) -> str | None:
     return cwd.rstrip("/") + "/" + name
 
 
-def _exec_args(record: AuditRecord) -> list[str]:
-    parts: dict[int, dict[int, str]] = {}
-    for key in record.fields:
-        match = _ARG_RE.match(key)
-        if not match:
-            continue
-        idx = int(match.group("idx"))
-        if idx >= MAX_EXEC_ARGS:
-            continue
-        part = int(match.group("part")) if match.group("part") is not None else 0
-        value = record.get(key)
-        if value is not None:
-            parts.setdefault(idx, {})[part] = value
-    return ["".join(chunks[p] for p in sorted(chunks)) for _, chunks in sorted(parts.items())]
-
-
 def _common(group: AuditGroup, ctx: ParseContext) -> dict[str, Any]:
     """Fields shared by watch and exec events."""
     syscall = group.first("SYSCALL")
     if syscall is None:
         raise ValueError("audit group without SYSCALL record")
     cwd_record = group.first("CWD")
-    proctitle_record = group.first("PROCTITLE")
     auid = _int(syscall.get("auid"))
     uid = _int(syscall.get("uid"))
     auid_name = syscall.enriched_value("AUID")
@@ -244,8 +227,6 @@ def _common(group: AuditGroup, ctx: ParseContext) -> dict[str, Any]:
             id=str(auid),
             name=clean(auid_name) if auid_name and auid_name != "unset" else None,
         )
-    proctitle = proctitle_record.get("proctitle") if proctitle_record else None
-    safe_title, _ = redact_clean(proctitle, 2048)
     success = syscall.get("success")
     return {
         "syscall": syscall,
@@ -253,8 +234,6 @@ def _common(group: AuditGroup, ctx: ParseContext) -> dict[str, Any]:
         "auid": auid,
         "uid": uid,
         "cwd": cwd_record.get("cwd") if cwd_record else None,
-        "proctitle": safe_title,
-        "raw_title": proctitle,
         "outcome": Outcome.SUCCESS
         if success == "yes"
         else Outcome.FAILURE
@@ -266,7 +245,6 @@ def _common(group: AuditGroup, ctx: ParseContext) -> dict[str, Any]:
             ppid=_int(syscall.get("ppid")),
             name=clean(syscall.get("comm")),
             executable=clean(syscall.get("exe"), 2048),
-            command_line=safe_title,
             user=clean(syscall.enriched_value("UID")),
             uid=uid,
         ),
@@ -292,7 +270,13 @@ def _native_key(group: AuditGroup) -> str:
 
 
 def _raw(group: AuditGroup) -> str:
-    return "\n".join(r.line.replace("\x1d", " ") for r in group.records)
+    return "\n".join(
+        r.line.replace("\x1d", " ") for r in group.records if r.type in {"SYSCALL", "PATH", "CWD"}
+    )
+
+
+def _raw_sha256(group: AuditGroup) -> str:
+    return sha256_hex("\n".join(r.line.replace("\x1d", " ") for r in group.records))
 
 
 def watch_event(group: AuditGroup, key: str, ctx: ParseContext, *, complete: bool) -> SecurityEvent:
@@ -338,8 +322,8 @@ def watch_event(group: AuditGroup, key: str, ctx: ParseContext, *, complete: boo
         message=f"auditd {key}: {syscall_name or '?'} {path or '?'} by "
         f"{common['actor'].name or attrs['auid']} via {common['process'].name or '?'}",
         raw=_raw(group),
+        raw_sha256=_raw_sha256(group),
         attributes=attrs,
-        sim_texts=(path, common["raw_title"]),
         is_self=common["is_self"],
     )
 
@@ -347,9 +331,7 @@ def watch_event(group: AuditGroup, key: str, ctx: ParseContext, *, complete: boo
 def exec_event(group: AuditGroup, ctx: ParseContext, *, complete: bool) -> SecurityEvent:
     common = _common(group, ctx)
     execve = group.first("EXECVE")
-    args = _exec_args(execve) if execve else []
-    command_line, _ = redact_clean(" ".join(args), 2048) if args else (common["proctitle"], 0)
-    process = common["process"].model_copy(update={"command_line": command_line})
+    process = common["process"]
     attrs = dict(common["base_attrs"])
     attrs.update(
         {
@@ -370,11 +352,14 @@ def exec_event(group: AuditGroup, ctx: ParseContext, *, complete: bool) -> Secur
         outcome=common["outcome"],
         actor=common["actor"],
         process=process,
-        message=f"auditd exec as euid {attrs.get('euid')}: {command_line or '?'} "
-        f"(auid {common['actor'].name or attrs['auid']})",
+        message=(
+            f"auditd exec as euid {attrs.get('euid')}: "
+            f"{process.executable or process.name or '?'} "
+            f"(auid {common['actor'].name or attrs['auid']})"
+        ),
         raw=_raw(group),
+        raw_sha256=_raw_sha256(group),
         attributes=attrs,
-        sim_texts=(" ".join(args), common["raw_title"]),
         is_self=common["is_self"],
     )
 

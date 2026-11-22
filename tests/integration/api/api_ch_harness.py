@@ -5,8 +5,10 @@
   (``docker rm -f``). Never touches the shared compose stack.
 * Applies the real migrations 0001 (core), the settings profiles, roles and grants of
   0002 (RBAC; user/password/quota statements skipped), 0003 (findings lifecycle views),
-  0004 (service model, schema 1.1), 0005 (``v_findings_current.service_id``) and 0006
-  (refreshed ``v_alerts``): the same schema the live stack runs.
+  0004 (service model), 0005 (``v_findings_current.service_id``), 0006 (refreshed
+  ``v_alerts``), 0007 (API quota; a no-op here because the harness creates no quotas) and
+  0008 (contract schema 2.0: simulation columns and table dropped): the schema the live
+  stack runs once 0008 is applied, so a query naming a dropped column fails here.
 * Creates users bound to the REAL roles and settings profiles of 0002:
   ``d1_api_ro`` (extorq_role_api_ro + extorq_api_readonly), ``d1_api_writer``
   (extorq_role_api_writer) and ``d1_grafana`` (extorq_role_grafana with its column-level
@@ -83,12 +85,18 @@ def unavailable_reason() -> str | None:
 
 
 class EphemeralClickHouse:
-    def __init__(self) -> None:
+    def __init__(self, *, server_config: Path | None = None) -> None:
         self.docker = shutil.which("docker") or "docker"
         self.name = f"extorq-d1-apisql-{uuid.uuid4().hex[:8]}"
+        self.server_config = server_config
         self.port: int | None = None
 
     def start(self) -> None:
+        config_mount = (
+            ["-v", f"{self.server_config}:/etc/clickhouse-server/config.d/test-extorq.xml:ro"]
+            if self.server_config is not None
+            else []
+        )
         _run(
             [
                 self.docker, "run", "-d", "--name", self.name,
@@ -96,6 +104,7 @@ class EphemeralClickHouse:
                 "-p", "127.0.0.1::8123",
                 "-e", "CLICKHOUSE_SKIP_USER_SETUP=1",
                 "-e", "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1",
+                *config_mount,
                 IMAGE,
             ]
         )  # fmt: skip
@@ -136,13 +145,9 @@ class EphemeralClickHouse:
             and not statement.lstrip().upper().startswith(("CREATE QUOTA", "GRANT EXTORQ_ROLE_"))
         ]
         self.sql(";\n".join(rbac) + ";")
-        for name in (
-            "0003_findings_views.sql",
-            "0004_services.sql",
-            "0005_findings_services.sql",
-            "0006_refresh_views.sql",
-        ):
-            self.sql((MIGRATIONS / name).read_text(encoding="utf-8"))
+        for migration in sorted(MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql")):
+            if migration.name[:4] > "0002":
+                self.sql(migration.read_text(encoding="utf-8"))
         self.sql(
             """
             CREATE USER IF NOT EXISTS d1_api_ro IDENTIFIED WITH no_password
@@ -157,14 +162,14 @@ class EphemeralClickHouse:
             """
         )
 
-    def client(self, user: str) -> Any:
+    def client(self, user: str, *, database: str = "extorq") -> Any:
         assert self.port is not None
         return clickhouse_connect.get_client(
             host="127.0.0.1",
             port=self.port,
             username=user,
             password="",
-            database="extorq",
+            database=database,
             autogenerate_session_id=False,
             connect_timeout=5,
             send_receive_timeout=30,
@@ -384,7 +389,7 @@ def seed(admin: Any, now: datetime) -> Dataset:
         payload = {"synthetic": True}
         return {
             "alert_id": alert_id,
-            "schema_version": "1.0",
+            "schema_version": "2.0",
             "rule_id": "VM-001",
             "rule_version": "1.0.0",
             "rule_title": "synthetic failed SSH burst",
@@ -405,7 +410,6 @@ def seed(admin: Any, now: datetime) -> Dataset:
             "evidence_truncated": 0,
             "features": canonical_json({"distinct_connections": count}),
             "mitre_techniques": ["T1110"],
-            "simulation_run_ids": [],
             "created_at": n - timedelta(minutes=28),
             "updated_at": updated,
             "detector_version": "0.0.0-synthetic",
@@ -432,6 +436,8 @@ def seed(admin: Any, now: datetime) -> Dataset:
              "added_at": n - timedelta(minutes=28)},
             {"alert_id": a1_v1["alert_id"], "event_id": missing_event, "role": "supporting",
              "added_at": n - timedelta(minutes=27)},
+            {"alert_id": a1_v1["alert_id"], "event_id": planted.event_id, "role": "supporting",
+             "added_at": n - timedelta(minutes=10)},
         ],
     )  # fmt: skip
     ds.event_ids["missing"] = missing_event
@@ -654,20 +660,19 @@ def seed(admin: Any, now: datetime) -> Dataset:
         "moved": f_moved_1.finding_id,
     }
 
-    # AI assessments (E's row format) and ingest boundary records.
+    # AI assessments (the AI store's row format: Jev triage) and ingest boundary records.
     _insert(
         admin,
         "ai_assessments",
         [
             {"assessment_id": "3" * 32, "alert_id": a1_v1["alert_id"], "context_id": "4" * 32,
-             "context_input_hash": "5" * 64, "provider": "google-gemini",
-             "model": "synthetic-model", "task": "summary", "prompt_version": "summary-v1",
+             "context_input_hash": "5" * 64, "provider": "typesafe-jev",
+             "model": "synthetic-model", "task": "triage", "prompt_version": "triage-synthetic",
              "status": "timeout", "recommendation": None, "uncertain": None,
-             "output": canonical_json({"requested_model": "synthetic-model", "triage": None,
-                                       "summary": None, "validation": None}),
+             "output": canonical_json({"requested_model": "synthetic-model", "triage": None}),
              "latency_ms": 30000, "input_tokens": None, "output_tokens": None,
              "provider_request_id": None, "error": "TimeoutError",
-             "created_at": n - timedelta(minutes=15), "requested_by": "analyst:synthetic"},
+             "created_at": n - timedelta(minutes=15), "requested_by": "system:synthetic"},
         ],
     )  # fmt: skip
     _insert(

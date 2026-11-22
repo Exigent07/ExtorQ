@@ -1,0 +1,87 @@
+rule_id: MAC-002
+version: 1.0.0
+title: Launch item runs a shell, interpreter or temporary-path program
+description: >-
+  A new or modified launchd property list runs a shell or script interpreter (sh, bash, zsh,
+  python, perl, ruby, osascript, node, ... directly or through /usr/bin/env), references a
+  program or argument in a world-writable or shared location (/tmp, /var/tmp, /var/folders,
+  /Users/Shared, ~/Downloads), or is a LaunchDaemon (runs as root at boot) whose program lives
+  in a user's home directory. These are the shapes of malware persistence: what runs can be
+  changed without touching the plist, or by any user. This is the high-risk subset of
+  MAC-001 (both alert for the same plist). Confidence: high (the conditions are evaluated on
+  the parsed plist; an unparseable plist cannot match and stays a MAC-001 medium alert).
+severity: high
+status: stable
+mitre_techniques: [T1543.001, T1543.004, T1059.004]
+asset_types: [macos_host]
+requires:
+  - source_type: macos.launchd
+    event_types: [persistence.launchd.item_created, persistence.launchd.item_modified]
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: event
+group_by: [asset_id, path, sha256]
+params:
+  # Basenames of shells and script interpreters (RE2, full match; versioned names included).
+  interpreter_pattern: >-
+    ^(sh|bash|zsh|dash|ksh|tcsh|csh|fish|osascript|python[0-9.]*|perl[0-9.]*|ruby|node|php|lua|tclsh|pwsh|Python)$
+  # World-writable or shared locations (RE2, prefix match on absolute paths).
+  temp_path_pattern: >-
+    ^(/private)?/(tmp|var/tmp|var/folders)/|^/Users/Shared/|^/Users/[^/]+/Downloads/
+  # Exact SHA-256 digests of reviewed plist contents.
+  allowlist_sha256: []
+false_positives:
+  - >-
+    Vendor or developer agents that wrap their binary in /bin/sh -c or run a Python/Node
+    script (some updaters, local development services). Handling: one alert per distinct
+    plist content; after review the exact content digest can be allowlisted
+    (allowlist_sha256). No label, path or program allowlist: all three are chosen by whoever
+    writes the plist.
+  - >-
+    Installers that stage files in /tmp and register a one-shot agent. Handling: reported;
+    the temp_paths feature shows exactly which argument points to the shared location.
+blind_spots:
+  - >-
+    Interpreters reached indirectly (a compiled wrapper binary that runs a script, an
+    interpreter renamed to an unexpected basename) and user-writable locations other than the
+    listed temporary and shared directories (for example hidden directories in the home).
+  - >-
+    The script or binary content itself is not inspected; only the plist's program and
+    arguments.
+  - Everything MAC-001 cannot see (other persistence mechanisms, items removed between scans).
+references:
+  - https://attack.mitre.org/techniques/T1543/001/
+  - https://attack.mitre.org/techniques/T1059/004/
+query: MAC-002.sql
+summary_template: >-
+  launchd {kind} plist {path} ({label}) runs {program} {arguments} on {asset_id}: matched
+  {matched_conditions}; temporary/shared paths {temp_paths}; RunAtLoad {run_at_load}
+tests:
+  - name: matrix-plist-runs-sh-c-tmp-payload
+    description: >-
+      Matrix positive: a never-loaded agent with ProgramArguments
+      ["/bin/sh", "-c", "/tmp/extorq-test-payload"]: interpreter and temporary path.
+    fixture: tests/MAC-002/positive_matrix_sh_c_tmp.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    features:
+      matched_conditions: [interpreter, temp_path]
+      temp_paths: [/tmp/extorq-test-payload]
+  - name: env-python-and-daemon-in-home
+    description: >-
+      An agent launching `/usr/bin/env python3 updater.py` and a LaunchDaemon whose program
+      is in a user's home directory: two alerts.
+    fixture: tests/MAC-002/positive_env_python_and_daemon_home.jsonl
+    expect: alert
+    alerts: 2
+    confidence: high
+  - name: matrix-control-plist-runs-usr-bin-true
+    description: >-
+      Matrix negative control: the plist runs /usr/bin/true (MAC-001 only), and an unparseable
+      plist (program unknown).
+    fixture: tests/MAC-002/negative_matrix_usr_bin_true.jsonl
+    expect: no_alert

@@ -1,0 +1,90 @@
+rule_id: GH-002
+version: 1.0.0
+title: Privileged workflow trigger checks out untrusted code
+description: >-
+  A commit changed a GitHub Actions workflow so that a privileged trigger
+  (pull_request_target, workflow_run, issue_comment: runs with the base repository's secrets
+  and a write-capable token) checks out code controlled by a pull-request author or another
+  workflow run (the "pwn request" pattern: untrusted code executes with the privileged
+  context). Evidence is the collector's before/after analysis of the workflow file; the
+  pattern must be new in this commit. A privileged trigger that never checks out untrusted
+  code is the documented safe use and is not alerted. Confidence: high when both versions
+  parsed; medium for a lexical comparison of an unparseable version; low when a version did
+  not parse and no lexical comparison was made.
+severity: high
+status: stable
+mitre_techniques: [T1195.002, T1059]
+asset_types: [github_repository]
+requires:
+  - source_type: github.api
+    event_types: [github.workflow.modified]
+schedule:
+  interval_seconds: 120
+  lookback_seconds: 7200
+  late_tolerance_seconds: 3600
+dedup:
+  strategy: event
+group_by: [repository, workflow_path, commit_sha]
+params:
+  # Triggers reported as privileged in the features (the analyser's PRIVILEGED_TRIGGERS).
+  privileged_triggers: [pull_request_target, workflow_run, issue_comment]
+false_positives:
+  - >-
+    Workflows that check out the pull request only to read files (labelers, size checks)
+    and never build or run it. Handling: alerted anyway: build scripts, package manager
+    hooks and actions in the checked-out tree execute implicitly. The fix is pull_request
+    (no secrets) plus a separate privileged workflow_run that consumes artifacts.
+  - >-
+    Workflows gated by a maintainer-applied label or an environment approval before the
+    checkout. Handling: the analyser does not evaluate `if:` conditions or environment
+    rules, so the alert fires (fail closed); the reviewer confirms the gate.
+blind_spots:
+  - >-
+    Untrusted code reaching the privileged context in ways the analyser does not model
+    (artifact or cache poisoning between pull_request and workflow_run, composite actions
+    that check out internally, reusable workflows from other repositories).
+  - >-
+    A workflow that already had the pattern before monitoring started is not new and is not
+    alerted (posture scanners report the existing state).
+  - Commits outside the monitored branches, and history rewritten between polls.
+references:
+  - https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
+  - https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#pull_request_target
+query: GH-002.sql
+summary_template: >-
+  Workflow {workflow_path} in {repository} now checks out untrusted code under a privileged
+  trigger ({privileged_triggers}) at commit {commit_sha} by {actor}; token permissions
+  {permissions_after}; analysis {analysis_methods}
+tests:
+  - name: matrix-pull-request-target-checks-out-pr-head
+    description: >-
+      Matrix positive: a workflow added with on: pull_request_target and actions/checkout of
+      github.event.pull_request.head.sha, then `npm test` (analysed by the collector's
+      workflow analyser): high.
+    fixture: tests/GH-002/positive_matrix_prt_checkout_head.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    features:
+      privileged_triggers: [pull_request_target]
+      privileged_triggers_added: [pull_request_target]
+  - name: workflow-run-checks-out-head-branch-lexical
+    description: >-
+      An unparseable workflow_run workflow that fetches the triggering run's head branch: the
+      lexical comparison finds the pattern (medium).
+    fixture: tests/GH-002/positive_lexical_workflow_run_checkout.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: matrix-control-pull-request-with-checkout
+    description: >-
+      Matrix negative control: a pull_request workflow with actions/checkout of the PR head
+      (no secrets, read-only token): not privileged.
+    fixture: tests/GH-002/negative_matrix_pull_request_checkout.jsonl
+    expect: no_alert
+  - name: privileged-trigger-without-untrusted-checkout
+    description: >-
+      pull_request_target added for a labelling job that checks out only the base branch:
+      the documented safe use, no alert.
+    fixture: tests/GH-002/negative_prt_without_pr_checkout.jsonl
+    expect: no_alert

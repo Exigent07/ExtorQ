@@ -1,0 +1,76 @@
+rule_id: GH-003
+version: 1.0.0
+title: Unpinned third-party GitHub Action added
+description: >-
+  A commit added a third-party action (or docker:// image) to a GitHub Actions workflow
+  referenced by a tag or branch instead of a full commit SHA (or image digest). Whoever
+  controls the action's repository can move the tag, and the workflow then runs that code
+  with its token and secrets (as in the tj-actions/changed-files compromise, 2025). Actions
+  owned by GitHub (actions/*, github/*) are not third-party. Only references that are new in
+  this commit alert. Confidence: high (the attribute is produced only by a structured
+  analysis of both workflow versions).
+severity: medium
+status: stable
+mitre_techniques: [T1195.001]
+asset_types: [github_repository]
+requires:
+  - source_type: github.api
+    event_types: [github.workflow.modified]
+schedule:
+  interval_seconds: 120
+  lookback_seconds: 7200
+  late_tolerance_seconds: 3600
+dedup:
+  strategy: event
+group_by: [repository, workflow_path, commit_sha]
+params: {}
+false_positives:
+  - >-
+    Actions from well-known publishers pinned by tag (docker/*, aws-actions/*). Handling:
+    alerted by design, because a tag is mutable whoever the publisher is; the fix is a SHA
+    pin (Dependabot and Renovate keep SHA pins up to date). There is no publisher allowlist:
+    trusting a name is exactly what the attack abuses.
+  - >-
+    Bumping an unpinned action to another tag (v3 -> v4). Handling: alerted again by design:
+    the analyser compares full references, and the new tag is new trust in code nobody has
+    pinned; an unchanged unpinned reference (the same tag kept in later edits) never alerts
+    twice. Pinning to a SHA ends the series.
+blind_spots:
+  - >-
+    Workflows that cannot be parsed (lexical fallback) are not analysed for action pinning
+    (the attribute is null).
+  - >-
+    A SHA pin of a malicious commit, actions that download further code at runtime, and
+    unpinned actions inside composite actions or reusable workflows from other repositories.
+  - Unpinned references that existed before monitoring started (posture scanners report them).
+references:
+  - https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions
+  - https://attack.mitre.org/techniques/T1195/001/
+query: GH-003.sql
+summary_template: >-
+  Workflow {workflow_path} in {repository} added unpinned third-party action(s)
+  {unpinned_actions_added} at commit {commit_sha} by {actor} ({unpinned_actions_in_workflow}
+  unpinned in the workflow now)
+tests:
+  - name: matrix-third-party-action-pinned-by-tag
+    description: >-
+      Matrix positive: docker/setup-buildx-action@v3 added to a workflow (analysed by the
+      collector's workflow analyser).
+    fixture: tests/GH-003/positive_matrix_tag_pinned_action.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    features:
+      unpinned_actions_added: [docker/setup-buildx-action@v3]
+  - name: matrix-control-same-action-sha-pinned
+    description: >-
+      Matrix negative control: the same action pinned to a full 40-hex commit SHA, and a
+      GitHub-owned action pinned by tag (not third-party).
+    fixture: tests/GH-003/negative_matrix_sha_pinned_action.jsonl
+    expect: no_alert
+  - name: unparseable-workflow-is-not-analysed
+    description: >-
+      An unpinned action added in a version that cannot be parsed: the lexical fallback does
+      not analyse pinning, so GH-003 stays silent (documented blind spot).
+    fixture: tests/GH-003/negative_lexical_fallback_not_analysed.jsonl
+    expect: no_alert

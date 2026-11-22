@@ -1,9 +1,4 @@
-"""GH-001 simulation script: argument safety and the offline dry run (no network).
-
-The dry run builds a throwaway local git repository from lab/github-repo in a temporary
-directory, applies the GH-001 template, and runs the workflow analyser on the diff and on
-the cleanup diff. Nothing is pushed or recorded.
-"""
+"""GH-001 workflow analysis and legacy script argument guards (offline)."""
 
 from __future__ import annotations
 
@@ -13,6 +8,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+from extorq_collectors.github.analyze import main as analyse
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "simulations/github/gh_001_workflow_permissions.sh"
@@ -38,23 +35,19 @@ def run(script: Path, *args: str, tmp_path: Path) -> subprocess.CompletedProcess
     )
 
 
-def test_dry_run_detects_escalation_and_clean_revert(tmp_path: Path) -> None:
-    result = run(
-        SCRIPT,
-        "--repo",
-        "Example-Org/extorq-lab",
-        "--dry-run",
-        "--run-id",
-        "testdry01",
-        tmp_path=tmp_path,
-    )
-    assert result.returncode == 0, result.stderr[-2000:]
-    out = result.stdout
+def test_workflow_analyser_detects_escalation_and_clean_revert(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = ".github/workflows/ci.yml"
+    baseline = str(ROOT / "lab/github-repo" / path)
+    changed = str(SCRIPT.parent / "templates/ci-gh001.yml")
+    args = ["--path", path, "--repo-default", "read"]
+    assert analyse([*args, "--before", baseline, "--after", changed, "--expect-escalation"]) == 0
+    out = capsys.readouterr().out
     assert '"write_all_added": true' in out
     assert '"untrusted_checkout_added": true' in out
-    assert "simulation marker parsed from commit message: run_id=testdry01" in out
-    assert "dry run OK" in out
-    assert not any(p.name.startswith("extorq-gh001") for p in tmp_path.iterdir())  # cleaned up
+    assert analyse([*args, "--before", changed, "--after", baseline, "--expect-no-escalation"]) == 0
+    assert '"escalation": false' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

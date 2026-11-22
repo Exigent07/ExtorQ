@@ -19,12 +19,12 @@ def _one(events: list) -> object:
 
 
 def test_invalid_user_vm001_line() -> None:
-    entry = find("journal/sshd.ndjson", "Invalid user extorq-sim-c7cbc976ecaf")
+    entry = find("journal/sshd.ndjson", "Invalid user extorq-test-c7cbc976ecaf")
     event = _one(auth.parse_sshd(entry, pctx(service=SSH_REF)))
     assert event.event_type == "auth.ssh.invalid_user"
-    assert event.actor.name == "extorq-sim-c7cbc976ecaf"
+    assert event.actor.name == "extorq-test-c7cbc976ecaf"
     assert event.network.src_ip == "10.0.2.2" and event.network.src_port is not None
-    assert event.simulation.run_id == "c7cbc976ecaf"
+    assert event.labels == {}  # a detection-test login is ordinary telemetry
     assert event.service == SSH_REF
     assert event.attributes["invalid_user"] is True
     assert event.source.source_native_id == entry.cursor
@@ -34,7 +34,7 @@ def test_invalid_user_vm001_line() -> None:
 def test_preauth_close_and_reset() -> None:
     closed = _one(
         auth.parse_sshd(
-            find("journal/sshd.ndjson", "Connection closed by invalid user extorq-sim-"), pctx()
+            find("journal/sshd.ndjson", "Connection closed by invalid user extorq-test-"), pctx()
         )
     )
     assert closed.event_type == "auth.ssh.preauth_closed"
@@ -68,7 +68,7 @@ def test_max_auth_exceeded_both_forms() -> None:
     for event in (first, second):
         assert event.event_type == "auth.ssh.max_auth_exceeded"
         assert event.attributes["invalid_user"] is True
-        assert event.simulation is not None
+        assert event.network is not None and event.network.src_ip == "10.0.2.2"
     assert first.attributes["signal"] == "max_attempts_exceeded"
     assert second.attributes["signal"] == "too_many_authentication_failures"
 
@@ -126,7 +126,7 @@ def test_uninteresting_sshd_lines_produce_nothing() -> None:
 
 
 def test_forged_sshd_line_becomes_notable_without_service() -> None:
-    real = find("journal/sshd.ndjson", "Invalid user extorq-sim-c7cbc976ecaf")
+    real = find("journal/sshd.ndjson", "Invalid user extorq-test-c7cbc976ecaf")
     # A local user writing "sshd" lines with logger: kernel-attested uid/exe differ.
     forged = replace(real, uid=1000, exe="/usr/bin/logger", comm="logger")
     event = _one(auth.parse_sshd(forged, pctx(service=SSH_REF)))
@@ -136,7 +136,7 @@ def test_forged_sshd_line_becomes_notable_without_service() -> None:
 
 
 def test_hostile_user_name_cannot_spoof_source_address() -> None:
-    real = find("journal/sshd.ndjson", "Invalid user extorq-sim-c7cbc976ecaf")
+    real = find("journal/sshd.ndjson", "Invalid user extorq-test-c7cbc976ecaf")
     # SYNTHETIC (derived from a real line): user name containing a fake "from ... port" part.
     hostile = replace(real, message="Invalid user a from 6.6.6.6 port 1 from 10.0.2.2 port 4242")
     event = _one(auth.parse_sshd(hostile, pctx()))
@@ -157,13 +157,13 @@ def test_pam_su_failure_and_failed_su() -> None:
 
 
 def test_sudo_command_from_vm002() -> None:
-    entry = find("journal/sudo.ndjson", "COMMAND=/bin/sh -s -- create extorq-sim-")
+    entry = find("journal/sudo.ndjson", "COMMAND=/bin/sh -s -- create extorq-test-")
     event = _one(parse_entry(entry, pctx()))
     assert event.event_type == "auth.sudo.command"
     assert event.actor.name == "extorq-admin"
     assert event.attributes["run_as"] == "root" and event.attributes["cwd"] == "/home/extorq-admin"
-    assert event.process.command_line.startswith("/bin/sh -s -- create extorq-sim-")
-    assert event.simulation is not None
+    assert event.process.executable == "/bin/sh"
+    assert event.process.command_line is None and event.raw is None
 
 
 def test_sudo_not_in_sudoers_with_leading_spaces() -> None:
@@ -184,11 +184,10 @@ def test_sudo_session_lines_are_context_only() -> None:
 
 def test_account_tools_and_dispatch_denials() -> None:
     created = _one(
-        parse_entry(find("journal/accounts.ndjson", "new user: name=extorq-sim-"), pctx())
+        parse_entry(find("journal/accounts.ndjson", "new user: name=extorq-test-"), pctx())
     )
     assert created.event_type == "system.log.notable" and created.action == "account.useradd"
-    assert created.attributes["account"].startswith("extorq-sim-")
-    assert created.simulation is not None
+    assert created.attributes["account"].startswith("extorq-test-")
     deleted = _one(parse_entry(find("journal/accounts.ndjson", "delete user"), pctx()))
     assert deleted.action == "account.userdel"
     denial = _one(

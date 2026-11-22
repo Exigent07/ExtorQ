@@ -1,7 +1,7 @@
 {
   "uid": "extorq-security-overview",
   "title": "ExtorQ - Security Overview",
-  "description": "Event volume, detections, open findings and service coverage. Counts are distinct ids (uniqExact) so duplicate deliveries never inflate them.",
+  "description": "All monitored assets at a glance: event volume, detections, open findings and service coverage. Counts are distinct ids (uniqExact) so duplicate deliveries never inflate them. Investigate alerts in the ExtorQ console; these panels are for trends.",
   "tags": [
     "extorq"
   ],
@@ -40,7 +40,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "Activity in range",
+      "title": "Activity in the selected range",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -54,7 +54,7 @@
       "id": 2,
       "type": "stat",
       "title": "Events",
-      "description": "Distinct normalised events with event_time in the selected range.",
+      "description": "Distinct normalised security events whose event_time falls in the selected range, across every asset. Source: extorq.events (all collectors through the ingest gateway). Volume only: a high or low number is neither good nor bad by itself.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -89,7 +89,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -109,7 +109,7 @@
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "orientation": "auto"
       }
     },
@@ -117,7 +117,7 @@
       "id": 3,
       "type": "stat",
       "title": "Alerts",
-      "description": "Distinct detection alerts first seen in the range (latest alert version).",
+      "description": "Distinct detection alerts first seen in the range (latest version of each alert). Source: v_alerts, written only by the detector's versioned SQL rules. Orange when any alert exists; triage them in the console (Detections).",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -154,6 +154,10 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
               }
             ]
           },
@@ -172,7 +176,7 @@
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "orientation": "auto"
       }
     },
@@ -180,7 +184,7 @@
       "id": 4,
       "type": "stat",
       "title": "Assets reporting events",
-      "description": "Assets with at least one stored event in the range.",
+      "description": "Assets with at least one stored event in the range. Source: extorq.events. An asset missing here sent no telemetry in the range: check Collector & Pipeline Health.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -215,7 +219,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -235,7 +239,7 @@
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "orientation": "auto"
       }
     },
@@ -243,7 +247,7 @@
       "id": 5,
       "type": "stat",
       "title": "Open findings (current)",
-      "description": "Current state (not time-filtered): findings observed by the latest succeeded scan of their scope (v_findings_current). Unverified findings are excluded.",
+      "description": "Current state, not time-filtered: findings seen by the latest succeeded scan of their scope. Source: v_findings_current (Trivy, Gitleaks, Semgrep and posture checks). Unverified findings (failed or partial scans) are excluded.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -280,6 +284,10 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
               }
             ]
           },
@@ -298,7 +306,7 @@
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "orientation": "auto"
       }
     },
@@ -306,7 +314,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Event volume by source type",
-      "description": "Distinct events per interval by telemetry source. A gap means no stored events, which is not proof of zero activity when collection was unhealthy.",
+      "description": "Distinct events per interval by telemetry source (e.g. linux.journald, k8s.audit, github.api, macos.unified_log). Source: extorq.events. A gap means nothing was stored, which is not proof of zero activity when collection was unhealthy.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -341,12 +349,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -356,6 +365,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -379,7 +391,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Alerts by severity",
-      "description": "Distinct alerts per interval of first_seen, by severity.",
+      "description": "Distinct alerts per interval of first_seen, split by the severity the rule assigns. Source: v_alerts (detector).",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -414,12 +426,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -429,6 +442,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -452,7 +468,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Alerts by rule",
-      "description": "Distinct alerts per interval of first_seen, by detection rule.",
+      "description": "Distinct alerts per interval of first_seen, by detection rule (id and title). Source: v_alerts (detector). Rule logic, false positives and blind spots: docs/detection-catalog.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -474,7 +490,7 @@
           "format": 0,
           "queryType": "timeseries",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT $__timeInterval(first_seen) AS time, rule_id, uniqExact(alert_id) AS alerts\nFROM extorq.v_alerts\nWHERE $__timeFilter(first_seen)\nGROUP BY time, rule_id\nORDER BY time, rule_id"
+          "rawSql": "SELECT $__timeInterval(first_seen) AS time, concat(rule_id, ' ', rule_title) AS rule,\n       uniqExact(alert_id) AS alerts\nFROM extorq.v_alerts\nWHERE $__timeFilter(first_seen)\nGROUP BY time, rule\nORDER BY time, rule"
         }
       ],
       "fieldConfig": {
@@ -487,12 +503,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -502,6 +519,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -538,7 +558,7 @@
       "id": 10,
       "type": "bargauge",
       "title": "Open findings by severity (current)",
-      "description": "Current lifecycle state (not time-filtered).",
+      "description": "Current state, not time-filtered: open findings per severity across all assets. Source: v_findings_current (scanner and posture results tied to their scan runs).",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -573,7 +593,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -598,8 +618,8 @@
     {
       "id": 11,
       "type": "table",
-      "title": "Open findings by scanner and asset (current)",
-      "description": "Current lifecycle state (not time-filtered).",
+      "title": "Open findings by asset and scanner (current)",
+      "description": "Current state, not time-filtered: open findings per asset (inventory name), scanner and severity. Source: v_findings_current joined to v_assets for the name.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -621,7 +641,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT asset_id, scanner, severity, uniqExact(finding_id) AS findings\nFROM extorq.v_findings_current\nWHERE state = 'open'\nGROUP BY asset_id, scanner, severity\nORDER BY asset_id, scanner, multiIf(severity = 'critical', 4, severity = 'high', 3, severity = 'medium', 2, severity = 'low', 1, 0) DESC\nLIMIT 200"
+          "rawSql": "SELECT if(ifNull(n.n_name, '') = '', f.f_asset_id, n.n_name) AS asset, f.f_scanner AS scanner, f.f_severity AS severity,\n       f.findings AS findings, f.f_asset_id AS asset_id\nFROM\n(\n    SELECT asset_id AS f_asset_id, scanner AS f_scanner, severity AS f_severity,\n           uniqExact(finding_id) AS findings\n    FROM extorq.v_findings_current\n    WHERE state = 'open'\n    GROUP BY f_asset_id, f_scanner, f_severity\n) AS f\nLEFT JOIN (SELECT asset_id AS n_asset_id, name AS n_name FROM extorq.v_assets) AS n ON n.n_asset_id = f.f_asset_id\nORDER BY asset, scanner, multiIf(severity = 'critical', 4, severity = 'high', 3, severity = 'medium', 2, severity = 'low', 1, 0) DESC\nLIMIT 200"
         }
       ],
       "fieldConfig": {
@@ -634,7 +654,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -645,7 +665,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": [
@@ -707,7 +728,7 @@
       "id": 12,
       "type": "table",
       "title": "Events by asset and source",
-      "description": "Asset/source breakdown of stored events in the range.",
+      "description": "Distinct events per asset and telemetry source in the range, with the newest event and ingestion times. Source: extorq.events joined to v_assets for the name. A source whose last event is old is quiet or failing: compare with collector health.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -729,7 +750,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT asset_id, asset_type, source_type, uniqExact(event_id) AS events,\n       max(event_time) AS last_event_time, max(ingested_time) AS last_ingested_time\nFROM extorq.events\nWHERE $__timeFilter(event_time)\nGROUP BY asset_id, asset_type, source_type\nORDER BY asset_id, source_type\nLIMIT 500"
+          "rawSql": "SELECT if(ifNull(n.n_name, '') = '', e.e_asset_id, n.n_name) AS asset, e.e_asset_type AS asset_type,\n       e.e_source_type AS source_type, e.events AS events, e.last_event AS last_event_time,\n       e.last_ingested AS last_ingested_time, e.e_asset_id AS asset_id\nFROM\n(\n    SELECT asset_id AS e_asset_id, any(asset_type) AS e_asset_type,\n           source_type AS e_source_type, uniqExact(event_id) AS events,\n           max(event_time) AS last_event, max(ingested_time) AS last_ingested\n    FROM extorq.events\n    WHERE $__timeFilter(event_time)\n    GROUP BY e_asset_id, e_source_type\n) AS e\nLEFT JOIN (SELECT asset_id AS n_asset_id, name AS n_name FROM extorq.v_assets) AS n ON n.n_asset_id = e.e_asset_id\nORDER BY asset, source_type\nLIMIT 500"
         }
       ],
       "fieldConfig": {
@@ -742,7 +763,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -753,7 +774,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -783,7 +805,7 @@
       "id": 14,
       "type": "table",
       "title": "Recent alerts",
-      "description": "Latest alert versions with analyst workflow state (new when no analyst acted). Investigate in the ExtorQ console.",
+      "description": "Latest version of each alert active in the range, with the analyst workflow state (new when no analyst acted). Source: v_alerts (detector) and v_analyst_state (console). Confidence is evidence completeness, not a verdict. Investigate in the ExtorQ console.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -805,7 +827,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT a.last_seen AS last_seen, a.rule_id AS rule_id, a.severity AS severity,\n       a.confidence AS confidence, a.asset_id AS asset_id,\n       if(ifNull(s.status, '') = '', 'new', s.status) AS analyst_status,\n       a.event_count AS events, a.summary AS summary\nFROM extorq.v_alerts AS a\nLEFT JOIN\n(\n    SELECT alert_id, status FROM extorq.v_analyst_state\n) AS s ON s.alert_id = a.alert_id\nWHERE $__timeFilter(a.last_seen)\nORDER BY a.last_seen DESC\nLIMIT 100"
+          "rawSql": "SELECT a.last_seen AS last_seen, a.rule_id AS rule_id, a.rule_title AS rule_title,\n       a.severity AS severity, a.confidence AS confidence, if(ifNull(n.n_name, '') = '', a.asset_id, n.n_name) AS asset,\n       if(ifNull(s.status, '') = '', 'new', s.status) AS analyst_status,\n       a.event_count AS events, a.summary AS summary, a.asset_id AS asset_id\nFROM extorq.v_alerts AS a\nLEFT JOIN\n(\n    SELECT alert_id, status FROM extorq.v_analyst_state\n) AS s ON s.alert_id = a.alert_id\nLEFT JOIN (SELECT asset_id AS n_asset_id, name AS n_name FROM extorq.v_assets) AS n ON n.n_asset_id = a.asset_id\nWHERE $__timeFilter(a.last_seen)\nORDER BY a.last_seen DESC\nLIMIT 100"
         }
       ],
       "fieldConfig": {
@@ -818,7 +840,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -829,7 +851,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": [
@@ -876,6 +899,42 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "analyst_status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "new": {
+                        "color": "orange",
+                        "index": 0
+                      },
+                      "investigating": {
+                        "color": "yellow",
+                        "index": 1
+                      },
+                      "acknowledged": {
+                        "color": "blue",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
           }
         ]
       },
@@ -904,7 +963,7 @@
       "id": 16,
       "type": "bargauge",
       "title": "Services by coverage state",
-      "description": "Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source. Rows come from v_services (one row per service, FINAL).",
+      "description": "Current state: present services by effective coverage. Source: v_services (one row per service, FINAL; reported by host and Kubernetes service discovery). Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -939,7 +998,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -965,7 +1024,7 @@
       "id": 17,
       "type": "table",
       "title": "Services by asset, kind and coverage",
-      "description": "Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source. A Kubernetes Service (k8s_service) is never a host OS service.",
+      "description": "Current state: present services per asset, kind and coverage. Source: v_services joined to v_assets. A Kubernetes Service (k8s_service) is never a host OS service. Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -987,7 +1046,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT asset_id, service_kind, multiIf(adapter_support = 'none', 'unsupported', adapter_support = 'planned', 'planned', monitoring_status = 'unmonitored', 'unmonitored', monitoring_status = 'degraded', 'degraded', last_seen < now() - INTERVAL 1 HOUR, 'degraded (stale record)', 'monitored') AS coverage, count() AS services\nFROM extorq.v_services\nWHERE present = 1\nGROUP BY asset_id, service_kind, coverage\nORDER BY asset_id, service_kind, coverage\nLIMIT 500"
+          "rawSql": "SELECT if(ifNull(n.n_name, '') = '', v.v_asset_id, n.n_name) AS asset, v.v_kind AS service_kind, v.v_coverage AS coverage,\n       v.services AS services, v.v_asset_id AS asset_id\nFROM\n(\n    SELECT asset_id AS v_asset_id, service_kind AS v_kind, multiIf(adapter_support = 'none', 'unsupported', adapter_support = 'planned', 'planned', monitoring_status = 'unmonitored', 'unmonitored', monitoring_status = 'degraded', 'degraded', last_seen < now() - INTERVAL 1 HOUR, 'degraded (stale record)', 'monitored') AS v_coverage,\n           count() AS services\n    FROM extorq.v_services\n    WHERE present = 1\n    GROUP BY v_asset_id, v_kind, v_coverage\n) AS v\nLEFT JOIN (SELECT asset_id AS n_asset_id, name AS n_name FROM extorq.v_assets) AS n ON n.n_asset_id = v.v_asset_id\nORDER BY asset, service_kind, coverage\nLIMIT 500"
         }
       ],
       "fieldConfig": {
@@ -1000,7 +1059,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -1011,10 +1070,56 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "coverage"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "monitored": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "degraded": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "degraded (stale record)": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "unmonitored": {
+                        "color": "orange",
+                        "index": 3
+                      },
+                      "planned": {
+                        "color": "blue",
+                        "index": 4
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,

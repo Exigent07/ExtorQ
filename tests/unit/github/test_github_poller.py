@@ -9,13 +9,14 @@ contracts with the SDK's own ``to_record_json``.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
-from github_fakes import FakeGitHub
+from github_fakes import FakeGitHub, iso
 
 from extorq.contracts import PostureFinding, ScanRun, ScanStatus, SecurityEvent, Severity
 from extorq.contracts.asset import Asset, InventoryItem
@@ -212,7 +213,7 @@ def test_gh001_escalation_commit_and_cleanup(baseline: Harness) -> None:
 
     commit = events(records, "github.commit.observed")[0]
     assert commit.github is not None and commit.github.commit_sha == sha
-    assert commit.simulation is not None and commit.simulation.run_id == "gh001run01"
+    assert "simulation" not in commit.model_dump()
     assert commit.event_time == pushed_at
     assert commit.actor is not None and commit.actor.name == "synthetic-operator"
     assert commit.attributes["workflow_files_changed"] == [CI]
@@ -234,12 +235,11 @@ def test_gh001_escalation_commit_and_cleanup(baseline: Harness) -> None:
     assert a["repo_default_workflow_permissions"] == "read"
     assert "write_all_added" in a["risk_flags"]
     assert a["parent_sha"] == fake.commits[sha].parents[0]
-    assert wf.simulation is not None and wf.simulation.run_id == "gh001run01"
     assert wf.raw and "+permissions: write-all" in wf.raw  # redacted unified diff
 
     (run,) = events(records, "github.workflow_run.observed")
     assert run.github is not None and run.github.commit_sha == sha
-    assert run.simulation is not None
+    assert run.github.workflow_run_id is not None
 
     # Escalation triggers an immediate posture scan.
     checks = {f.check_id for f in of_type(records, PostureFinding)}
@@ -513,7 +513,7 @@ def test_workflow_runs_are_emitted_once_per_state(baseline: Harness) -> None:
     assert (first.github.workflow_run_id, first.github.run_attempt) == (run["id"], 1)
     assert first.github.event_name == "push" and first.github.conclusion is None
     assert first.github.workflow_path == CI
-    assert first.simulation is not None and first.simulation.run_id == "runbranch1"
+    assert first.github.ref == "refs/heads/extorq-sim-runbranch1"
     _, records = baseline.poll()
     assert events(records, "github.workflow_run.observed") == []
     run.update(status="completed", conclusion="failure")
@@ -619,13 +619,111 @@ def test_listing_pause_longer_than_lookback_is_a_gap(baseline: Harness) -> None:
     assert gap.attributes["gap_start"] < gap.attributes["gap_end"]
 
 
-def test_run_listing_uses_conditional_request_within_the_same_window(baseline: Harness) -> None:
+def test_run_listing_reports_transition_on_an_older_page() -> None:
+    fake = lab_repo()
+    harness = Harness(fake, page_size=1)
+    older = fake.add_run(status="in_progress", conclusion=None)
+    fake.add_run()
+    harness.poll()
+    request_count = len(fake.requests)
+    older.update(status="completed", conclusion="success")
+    _, records = harness.poll()
+    (changed,) = events(records, "github.workflow_run.observed")
+    assert changed.github is not None and changed.github.workflow_run_id == older["id"]
+    requests = [r for r in fake.requests[request_count:] if r.url.path.endswith("/actions/runs")]
+    assert len(requests) == 2
+    assert all("if-none-match" not in r.headers for r in requests)
+
+
+def test_open_run_transitions_beyond_lookback_after_checkpoint_restart(baseline: Harness) -> None:
+    fake = baseline.fake
+    run = fake.add_run(status="in_progress", conclusion=None)
     baseline.poll()
-    before = baseline.client.not_modified_count
+    restarted = Harness(fake)
+    restarted.state_json = baseline.state_json
+    fake.clock += timedelta(hours=25)
+    run.update(status="completed", conclusion="failure", updated_at=iso(fake.clock))
+    _, records = restarted.poll()
+    (done,) = events(records, "github.workflow_run.observed")
+    assert done.github is not None and done.github.workflow_run_id == run["id"]
+    assert done.github.conclusion == "failure" and done.event_time == fake.clock
+    assert str(run["id"]) not in restarted.state.runs_open
+    _, replay = restarted.poll()
+    assert not events(replay, "github.workflow_run.observed")
+
+
+def test_legacy_open_run_checkpoint_suppresses_unchanged_state(baseline: Harness) -> None:
+    run = baseline.fake.add_run(status="in_progress", conclusion=None)
     baseline.poll()
-    runs_requests = [r for r in baseline.fake.requests if r.url.path.endswith("/actions/runs")]
-    assert runs_requests[-1].headers.get("if-none-match")
-    assert baseline.client.not_modified_count > before
+    assert baseline.state_json is not None
+    checkpoint = json.loads(baseline.state_json)
+    key = str(run["id"])
+    checkpoint["runs_seen"] = {key: f"1:in_progress:None|{run['created_at']}"}
+    del checkpoint["runs_open"]
+    baseline.state_json = json.dumps(checkpoint)
+
+    _, records = baseline.poll()
+    assert not events(records, "github.workflow_run.observed")
+    assert key in baseline.state.runs_open
+    run.update(status="completed", conclusion="success")
+    _, records = baseline.poll()
+    (completed,) = events(records, "github.workflow_run.observed")
+    assert completed.github is not None and completed.github.conclusion == "success"
+
+
+def test_truncation_does_not_hide_tracked_run_transition() -> None:
+    fake = lab_repo()
+    old = fake.add_run(status="in_progress", conclusion=None)
+    harness = Harness(fake, page_size=1, max_pages=1)
+    harness.poll()
+    watermark = harness.state.runs_listed_at
+    fake.clock += timedelta(minutes=10)
+    fake.add_run()
+    old.update(status="completed", conclusion="failure", updated_at=iso(fake.clock))
+    report, records = harness.poll()
+    assert "workflow_runs_listing" in report.gaps
+    assert harness.state.runs_listed_at == watermark
+    assert {
+        event.github.workflow_run_id
+        for event in events(records, "github.workflow_run.observed")
+        if event.github is not None
+    } == {old["id"], fake.runs[0]["id"]}
+
+
+def test_open_run_details_survive_list_failure(baseline: Harness) -> None:
+    run = baseline.fake.add_run(status="in_progress", conclusion=None)
+    baseline.poll()
+    watermark = baseline.state.runs_listed_at
+    baseline.fake.inject(r".*/actions/runs", 500)
+    run.update(status="completed", conclusion="failure")
+    report, records = baseline.poll()
+    assert any("workflow_runs" in error for error in report.errors)
+    assert baseline.state.runs_listed_at == watermark
+    (done,) = events(records, "github.workflow_run.observed")
+    assert done.github is not None and done.github.workflow_run_id == run["id"]
+
+
+def test_workflow_run_revision_distinguishes_corrections_and_rejects_reordered_attempts(
+    baseline: Harness,
+) -> None:
+    fake = baseline.fake
+    run = fake.add_run(status="completed", conclusion="failure", run_attempt=2)
+    _, records = baseline.poll()
+    (failed,) = events(records, "github.workflow_run.observed")
+    upstream_time = run["updated_at"]
+    run.update(conclusion="success", updated_at=iso(fake.clock + timedelta(minutes=4)))
+    _, records = baseline.poll()
+    (corrected,) = events(records, "github.workflow_run.observed")
+    native_id = corrected.source.source_native_id
+    assert native_id is not None and native_id.startswith("workflow-run.v2:")
+    assert failed.event_id != corrected.event_id
+    run.update(conclusion="failure", updated_at=upstream_time)
+    _, records = baseline.poll()
+    assert not events(records, "github.workflow_run.observed")
+    run.update(run_attempt=1, status="in_progress", conclusion=None)
+    _, records = baseline.poll()
+    assert not events(records, "github.workflow_run.observed")
+    assert str(run["id"]) not in baseline.state.runs_open
 
 
 def test_unconvertible_run_is_a_gap_not_a_poison_pill(baseline: Harness) -> None:
@@ -671,7 +769,6 @@ def test_oversized_escalation_is_detected_lexically(baseline: Harness) -> None:
     assert a["lexical_truncated"] is False
     assert a["workflow_sha256_after"]  # whole file read: its hash is known
     assert wf.raw is not None and wf.raw.startswith("diff omitted")
-    assert wf.simulation is not None and wf.simulation.run_id == "gh001big01"
     assert "compared lexically" in (wf.message or "")
     # The content was read as a bounded prefix with the raw media type.
     content = [r for r in fake.requests if "/contents/" in r.url.path]
@@ -800,7 +897,7 @@ def test_transient_commit_failure_recovers_with_the_genuine_push_time(
     assert commit.actor is not None and commit.actor.name == "synthetic-op"
     (wf,) = events(records, "github.workflow.modified")
     assert wf.attributes["write_all_added"] is True and wf.event_time == pushed_at
-    assert wf.simulation is not None and wf.simulation.run_id == "retry0001"
+    assert wf.github is not None and wf.github.commit_sha == flaky
     assert baseline.state.commit_retries == {}
     assert events(records, "extorq.collector.gap_detected") == []
 

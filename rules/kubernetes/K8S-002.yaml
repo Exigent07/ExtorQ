@@ -1,5 +1,5 @@
 rule_id: K8S-002
-version: 1.1.0
+version: 1.3.0
 title: Risky RBAC grant in Kubernetes
 description: >-
   A Role, ClusterRole, RoleBinding or ClusterRoleBinding was created or changed so that it
@@ -8,9 +8,10 @@ description: >-
   system:unauthenticated, system:authenticated, all service accounts, default service
   accounts). Evidence comes from the kube-apiserver audit log (successful write, actor
   known) and/or the API inventory diff (resulting object state); both use the same risk
-  vocabulary, and agreement of the two sources raises confidence to high. Annotation-only
-  writes and the documented kubeadm bootstrap objects created at cluster birth by the
-  bootstrap identity are not alerted (narrow, documented baseline exception).
+  vocabulary. Confidence is high when audit and inventory agree on object UID, resource
+  version and risk signature. Other matches remain medium. Annotation-only writes and the documented kubeadm
+  bootstrap objects created at cluster birth by the bootstrap identity are not alerted
+  (narrow, documented baseline exception).
 severity: high
 status: stable
 mitre_techniques: [T1098, T1078.004]
@@ -65,17 +66,28 @@ params:
     - "clusterrolebindings||kubeadm:cluster-admins|ClusterRole/cluster-admin|Group:kubeadm:cluster-admins"
     - "rolebindings|kube-public|kubeadm:bootstrap-signer-clusterinfo|Role/kubeadm:bootstrap-signer-clusterinfo|User:system:anonymous"
 false_positives:
-  - Installing operators or Helm charts that legitimately ship cluster-admin bindings or
-    wildcard ClusterRoles (review the actor and the chart provenance).
-  - Administrators granting temporary elevated access during an incident or upgrade.
-  - Re-applying an unchanged risky object produces an update event with the same risk
-    signature; it extends the existing alert instead of creating a new one.
+  - >-
+    Installing operators or Helm charts that legitimately ship cluster-admin bindings or
+    wildcard ClusterRoles. Handling: reported with the actor and the object; no name or
+    namespace allowlist (object names are chosen by whoever writes them).
+  - >-
+    Administrators granting temporary elevated access during an incident or upgrade.
+    Handling: reported; the risk signature (sorted risky flags) is part of the identity, so
+    one grant is one alert.
+  - >-
+    Re-applying an unchanged risky object produces an update event with the same risk
+    signature. Handling: it extends the existing alert instead of creating a new one.
   - >-
     Observed live (2026-11-21): kubeadm's own bootstrap bindings (kubeadm:cluster-admins,
-    kube-public/kubeadm:bootstrap-signer-clusterinfo) alerted at cluster creation, and the
-    lab's kubectl annotate marking them as accepted risks alerted again as patches. v1.1.0
-    excepts exactly these two creates at cluster birth by the bootstrap identity, and
-    annotation-only writes; any other write to them still alerts.
+    kube-public/kubeadm:bootstrap-signer-clusterinfo) alerted at cluster creation, and a
+    kubectl annotate marking them as accepted risks alerted again as patches. Handling
+    (v1.1.0): exactly these two creates at cluster birth by the bootstrap identity are
+    excepted (identity AND exact object signature AND time anchor), and annotation-only
+    writes are ignored; any other write to them still alerts.
+  - >-
+    Bindings of a service account to built-in read-only roles (view). Handling: not risky by
+    the shared risk vocabulary (no flag in risky_flags), so they never alert; the matrix
+    negative control checks exactly this.
 blind_spots:
   - Privileges obtained without touching RBAC objects (e.g. stolen tokens of an existing
     privileged service account, node credentials) are out of scope.
@@ -102,6 +114,38 @@ summary_template: >-
   Risky RBAC {kind} {object_ref} on {asset_id}: flags {risk_flags}; role_ref {role_ref};
   subjects {subjects}; actor(s) {actors}; sources {sources}
 tests:
+  - name: matrix-crb-service-account-to-cluster-admin
+    description: >-
+      Matrix positive: a ClusterRoleBinding of a test service account to cluster-admin
+      created with kubectl (captured audit record) and the inventory's view of the new
+      object with the same risk flag (synthetic state row). The fixture lacks revision
+      metadata sufficient to corroborate both sources.
+    fixture: tests/K8S-002/positive_matrix_crb_cluster_admin.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      risk_flags: [cluster_admin]
+      role_ref: ClusterRole/cluster-admin
+  - name: same-object-revision-corroborates
+    description: Synthetic audit and inventory observations of the same object revision.
+    fixture: tests/K8S-002/positive_corroborated_revision.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+  - name: different-object-revisions-do-not-corroborate
+    description: Synthetic audit and inventory observations of different revisions.
+    fixture: tests/K8S-002/positive_uncorroborated_revision.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: matrix-control-rolebinding-to-view
+    description: >-
+      Matrix negative control: a RoleBinding of a test service account to the built-in view
+      ClusterRole in one namespace (reshaped from a captured RoleBinding create), plus the
+      inventory's view of it: no risky flag, no alert.
+    fixture: tests/K8S-002/negative_matrix_rolebinding_view.jsonl
+    expect: no_alert
   - name: crb-patch-binds-authenticated
     description: Real audit record (B2 capture) patching a ClusterRoleBinding to system:authenticated.
     fixture: tests/K8S-002/positive_crb_patch_subjects.jsonl
@@ -121,11 +165,12 @@ tests:
   - name: clusterrole-escalate-audit-and-state-agree
     description: >-
       Real audit record creating a ClusterRole with escalate/bind/impersonate, plus a
-      synthetic inventory diff of the same object with the same risk flags.
+      synthetic inventory diff of the same object with the same risk flags. Revision
+      metadata is absent, so the two observations do not establish high confidence.
     fixture: tests/K8S-002/positive_escalate_audit_and_state.jsonl
     expect: alert
     alerts: 1
-    confidence: high
+    confidence: medium
   - name: aggregation-controller-and-denied-and-delete
     description: >-
       Real records: role aggregation controller patching ClusterRole admin (excluded actor),
@@ -138,7 +183,7 @@ tests:
     expect: no_alert
   - name: kubeadm-bootstrap-live-records
     description: >-
-      Real records of the lab cluster's birth (2026-11-21 10:16Z, exported from ClickHouse):
+      Real records of the cluster's birth (2026-11-21 10:16Z, exported from ClickHouse):
       system:apiserver creates kube-system, kubeadm's admin.conf is refused (403), the
       super-admin creates kubeadm:cluster-admins and the admin creates the anonymous
       cluster-info RoleBinding. Documented bootstrap: no alert.

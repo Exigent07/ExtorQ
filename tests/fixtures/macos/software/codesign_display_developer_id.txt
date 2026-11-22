@@ -1,0 +1,17 @@
+Executable=/Applications/ExampleApp.app/Contents/MacOS/ExampleApp
+Identifier=com.example.thirdparty.exampleapp
+Format=app bundle with Mach-O universal (x86_64 arm64)
+CodeDirectory v=20500 size=6373 flags=0x10000(runtime) hashes=188+7 location=embedded
+Signature size=8990
+Authority=Developer ID Application: Example Developer (EXAMPLE001)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+Timestamp=1 Nov 2026 at 10:00:00
+Notarization Ticket=stapled
+Info.plist entries=29
+TeamIdentifier=EXAMPLE001
+Runtime Version=15.5.0
+Sealed Resources version=2 rules=13 files=3888
+Internal requirements count=1 size=188
+Total signatures=1
+Chosen signature=1

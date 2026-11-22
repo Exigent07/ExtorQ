@@ -105,7 +105,11 @@ def _health(
         notes.append("no detection rules are registered and no rule runs are recorded")
     window = settings.ai_health_window_hours
     ai = service.ai_health(
-        repo.ai_status_counts(now - timedelta(hours=window)), repo.ai_latest(), ai_config, window
+        repo.ai_status_counts(now - timedelta(hours=window)),
+        repo.ai_latest(),
+        ai_config,
+        window,
+        runtime=service.ai_runtime(pipeline),
     )
     ingest_since = now - timedelta(hours=INGEST_WINDOW_HOURS)
     ingest = s.IngestSecuritySummary(

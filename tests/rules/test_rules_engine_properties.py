@@ -190,6 +190,37 @@ def test_identity_is_stable_across_reruns_and_fresh_state(clean, to_row) -> None
     assert sorted(a["alert_id"] for a in _latest(clean, "VM-001")) == first_ids
 
 
+def test_full_rule_window_streams_with_a_one_row_result_page(clean, to_row) -> None:
+    rule = RULES["VM-001"]
+    boundary = ROOT / "linux" / "tests" / "VM-001" / "positive_bucket_boundary.jsonl"
+    records = _events(BURST) + _events(boundary)
+    admin = clean.client("admin")
+    harness.insert_records(admin, records, to_row)
+    now = max(model.event_time for _, model in records) + timedelta(seconds=60)
+
+    baseline = _engine(clean, rule).run_once(now=now, force=True)[0]
+    first = sorted((a["alert_id"], a["evidence_event_ids"]) for a in _latest(clean, "VM-001"))
+    assert baseline.status.value == "succeeded" and len(first) == 2
+
+    clean.truncate()
+    harness.insert_records(admin, records, to_row)
+    engine = _engine(clean, rule)
+    engine.config.max_rows_per_rule = 1
+    streamed = engine.run_once(now=now, force=True)[0]
+    assert streamed.status.value == "succeeded"
+    assert streamed.rows_matched == baseline.rows_matched
+    actual = sorted((a["alert_id"], a["evidence_event_ids"]) for a in _latest(clean, "VM-001"))
+    assert actual == first
+
+    replay = engine.run_once(now=now, force=True)[0]
+    assert replay.status.value == "succeeded"
+    assert (replay.alerts_created, replay.alerts_updated) == (0, 0)
+    unresolved = admin.select("SELECT count() FROM alert_evidence WHERE event_time IS NULL").rows[
+        0
+    ][0]
+    assert unresolved == 0
+
+
 def test_failing_rule_does_not_stop_others_and_is_recorded(clean, to_row) -> None:
     good = RULES["VM-001"]
     broken = dataclasses.replace(
@@ -278,8 +309,8 @@ def test_alert_lists_producing_and_subject_services(clean, to_row) -> None:
     """B1 note 5: unit-file diffs are produced by systemd and ABOUT the unit's service
     (attributes.subject_service_id); the VM-002 alert lists both. SYNTHETIC records."""
     systemd = service_id("linux:lab-vm-01", "host_service", "init.scope")
-    unit = service_id("linux:lab-vm-01", "host_service", "extorq-sim-fixture0vm002.service")
-    fixture = ROOT / "linux" / "tests" / "VM-002" / "positive_created_with_audit_sim.jsonl"
+    unit = service_id("linux:lab-vm-01", "host_service", "extorq-test-0e49c82d82bc.service")
+    fixture = ROOT / "linux" / "tests" / "VM-002" / "positive_matrix_unit_created_enabled.jsonl"
     records = []
     for kind, model in _events(fixture):
         if model.event_type.startswith("persistence.systemd."):

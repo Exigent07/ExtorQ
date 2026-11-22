@@ -11,7 +11,8 @@ Every command the macOS collector runs goes through :func:`run_command`:
   sub-commands by :func:`check_read_only_policy` (for example ``launchctl`` may
   only ``print``/``print-disabled``: never ``load``, ``bootstrap``, ``enable``,
   ``kickstart`` ...; ``defaults`` may only ``read``/``export``; ``sysctl`` may
-  only read named keys);
+  only read named keys; ``codesign`` may only ``--verify``/``-dv`` one application
+  bundle in an application folder, never sign or strip anything);
 * the child gets a minimal fixed environment, ``stdin`` is ``/dev/null``, the
   working directory is ``/`` and it runs in its own session so the whole process
   group can be killed;
@@ -53,6 +54,7 @@ ALLOWED_EXECUTABLES: frozenset[str] = frozenset(
         "/bin/ps",
         "/usr/sbin/system_profiler",
         "/bin/launchctl",
+        "/usr/bin/codesign",
     }
 )
 
@@ -64,6 +66,18 @@ _SYSCTL_READABLE = frozenset({"hw.model", "hw.machine", "kern.osversion", "kern.
 _LAUNCHCTL_TARGET = re.compile(
     r"^(?:system|gui/\d{1,10}|user/\d{1,10})(?:/[A-Za-z0-9._-]{1,255})?$"
 )
+#: codesign targets: an application bundle at the top of, or one folder below, /Applications
+#: or a user's ~/Applications (the only places the software source scans).
+_APP_BUNDLE = re.compile(
+    r"^/(?:Applications|Users/[^/]{1,255}/Applications)/(?:[^/]{1,255}/)?[^/]{1,255}\.app$"
+)
+_CODESIGN_MODES = (["--verify", "--strict"], ["-dv", "--verbose=2"])
+
+
+def _is_app_bundle_path(path: str) -> bool:
+    return bool(_APP_BUNDLE.match(path)) and not any(
+        part in (".", "..") for part in path.split("/")
+    )
 
 
 def check_read_only_policy(argv: Sequence[str]) -> None:
@@ -97,6 +111,8 @@ def check_read_only_policy(argv: Sequence[str]) -> None:
         ok = len(args) == 1 and args[0] in _SOCKETFILTERFW_READS
     elif exe == "/usr/sbin/spctl":
         ok = args == ["--status"]
+    elif exe == "/usr/bin/codesign":
+        ok = len(args) == 3 and args[:2] in _CODESIGN_MODES and _is_app_bundle_path(args[2])
     if not ok:
         raise CommandValidationError(
             f"arguments refused by the read-only policy for {os.path.basename(exe)}"

@@ -1,13 +1,15 @@
 rule_id: VM-002
-version: 1.2.0
+version: 1.4.0
 title: New or modified systemd unit (persistence)
 description: >-
   A systemd unit file appeared or changed in a persistence location on a Linux host (or an
   existing unit was newly enabled), as observed by comparing inventory snapshots collected
-  over SSH. An auditd file watch hit (key extorq_systemd) that creates or modifies the same
-  path corroborates the write and raises confidence to high; deletions and other auditd hits
-  corroborate nothing. Units on the allowlist and the collector's baseline snapshot are not
-  alerted.
+  over SSH. Confidence: high when an auditd file watch hit (key extorq_systemd) creates or
+  modifies the same path no more than two minutes before the inventory observation;
+  medium for the inventory diff alone and for enable-only changes. Deletions and
+  other auditd hits corroborate nothing. Unit state changes (start, stop, restart) are not
+  persistence and are never evaluated. Exact allowlisted paths and the collector's baseline
+  snapshot are not alerted.
 severity: high
 status: stable
 mitre_techniques: [T1543.002]
@@ -30,6 +32,7 @@ dedup:
 group_by: [asset_id, unit_path, sha256]
 params:
   audit_key: extorq_systemd
+  corroboration_seconds: 120
   # auditd syscalls that CREATE or MODIFY a unit file (allowlist, v1.2.0). Only successful
   # hits count. Everything else corroborates nothing: deletions (unlink, unlinkat, rmdir),
   # xattr and timestamp changes, failed attempts, and unknown or numeric (non-enriched)
@@ -59,14 +62,28 @@ params:
     - fchownat
     - lchown
   # Exact unit file paths expected to change (e.g. managed by configuration management).
+  # Paths, not unit names: only root can write the unit directories.
   allowlist_paths: []
-  # Unit names whose enablement is expected.
+  # Units whose ENABLEMENT alone is expected. Applies only to enable-only rows (the unit
+  # file itself did not change in the window): a new or modified file with that name still
+  # alerts as unit_created/unit_modified, so reusing an allowlisted name gains nothing.
   allowlist_units: []
 false_positives:
-  - Package installation or upgrade that ships or updates a unit (the investigation context
-    shows package.* events on the same asset in the window).
-  - Configuration management or an administrator deploying a service; add the exact unit
-    path to allowlist_paths only if the path is controlled by that process.
+  - >-
+    Package installation or upgrade that ships or updates a unit. Handling: vendor units
+    under /usr/lib/systemd are flagged (vendor_unit) and the investigation context shows the
+    package.* changes of the asset; no package-name allowlist (an attacker can name a unit
+    after a package).
+  - >-
+    Configuration management or an administrator deploying a service. Handling: exact unit
+    paths controlled by that process can be allowlisted (allowlist_paths); a path is used
+    instead of a unit name because only root can write those directories, and
+    config.file.changed keeps monitoring the allowlisted file.
+  - >-
+    Re-installing an unchanged unit file (a redeploy) is a genuine write that auditd records.
+    Handling: rewriting identical content produces no inventory diff, so nothing alerts; a
+    delete and re-create with identical content extends the existing alert, because the alert
+    identity includes the content digest.
 blind_spots:
   - Units created and removed between two inventory snapshots (short-lived persistence);
     auditd still records the write but this rule triggers on the inventory diff only.
@@ -89,15 +106,30 @@ summary_template: >-
   {exec_start}; auditd corroborated: {audit_corroborated}; writer {writer_executables}
   ({writer_syscalls})
 tests:
-  - name: unit-created-with-auditd
-    description: New unit in /etc/systemd/system with an auditd watch hit on the same path.
-    fixture: tests/VM-002/positive_created_with_audit_sim.jsonl
+  - name: same-path-write-outside-corroboration-window
+    description: Synthetic timing variant with an earlier write to the same unit path.
+    fixture: tests/VM-002/positive_unrelated_same_path_write.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      audit_corroborated: false
+  - name: matrix-unit-created-enabled-captured
+    description: >-
+      Matrix positive, captured: the admin's sudo shell writes
+      /etc/systemd/system/extorq-test-<id>.service (ExecStart=/bin/true), reloads systemd and
+      enables the unit (real VM output parsed by the Linux collector's own inventory and auditd
+      code). The inventory diff, the enable symlink and the auditd openat agree: high.
+    fixture: tests/VM-002/positive_matrix_unit_created_enabled.jsonl
     expect: alert
     alerts: 1
     confidence: high
+    entities: {unit: extorq-test-0e49c82d82bc.service}
     features:
       audit_corroborated: true
       writer_syscalls: [openat]
+      writer_executables: [/usr/bin/dash]
+      wanted_by: [multi-user.target]
   - name: unit-modified-inventory-only
     description: >-
       Existing unit content changed; the auditd hits on the path corroborate nothing: a
@@ -128,9 +160,16 @@ tests:
     expect: alert
     alerts: 1
     confidence: medium
-  - name: baseline-and-unrelated
+  - name: matrix-control-restart-existing-unit
     description: >-
-      Baseline snapshot events, an auditd hit with another key, a deleted unit and a
-      cron change: nothing to alert.
-    fixture: tests/VM-002/negative_baseline_and_unrelated.jsonl
+      Matrix negative control: an existing unit (nginx.service) is restarted and systemd
+      reloaded. Only state changes are logged; no unit file changes, so no alert.
+    fixture: tests/VM-002/negative_matrix_restart_existing_unit.jsonl
+    expect: no_alert
+  - name: cleanup-baseline-and-unrelated
+    description: >-
+      The captured cleanup of the matrix unit (inventory deletion and the auditd unlinkat by
+      rm), a baseline snapshot event, an auditd hit with another key and a cron change:
+      nothing to alert.
+    fixture: tests/VM-002/negative_baseline_cleanup_unrelated.jsonl
     expect: no_alert

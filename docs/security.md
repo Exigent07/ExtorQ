@@ -26,7 +26,7 @@ service user is restricted to `HOST IP` 127.0.0.1, ::1 and RFC 1918 ranges
 | `extorq_detect` | SELECT telemetry, alerts, rules, contexts, services; INSERT alerts, alert_evidence, rule_runs, detection_rules, investigation_contexts, context_relationships, pipeline_health | `extorq_service` | detector | only writer of alerts |
 | `extorq_rules_ro` | SELECT events, assets, inventory_items, finding_observations, scan_runs, simulation_runs, services, service_instances, and the views `v_assets`, `v_inventory_current`, `v_findings_current`, `v_scan_runs_current` | `extorq_rules_readonly`: `readonly=1`, 60 s, 100 000 rows (throw) | rule SQL only | rule SQL cannot write, change settings or read alerts |
 | `extorq_ai` | SELECT alerts, investigation_contexts, context_relationships, ai_assessments; INSERT ai_assessments, pipeline_health | `extorq_service` | ai-worker | AI can never write alerts |
-| `extorq_api_ro` | SELECT on all `extorq.*` | `extorq_api_readonly`: `readonly=2`, 30 s (max 60), result limits; quota `extorq_api_quota` 1200 queries per minute (exhausted once on 2026-11-22 by two console smoke runs, the API then answered 503 for the rest of the minute: F-29) | API reads | analysts need raw evidence; cannot write |
+| `extorq_api_ro` | SELECT on all `extorq.*` | `extorq_api_readonly`: `readonly=2`, 30 s (max 60), result limits. `extorq_api_quota` starts at 1,200 queries per minute in `0002_rbac.sql` and rises to 6,000 after `0007_api_quota.sql` is applied. F-29 records a historical exhaustion at the 1,200 limit. | API reads | analysts need raw evidence; cannot write |
 | `extorq_api_writer` | INSERT analyst_state, analyst_actions, ai_assessments, investigation_contexts, context_relationships | `extorq_service` | API mutations | analyst state and on-demand summaries; no alert writes |
 | `extorq_grafana` | SELECT analytics tables and views; on `events` every column except `raw` and `payload`; no `ingest_quarantine.payload_excerpt` | `extorq_grafana_readonly`: `readonly=2`, limits; quota `extorq_grafana_quota` 600 queries per minute | Grafana data source | dashboards without raw log content |
 
@@ -56,7 +56,7 @@ rejects the batch (`403`) and writes `ingest_audit`.
 | `macos-workstation-01` | telemetry kinds + `service`, `service_instance` | `macos.*` | `macos:workstation-01` | macOS collector |
 | `linux-ssh-lab-vm-01` | telemetry kinds + service kinds | `linux.*` | `linux:lab-vm-01` | Linux SSH collector (on the Mac, never on the VM) |
 | `k8s-inventory-extorq-lab` | telemetry kinds + service kinds | `k8s.api_inventory`, `k8s.events`, `k8s.posture` | `k8s:extorq-lab*` (cluster and `.../node/<name>`) | inventory collector |
-| `k8s-otel-extorq-lab` | `event` | `k8s.audit`, `k8s.container_log` | `k8s:extorq-lab*` | OTel DaemonSet (Secret in `extorq-system`) |
+| `k8s-otel-extorq-lab` | `event`, `collector_health` | `k8s.audit`, `k8s.container_log` | `k8s:extorq-lab`, `k8s:extorq-lab/node/*` | OTel DaemonSet (Secret in `extorq-system`) |
 | `github-collector` | telemetry kinds | `github.*` | `github:*` | GitHub collector |
 | `scanner-runner` | asset, finding, scan_run, collector_health | `scanner.*` | `macos:workstation-01`, `linux:lab-vm-01`, `k8s:extorq-lab*`, `github:*` | scanners |
 | `simulation-runner` | `simulation_run` | `extorq.simulation` | same four patterns | simulation scripts |
@@ -95,13 +95,12 @@ inventory collector must not store them (threat model T05).
 
 | Identity | Storage | Scope and notes |
 |---|---|---|
-| GitHub token | committed configuration: the `gh auth token` fallback (`gh_cli_token_fallback: true`), enabled by the lead on 2026-11-22 with the user's explicit approval (PLAN 11); preferred: a fine-grained read-only token file (`token_file` / `EXTORQ_GITHUB_TOKEN_FILE`) | the gh CLI OAuth token is broader than read-only: the collector's health reports `token_source=gh_cli` and a warning naming the scopes `repo`, `workflow` (observed 2026-11-21 20:02 UTC). The collector itself sends only GET requests, but a compromise of the collector process or its host would expose a token with write access (F-14: accepted for the lab) |
+| GitHub token | repository-scoped fine-grained read-only token file (`token_file` / `EXTORQ_GITHUB_TOKEN_FILE`) | CLI fallback is disabled in the checked-in configuration. Verify `token_source=file` and the repository permissions after deployment. |
 | API service token | `var/secrets/api_service_token` | mounted into `api` and `frontend` only; any holder can assert any user and role (F-12), so it never reaches the browser |
 | Console accounts `analyst`, `viewer` | `var/secrets/analyst_password`, `viewer_password` | mounted into `frontend` only; constant-time comparison, per-user throttling |
 | Console session secret | `var/secrets/frontend_session_secret` | HS256 JWS sessions (8 h); rotation revokes all sessions |
 | Grafana admin | `var/secrets/grafana_admin_password` | anonymous access and sign-up disabled |
-| Jev key `JEV_API_KEY` | user's `.env`, compose `environment:` secret | mounted only into `ai-worker` (`JEV_API_KEY_FILE`) |
-| Gemini key `GEMINI_API_KEY` | user's `.env`, compose `environment:` secret | mounted only into `api` (`GEMINI_API_KEY_FILE`) |
+| Jev key `JEV_API_KEY` | private file in the opt-in Compose overlay | mounted only into `ai-worker` (`JEV_API_KEY_FILE`), with a required daily budget |
 | Local CA key, gateway key | `var/tls/ca.key`, `var/tls/gateway.key` | EC P-256 CA with `pathLen:0`; gateway leaf 397 days, renewed when under 30 days remain; SANs `localhost`, `ingest`, `host.docker.internal`, `127.0.0.1`, `10.0.2.2` |
 
 ## 2. Exposed ports and bindings
@@ -169,16 +168,16 @@ filesystem and `RuntimeDefault` seccomp; documented accepted risk).
 | `ingest_audit` | 90 days |
 | `pipeline_health` | 14 days |
 | `analyst_actions` | 365 days |
-| `assets`, `alerts`, `alert_evidence`, `investigation_contexts`, `context_relationships`, `ai_assessments`, `analyst_state`, `scan_runs`, `detection_rules`, `simulation_runs` | no TTL (latest-state and audit records) |
+| `assets`, `alerts`, `alert_evidence`, `investigation_contexts`, `context_relationships`, `ai_assessments`, `analyst_state`, `scan_runs`, `detection_rules` | no TTL (latest-state and audit records) |
 
 ClickHouse `session_log` keeps login attempts for 30 days
 (`infra/clickhouse/config.d/20-extorq-system-logs.xml`). The gateway
 quarantines events more than one day in the future (`time: event_time_in_future`)
-and, since build session 3 (PLAN 11, A), events older than the `events`
-retention of 90 days (`older_than_retention`), which ClickHouse would otherwise
-expire right after a `202`; until then the limit was 400 days. **Verified
-live** 2026-11-22 ~01:54 IST: the running gateway's `/v1/status` reports
-`limits.event_retention_days: 90` and `max_future_seconds: 86400`.
+and events older than the 90-day `events` retention (`older_than_retention`).
+It exposes the configured acceptance bounds in `/v1/status`. Alert references
+outlive raw event retention. Store recovery copies on a private encrypted
+filesystem and review them separately because the ClickHouse TTL only acts
+on live data. [Retention and recovery policy](recovery.md)
 
 ## 6. Logging hygiene
 
@@ -194,8 +193,9 @@ live** 2026-11-22 ~01:54 IST: the running gateway's `/v1/status` reports
   `curl -u user:pass`, `PGPASSWORD=x`, `MYSQL_PWD=x`, `--password x`, mysql
   `-px`, `sshpass -p x`) are redacted (F-06 resolved; F probe of `redact_text`
   2026-11-22).
-* Known gap: process arguments from the VM are still collected and stored,
-  pattern-redacted (F-17).
+* Dispatcher 1.2.0 returns an executable path where the kernel permits it. The
+  collector ignores arguments from older dispatchers. Linux auditd and Linux/macOS
+  sudo collectors omit command arguments from stored event payloads and excerpts.
 
 ## 7. Secret storage and rotation
 
@@ -245,9 +245,9 @@ history and Trivy filesystem scans (verified by
 |---|---|---|---|
 | Read-only root filesystem | every service where the software allows it | `api` and `ai-worker` run with a writable root filesystem (compose cannot materialise `environment:` secrets otherwise); flagged by `test_security_containers.py` as an advisory warning | A |
 | Service identity binding | ids bound to the authorised asset | gateway part done (`identity_mismatch`); API reads instances and events by `service_id` only (F-19 API part) | D1 |
-| GitHub token | fine-grained read-only token | gh CLI OAuth token with `repo`, `workflow` scopes, approved for the lab (PLAN 11) | operator, C1 |
-| `.env` permissions | 0600 | 0644 (`stat`, metadata only; F-09) | operator |
-| VM process arguments | minimal collection | first 256 characters of every process's arguments returned and stored redacted (F-17) | B1 |
+| GitHub token | fine-grained read-only token | CLI fallback disabled in source. The deployed credential and grants require verification. | operator, C1 |
+| `.env` permissions | 0600 | Current local mode verified as 0600 by metadata. | operator |
+| VM process arguments | minimal collection | Dispatcher 1.2.0 and collector changes are in source. Deployed dispatcher verification is pending. | B1 |
 | Compose `frontend` | console on 127.0.0.1:3000 | running since 2026-11-22 ~01:56 IST (A); unauthenticated `GET /` answers 303 to `/login`; D2's newest smoke had 5 failing new checks against that image (testing.md 3.4) | A, D2 |
 
 ## 11. How to re-verify

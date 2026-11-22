@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[3] / "rules"
 RULES = {r.rule_id: r for r in load_rules_report(ROOT)[0]}
 
 
-@pytest.mark.parametrize("rule_id", ["VM-002", "CORR-002"])
+@pytest.mark.parametrize("rule_id", ["VM-002", "VM-003", "VM-004", "CORR-002"])
 def test_rule_allowlists_match_the_shared_definition(rule_id: str) -> None:
     params = RULES[rule_id].metadata.params
     assert set(params["change_syscalls"]) == linux_audit.CHANGE_SYSCALLS

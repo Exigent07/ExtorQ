@@ -97,7 +97,8 @@ from extorq_collectors.kubernetes.model import (
 from extorq_collectors.kubernetes.posture import DEFAULT_EXCLUDED_NAMESPACES, run_posture_scan
 from extorq_collectors.sdk import Collector, CollectorContext, asset_upsert
 
-COLLECTOR_VERSION = "1.1.0"
+#: 1.2.0: schema 2.0 contracts; Namespace Pod Security attributes (model 1.1.0).
+COLLECTOR_VERSION = "1.2.0"
 FIRST_SEEN_KV = "k8s.service_first_seen"
 REFRESH_KV = "k8s.last_full_refresh"
 EVENTS_OK_KV = "k8s.events_last_success"
@@ -388,7 +389,7 @@ class KubernetesInventoryCollector(Collector):
                 "token_reloads": fetched.token_reloads or None,
                 "k8s_version": clean(as_dict(fetched.version).get("gitVersion"), 64),
                 "notes": hierarchy.notes[:8],
-                # The OTel path reports no CollectorHealth of its own: expose the agent's state.
+                # This is Pod readiness. OTel reports log delivery independently.
                 "log_agent_ready_nodes": sorted(n for n, ok in hierarchy.agents.items() if ok)
                 if hierarchy_ok
                 else None,

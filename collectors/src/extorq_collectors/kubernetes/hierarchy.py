@@ -199,8 +199,9 @@ def _coverage(
         )
     return (
         MonitoringStatus.MONITORED,
-        f"stdout/stderr shipped by {AGENT_NAME} (Ready on {', '.join(sorted(running_nodes)[:8])}); "
-        "telemetry freshness is evaluated from received events",
+        "stdout/stderr collection configured (agent Ready on "
+        f"{', '.join(sorted(running_nodes)[:8])}); "
+        "delivery is evaluated separately from node telemetry",
     )
 
 
@@ -320,6 +321,10 @@ def build_hierarchy(
             "bare_pod": True if ref.kind == POD_WORKLOAD_KIND and not static_pod_key(obj) else None,
             "accepted_risk": accepted_risk(obj),
             "running_instances": sum(1 for p in members if _pod_state(p) == "running"),
+            "running_node_asset_ids": [
+                node_id for n in sorted(running_nodes)[:64] if (node_id := node_asset_id(n))
+            ],
+            "running_node_count": len(running_nodes),
             **_ints(_replicas(ref.kind, obj)),
         }
         created = parse_time(meta(obj).get("creationTimestamp"))

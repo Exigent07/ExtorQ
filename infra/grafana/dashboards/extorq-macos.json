@@ -1,0 +1,695 @@
+{
+  "uid": "extorq-macos",
+  "title": "ExtorQ - macOS Investigation",
+  "description": "macOS hosts (asset_type macos_host): launch items, listening sockets, local and sudo authentication failures, installed applications with their code signature and the host's services. Sources: macos.launchd, macos.inventory, macos.unified_log (native macOS collector). host = the name inside the asset id. Text fields are telemetry.",
+  "tags": [
+    "extorq"
+  ],
+  "timezone": "utc",
+  "editable": false,
+  "graphTooltip": 1,
+  "liveNow": false,
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "ExtorQ dashboards",
+      "tags": [
+        "extorq"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Persistence: launch items",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Launch item changes",
+      "description": "LaunchAgent / LaunchDaemon plists created, modified or deleted, newest first (MAC-001 inputs; MAC-002 looks at the program: a shell, interpreter or user-writable path). Source: macos.launchd. Plist contents beyond these fields are not collected.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT event_time, replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, event_type, resource_path AS plist,\n       JSONExtractString(attributes, 'label') AS label,\n       if(JSONType(attributes, 'program') = 'String', JSONExtractString(attributes, 'program'),\n          JSONExtractRaw(attributes, 'program')) AS program,\n       multiIf(JSONType(attributes, 'run_at_load') != 'Bool', 'unknown', JSONExtractBool(attributes, 'run_at_load'), 'yes', 'no') AS run_at_load,\n       JSONExtractString(attributes, 'scope') AS scope,\n       JSONExtractString(attributes, 'sha256') AS sha256\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'macos_host'\n  AND event_type IN ('persistence.launchd.item_created', 'persistence.launchd.item_modified', 'persistence.launchd.item_deleted')\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true,
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Launch item changes by type",
+      "description": "Distinct launch item changes per interval. Source: macos.launchd.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, event_type, uniqExact(event_id) AS events\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'macos_host'\n  AND event_type IN ('persistence.launchd.item_created', 'persistence.launchd.item_modified', 'persistence.launchd.item_deleted')\nGROUP BY time, event_type\nORDER BY time, event_type"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "row",
+      "title": "Network exposure",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Listening sockets opened and closed",
+      "description": "Listening sockets that appeared or disappeared between inventory snapshots, with the owning process (MAC-003 inputs: all-interface listeners of processes that are not allow-listed). Source: macos.inventory. A listener shorter than one snapshot interval can be missed.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT event_time, replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, event_type, process_name AS process,\n       net_protocol AS protocol, dst_ip AS address, dst_port AS port,\n       multiIf(dst_ip IS NULL, 'unknown',\n               dst_ip IN ('127.0.0.1', '::1'), 'loopback',\n               dst_ip IN ('0.0.0.0', '::', '*'), 'all interfaces',\n               'specific address') AS exposure\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'macos_host'\n  AND event_type IN ('network.listener.opened', 'network.listener.closed')\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true,
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "exposure"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "all interfaces": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "specific address": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "loopback": {
+                        "color": "green",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Authentication",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Authentication failures by type",
+      "description": "sudo denials, local authentication failures (authd / opendirectoryd) and SSH failures per interval (MAC-004 inputs). Source: macos.unified_log. SSH events exist only when Remote Login is enabled.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, event_type, uniqExact(event_id) AS failures\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'macos_host'\n  AND event_type IN ('auth.sudo.failure', 'auth.local.failure', 'auth.ssh.login_failed', 'auth.ssh.invalid_user', 'auth.ssh.preauth_closed', 'auth.ssh.max_auth_exceeded')\nGROUP BY time, event_type\nORDER BY time, event_type"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Recent authentication failures",
+      "description": "Authentication failures, newest first, with the user and the reason macOS logged. Source: macos.unified_log. Passwords are never logged or collected.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT event_time, replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, event_type, actor_name AS user,\n       JSONExtractString(attributes, 'reason') AS reason,\n       JSONExtractString(attributes, 'subsystem') AS subsystem, src_ip\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'macos_host'\n  AND event_type IN ('auth.sudo.failure', 'auth.local.failure', 'auth.ssh.login_failed', 'auth.ssh.invalid_user', 'auth.ssh.preauth_closed', 'auth.ssh.max_auth_exceeded')\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true,
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Software",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Applications installed and removed",
+      "description": "Application bundles that appeared in or left an inventoried application directory, with the code-signature status when it could be determined (MAC-005 inputs: unsigned applications). Source: macos.inventory. unknown = the signature could not be checked; it is never reported as signed.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT event_time, replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, event_type, resource_name AS application,\n       resource_path AS path, JSONExtractString(attributes, 'bundle_id') AS bundle_id,\n       JSONExtractString(attributes, 'version') AS version,\n       multiIf(JSONType(attributes, 'signed') != 'Bool', 'unknown', JSONExtractBool(attributes, 'signed'), 'signed', 'unsigned') AS signature,\n       JSONExtractString(attributes, 'signature_team_id') AS team_id\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'macos_host'\n  AND event_type IN ('software.installed', 'software.removed')\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true,
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "signature"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "unsigned": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "signed": {
+                        "color": "green",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Services on macOS hosts",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "macOS services",
+      "description": "Current state: launchd jobs, processes and listeners discovered on macOS hosts with their adapter and coverage. Source: v_services (macOS service discovery). Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, name AS service, service_kind AS kind, category, product,\n       adapter_id AS adapter, multiIf(adapter_support = 'none', 'unsupported', adapter_support = 'planned', 'planned', monitoring_status = 'unmonitored', 'unmonitored', monitoring_status = 'degraded', 'degraded', last_seen < now() - INTERVAL 1 HOUR, 'degraded (stale record)', 'monitored') AS coverage, arrayStringConcat(arrayMap(e -> concat(JSONExtractString(e, 'protocol'), '/', toString(JSONExtractUInt(e, 'port')), ' ', JSONExtractString(e, 'exposure'), ' (', JSONExtractString(e, 'attribution'), ')'), JSONExtractArrayRaw(endpoints)), ', ') AS endpoints,\n       instance_count, last_seen AS discovery_refreshed, coverage_note\nFROM extorq.v_services\nWHERE present = 1\n  AND asset_id IN (SELECT asset_id FROM extorq.v_assets WHERE asset_type = 'macos_host')\nORDER BY host, coverage, name\nLIMIT 500"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true,
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "coverage"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "monitored": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "degraded": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "degraded (stale record)": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "unmonitored": {
+                        "color": "orange",
+                        "index": 3
+                      },
+                      "planned": {
+                        "color": "blue",
+                        "index": 4
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    }
+  ]
+}

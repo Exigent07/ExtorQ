@@ -26,6 +26,23 @@ budget exceeded, invalid YAML, duplicate keys, not a mapping) is never treated a
 absent. :func:`lexical_scan` examines its raw text (bounded) for the GH-001 risk
 indicators, and :func:`compare_workflows` then compares both versions lexically
 (``analysis="lexical_fallback"``, ``effective_permissions_unknown=True``).
+
+Detection inputs computed per change (see docs/telemetry/github.md, section 4):
+
+* privilege escalation (GH-001): ``write_all_added``, ``added_write_scopes``,
+  ``dangerous_triggers_added``;
+* privileged trigger + untrusted checkout (GH-002): ``untrusted_checkout_added``. A job
+  counts only when it can run under ``pull_request_target`` / ``workflow_run`` /
+  ``issue_comment``; a job guarded by exactly one ``github.event_name`` comparison is
+  narrowed to the triggers that comparison allows, anything more complex is assumed
+  to run under every trigger (fail closed);
+* unpinned third-party action (GH-003): ``unpinned_actions_added``, compared by action
+  identity so a tag bump of an action that was already unpinned is not "added";
+* script injection (GH-004): ``script_injection_added`` / ``script_injection_contexts_added``,
+  compared by (job, untrusted context) so inserting an unrelated step never makes an
+  existing injection look new. Expressions are matched in a canonical form (lower case,
+  no whitespace, ``['name']`` index access rewritten as ``.name``) because GitHub resolves
+  context properties case-insensitively and accepts both spellings.
 """
 
 from __future__ import annotations
@@ -37,7 +54,10 @@ from typing import Any, Literal
 
 import yaml
 
-ANALYZER_VERSION = "1.1.0"
+#: 1.1.0: lexical fallback for unanalysable workflows.
+#: 1.2.0: canonical expression matching, job-level trigger narrowing (GH-002), identity-based
+#: unpinned-action comparison (GH-003), position-independent injection comparison (GH-004).
+ANALYZER_VERSION = "1.2.0"
 
 MAX_WORKFLOW_BYTES = 512 * 1024
 #: Characters of raw workflow text the lexical fallback examines; anything beyond is not
@@ -116,42 +136,109 @@ _DOCKER_DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 _EXPR_RE = re.compile(r"\$\{\{(.{0,512}?)\}\}", re.DOTALL)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 
-#: Expression contexts an external party can control (GitHub Security Lab list of
-#: untrusted input). Interpolating them into ``run`` scripts allows script injection.
-UNTRUSTED_CONTEXT_RE = re.compile(
-    r"\bgithub\s*\.\s*(?:"
-    r"head_ref"
-    r"|event\s*\.\s*(?:"
-    r"issue\s*\.\s*(?:title|body)"
-    r"|pull_request\s*\.\s*(?:title|body|head\s*\.\s*(?:ref|label|repo\s*\.\s*default_branch))"
-    r"|comment\s*\.\s*body"
-    r"|review\s*\.\s*body"
-    r"|review_comment\s*\.\s*body"
-    r"|pages\s*(?:\.\s*[\w*]+|\[[^\]]*\])\s*\.\s*page_name"
-    r"|commits\s*(?:\.\s*[\w*]+|\[[^\]]*\])\s*\.\s*(?:message|author\s*\.\s*(?:email|name))"
-    r"|head_commit\s*\.\s*(?:message|author\s*\.\s*(?:email|name))"
-    r"|workflow_run\s*\.\s*(?:head_branch|head_commit\s*\.\s*(?:message|author\s*\.\s*(?:email|name)))"
-    r"|discussion\s*\.\s*(?:title|body)"
-    r"))\b"
+# Expression patterns below run on CANONICAL text (see normalise_expression): lower case,
+# no whitespace, quoted index access rewritten as ``.name``.
+_BRACKET_PROPERTY_RE = re.compile(r"\[\s*(['\"])([A-Za-z0-9_-]{1,100})\1\s*\]")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+#: Fields an external party controls (GitHub Security Lab list of untrusted input, plus
+#: ``workflow_run.display_title``). Interpolated into a script they allow script injection.
+_UNTRUSTED_FIELDS = (
+    r"github\.head_ref",
+    r"github\.event\.issue\.(?:title|body)",
+    r"github\.event\.pull_request\.(?:title|body)",
+    r"github\.event\.pull_request\.head\.(?:ref|label|repo\.default_branch)",
+    r"github\.event\.(?:comment|review|review_comment)\.body",
+    r"github\.event\.pages(?:\.[\w*]+|\[[^\]]*\])\.page_name",
+    r"github\.event\.commits(?:\.[\w*]+|\[[^\]]*\])\.(?:message|author\.(?:email|name))",
+    r"github\.event\.head_commit\.(?:message|author\.(?:email|name))",
+    r"github\.event\.workflow_run\.(?:head_branch|display_title"
+    r"|head_commit\.(?:message|author\.(?:email|name)))",
+    r"github\.event\.discussion\.(?:title|body)",
 )
-_ANY_EVENT_CONTEXT_RE = re.compile(r"\bgithub\s*\.\s*event\s*\.")
+#: Whole objects that contain those fields, e.g. ``toJSON(github.event.issue)``.
+_UNTRUSTED_OBJECTS = (
+    "github.event",
+    "github.event.issue",
+    "github.event.pull_request",
+    "github.event.pull_request.head",
+    "github.event.comment",
+    "github.event.review",
+    "github.event.review_comment",
+    "github.event.discussion",
+    "github.event.head_commit",
+    "github.event.commits",
+    "github.event.pages",
+    "github.event.workflow_run",
+    "github.event.workflow_run.head_commit",
+)
+UNTRUSTED_CONTEXT_RE = re.compile(
+    r"(?<![\w.])(?:"
+    + "|".join(_UNTRUSTED_FIELDS)
+    + r")(?!\w)|(?<![\w.])(?:"
+    + "|".join(re.escape(o) for o in sorted(_UNTRUSTED_OBJECTS, key=len, reverse=True))
+    + r")(?![\w.\[])"
+)
+_ANY_EVENT_CONTEXT_RE = re.compile(r"(?<![\w.])github\.event\.")
 
 #: References to code controlled by a pull request author or by another workflow run.
 _UNTRUSTED_REF_RE = re.compile(
-    r"github\s*\.\s*event\s*\.\s*pull_request\s*\.\s*head\s*\.\s*(?:sha|ref)"
-    r"|github\s*\.\s*event\s*\.\s*pull_request\s*\.\s*merge_commit_sha"
-    r"|github\s*\.\s*head_ref"
-    r"|github\s*\.\s*event\s*\.\s*workflow_run\s*\.\s*head_(?:sha|branch)"
-    r"|github\s*\.\s*event\s*\.\s*workflow_run\s*\.\s*head_commit\s*\.\s*id"
+    r"github\.event\.pull_request\.head\.(?:sha|ref)"
+    r"|github\.event\.pull_request\.merge_commit_sha"
+    r"|github\.head_ref"
+    r"|github\.event\.workflow_run\.head_(?:sha|branch)"
+    r"|github\.event\.workflow_run\.head_commit\.id"
     r"|refs/pull/"
     r"|\bpull/\$\{\{"
 )
 _UNTRUSTED_REPO_RE = re.compile(
-    r"github\s*\.\s*event\s*\.\s*pull_request\s*\.\s*head\s*\.\s*repo\s*\.\s*full_name"
-    r"|github\s*\.\s*event\s*\.\s*workflow_run\s*\.\s*head_repository\s*\.\s*full_name"
+    r"github\.event\.pull_request\.head\.repo\.full_name"
+    r"|github\.event\.workflow_run\.head_repository\.full_name"
 )
 _RUN_CHECKOUT_RE = re.compile(r"\bgh\s+pr\s+checkout\b")
 _RUN_GIT_FETCH_RE = re.compile(r"\bgit\s+(?:fetch|checkout|switch|pull|reset)\b")
+#: A job ``if:`` that is exactly one comparison of ``github.event_name`` (canonical form).
+_EVENT_NAME_CONDITION_RE = re.compile(
+    r"^(?:\$\{\{)?(?:github\.event_name(==|!=)'([a-z_]{1,64})'"
+    r"|'([a-z_]{1,64})'(==|!=)github\.event_name)(?:\}\})?$"
+)
+MAX_EXPRESSION_CHARS = 1024
+
+
+def normalise_expression(text: str) -> str:
+    """Canonical form of expression text for context matching.
+
+    GitHub resolves context properties case-insensitively and accepts index syntax
+    (``github['event']['issue']['title']``), so the same context has many spellings.
+    The canonical form is lower case, has no whitespace and rewrites quoted index access
+    as ``.name``. Bounded to :data:`MAX_EXPRESSION_CHARS` characters.
+    """
+    text = _BRACKET_PROPERTY_RE.sub(lambda m: "." + m.group(2), text[:MAX_EXPRESSION_CHARS])
+    return _WHITESPACE_RE.sub("", text).lower()
+
+
+def untrusted_contexts(expression: str) -> tuple[str, ...]:
+    """Untrusted contexts (canonical spelling) referenced by one expression."""
+    canonical = normalise_expression(expression)
+    return _unique(m.group(0) for m in UNTRUSTED_CONTEXT_RE.finditer(canonical))
+
+
+def event_name_condition(condition: object) -> tuple[str, str] | None:
+    """``(operator, event)`` when a job ``if:`` is exactly one ``github.event_name`` test.
+
+    ``github.event_name == 'pull_request'`` -> ``("==", "pull_request")``. Any other
+    condition (``&&``, ``||``, functions, other contexts) returns None: the job is then
+    assumed to run under every trigger of the workflow.
+    """
+    if not isinstance(condition, str):
+        return None
+    match = _EVENT_NAME_CONDITION_RE.match(normalise_expression(condition))
+    if match is None:
+        return None
+    if match.group(1):
+        return match.group(1), match.group(2)
+    return match.group(4), match.group(3)
+
 
 # Lexical fallback patterns. They run on raw, attacker-controlled text: every pattern is
 # linear (no nested quantifiers) and every repetition is bounded.

@@ -1,16 +1,14 @@
-"""Daily caps and per-alert cooldowns for paid AI calls.
+"""Daily cap for paid Jev calls.
 
-Accounting is persisted: the number of provider attempts recorded today (UTC
-day) in ``ai_assessments`` is the shared source of truth across processes.
-An in-process guard adds calls that are in flight (reserved, not yet stored)
-and calls whose storage failed, so a ClickHouse write outage cannot turn into
-unbounded spending. If the persisted count cannot be read the guard fails
-closed (no call).
+Accounting is persisted: the number of provider attempts recorded today (UTC day) in
+``ai_assessments`` is the shared source of truth across processes. An in-process guard
+adds calls that are in flight (reserved, not yet stored) and calls whose storage failed,
+so a ClickHouse write outage cannot turn into unbounded spending. If the persisted count
+cannot be read the guard fails closed (no call).
 
-Concurrency note: two *processes* may each pass the check for the last slot
-at the same moment, so the cap can be exceeded by at most the number of
-concurrently running processes minus one. Within a process the check and the
-reservation are atomic.
+Concurrency note: two *processes* may each pass the check for the last slot at the same
+moment, so the cap can be exceeded by at most the number of concurrently running
+processes minus one. Within a process the check and the reservation are atomic.
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from extorq.contracts.ai import AIProvider
 from extorq.contracts.common import utc_now
@@ -41,6 +39,8 @@ def utc_day_start(now: datetime) -> datetime:
 
 @dataclass
 class Reservation:
+    """One reserved call slot; :meth:`finish` must be called once the attempt is over."""
+
     guard: BudgetGuard
     #: UTC day the slot was reserved on.
     day: datetime | None = None
@@ -118,49 +118,15 @@ class BudgetGuard:
             return persisted + self._inflight + self._unsaved
 
 
-class CooldownTracker:
-    """In-process memory of the last attempt per alert (covers unsaved attempts)."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._last: dict[str, datetime] = {}
-
-    def note(self, alert_id: str, when: datetime) -> None:
-        with self._lock:
-            self._last[alert_id] = when
-            if len(self._last) > 10_000:  # bound memory
-                oldest = sorted(self._last.items(), key=lambda kv: kv[1])[:5_000]
-                for key, _ in oldest:
-                    del self._last[key]
-
-    def last(self, alert_id: str) -> datetime | None:
-        with self._lock:
-            return self._last.get(alert_id)
-
-
-def cooldown_remaining(last: datetime | None, now: datetime, cooldown_seconds: int) -> int:
-    if last is None or cooldown_seconds <= 0:
-        return 0
-    remaining = (last + timedelta(seconds=cooldown_seconds)) - now
-    return max(0, int(remaining.total_seconds() + 0.999))
-
-
 _registry_lock = threading.Lock()
 _guards: dict[AIProvider, BudgetGuard] = {}
 
 
 def shared_guard(provider: AIProvider, daily_cap: int) -> BudgetGuard:
-    """Process-wide guard per provider (so per-request service objects share counters)."""
+    """Process-wide guard per provider, so short-lived service objects share one counter."""
     with _registry_lock:
         guard = _guards.get(provider)
         if guard is None or guard.daily_cap != daily_cap:
             guard = BudgetGuard(provider, daily_cap)
             _guards[provider] = guard
         return guard
-
-
-_shared_cooldowns = CooldownTracker()
-
-
-def shared_cooldowns() -> CooldownTracker:
-    return _shared_cooldowns

@@ -1,7 +1,7 @@
 """Implemented Linux service telemetry adapters (registered with the shared registry).
 
-Importing this package registers: ``ssh``, ``nginx``, ``apache`` (tested, not
-deployed in the lab), ``webapp-json``, ``systemd`` and ``auditd``. Planned
+Importing this package registers: ``ssh``, ``nginx``, ``apache`` (tested on documented
+formats; no Apache runs on the monitored VM), ``webapp-json``, ``systemd`` and ``auditd``. Planned
 adapters (ftp, postgresql, mysql, dns, redis) are registered by
 :mod:`extorq_collectors.services`.
 """

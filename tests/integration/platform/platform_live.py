@@ -1,4 +1,4 @@
-"""Helpers for platform tests against the RUNNING stack (agent A).
+"""Helpers for platform tests against the RUNNING stack (platform).
 
 Every record these tests send is SYNTHETIC: ``labels.synthetic = "true"``, event type
 ``system.log.notable`` (no detection rule consumes it), collector id
@@ -20,7 +20,9 @@ import pytest
 
 from extorq.common.config import Settings
 from extorq.contracts.common import utc_now
+from extorq.contracts.event import SecurityEvent
 from extorq.contracts.identity import event_id
+from extorq.ingest.event_identity import identify_event
 from extorq.storage.clickhouse import get_client
 
 REPO = Path(__file__).resolve().parents[3]
@@ -84,7 +86,7 @@ def synthetic_event(marker: str, index: int = 0) -> dict[str, Any]:
         "event_time": now.isoformat(),
         "observed_time": now.isoformat(),
         "outcome": "unknown",
-        "message": "SYNTHETIC platform integration test event (agent A); not real telemetry",
+        "message": "SYNTHETIC platform integration test event; not real telemetry",
         "attributes": {"synthetic": True, "test_marker": marker},
         "labels": {"synthetic": "true", "purpose": "platform-integration-test"},
         "provenance": {"parser": "extorq-platform-test", "parser_version": "0.1.0"},
@@ -95,7 +97,7 @@ def batch(
     records: list[dict[str, Any]], producer: str = PRODUCER, batch_id: str | None = None
 ) -> dict[str, Any]:
     return {
-        "schema_version": "1.1",
+        "schema_version": "2.0",
         "batch_id": batch_id or uuid.uuid4().hex,
         "producer_id": producer,
         "sent_at": utc_now().isoformat(),
@@ -149,3 +151,7 @@ def event_counts(ids: list[str]) -> tuple[int, int]:
         .result_rows
     )
     return int(rows[0][0]), int(rows[0][1])
+
+
+def accepted_event_id(event: dict[str, Any]) -> str:
+    return identify_event(PRODUCER, SecurityEvent.model_validate(event)).key

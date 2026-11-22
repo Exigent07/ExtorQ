@@ -54,8 +54,8 @@ collector quotes in the data-gap reason.
 | `GET /repos/{o}/{r}/branches/{b}/protection` | protection details | Administration | 404 + unprotected: no protection; 404 + protected or 403: "unknown", data gap |
 | `GET /repos/{o}/{r}/commits`, `.../compare/{a}...{b}`, `.../commits/{sha}` | new commits since the checkpoint and their changed files | Contents | compare 404: checkpoint commit vanished (gap event) |
 | `GET /repos/{o}/{r}/contents/{path}?ref=` (raw, at most a 4 MiB prefix) | workflow file before / after a commit | Contents | 404: file absent at that ref; other errors: per-commit isolation (section 8) |
-| `GET /repos/{o}/{r}/activity` | push time, pusher, force-push flag | Contents / Metadata (see GitHub docs) | data gap; `event_time` falls back to first observation |
-| `GET /repos/{o}/{r}/actions/runs` | workflow runs | Actions | data gap |
+| `GET /repos/{o}/{r}/activity` | push time, pusher, force-push flag | Contents | data gap; `event_time` falls back to first observation |
+| `GET /repos/{o}/{r}/actions/runs`, `.../runs/{run_id}` | workflow runs and tracked open runs absent from the listing | Actions | data gap |
 | `GET /repos/{o}/{r}/git/trees/{sha}?recursive=1`, `.../git/blobs/{sha}` (raw, at most a 4 MiB prefix) | workflow inventory, CODEOWNERS presence | Contents | data gap; workflow checks skipped |
 | `GET /repos/{o}/{r}/dependabot/alerts?state=open` | Dependabot alerts | Dependabot alerts | "feature unavailable or not authorised" |
 | `GET /repos/{o}/{r}/code-scanning/alerts?state=open` | code scanning alerts | Code scanning alerts | same |
@@ -68,27 +68,22 @@ monitored repositories, expiry of 30 days or less, repository permissions *Metad
 *Code scanning alerts: Read*, *Secret scanning alerts: Read*. No write permission is used
 by the collector. Every optional permission that is missing becomes a visible data gap.
 
-### Token resolution
+### Provision the dedicated token
 
-First match wins (`token.py`); the value is never logged, never part of an exception
-message, never shown by `repr()`:
-
-1. `EXTORQ_GITHUB_TOKEN_FILE` (or `settings.token_file`, a path): a regular file of at most
-   4 KiB; a warning is reported when it is readable by group/other (use mode 0600).
-2. `EXTORQ_GITHUB_TOKEN` environment variable.
-3. `gh auth token` (GitHub CLI), only when the setting `allow_gh_cli_token` is true (YAML key
-   `gh_cli_token_fallback`, because the SDK's config secret check rejects any
-   `*_token: <value>` key, even a boolean). It is run with an argument list, a 10 s timeout
-   and a minimal environment; its stderr is never surfaced.
-
-The gh CLI token is an OAuth token whose scopes (typically `repo`, `workflow`, `read:org`,
-`gist`) are far broader than the read-only access the collector needs. While it is in use,
-CollectorHealth reports `token_source=gh_cli` and a warning, and any write-capable scopes
-GitHub reports in `X-OAuth-Scopes` are listed by name (never values). The fallback is off
-by default (least privilege). For the lab it was enabled in `config/collectors/github.yaml`
-by the lead on 2026-11-22 with the user's explicit approval (PLAN section 11); live health
-shows `token_source=gh_cli`, `token_kind=oauth` and the broad-scope warning. A fine-grained
-read-only token is preferred and takes precedence automatically once configured.
+1. In GitHub, generate a fine-grained personal access token for the repository owner.
+   Select **Only select repositories** and choose `Exigent07/extorq-lab` for the checked-in
+   configuration. Set **Metadata**, **Contents**, and **Actions** to **Read**, with the
+   optional read grants above if the API coverage is needed. Use a short expiry and obtain
+   organisation approval if the resource owner requires it. [GitHub token settings guide](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+2. Run `install -d -m 0700 var/secrets/github` as the collector account. Put the token
+   directly in `var/secrets/github/readonly-pat` using a secure local editor or password
+   manager, then run `chmod 0600 var/secrets/github/readonly-pat`. The collector requires a
+   regular, non-symlink file owned by the collector, in mode 0600 or 0400, at most 4 KiB.
+   To use a different path, set `EXTORQ_GITHUB_TOKEN_FILE` or configure `settings.token_file`.
+3. Run `uv run extorq-collect run --only github-repos --once`. In collector health verify
+   `token_source=file`, `token_kind=fine_grained_pat`, repository success and each required
+   source's gaps. The collector verifies token type and file security and uses only GET.
+   GitHub's token settings determine effective repository scope and permission levels.
 
 ## 3. Client behaviour (`client.py`)
 
@@ -101,9 +96,11 @@ read-only token is preferred and takes precedence automatically once configured.
 * Pagination follows `Link: rel="next"`; next links must stay on the configured API origin
   (a hostile or broken response cannot redirect the token elsewhere). Listings are bounded
   by `page_size` (default 50) and `max_pages` (default 10); truncation is reported.
-* Conditional requests: ETags of the repository, Actions settings, branch and workflow-run
-  listings are kept in the checkpoint and sent as `If-None-Match`; a 304 reuses the stored
-  snapshot. GitHub does not count authorised 304 responses against the primary rate limit.
+* Conditional requests apply to repository, Actions settings and branch snapshots.
+  Workflow-run polling fetches each page in its bounded scan because pages can change
+  independently. A truncated scan records a gap and preserves the last complete listing
+  timestamp. Up to ten tracked open runs absent from the listing are checked directly
+  per poll, including after truncation or a listing failure other than auth and rate limits.
 * Primary rate limit: `X-RateLimit-*` headers are tracked; requests known to exceed the
   limit are not sent. Secondary rate limits: `Retry-After` is honoured; 403/429 "secondary
   rate limit" responses without headers wait at least 60 s with exponential backoff. Any
@@ -128,10 +125,14 @@ commit per branch, ETags, the last settings / protection snapshots, seen workflo
 states, the last listing time and inventory keys. It is committed by `ctx.emit` in the same
 SQLite transaction as the records derived from it, phase by phase (commits in chunks of 20).
 A crash before a commit re-reads from the previous checkpoint; event identities are
-deterministic (`event_id("github.api", asset, native_key)` with commit SHA,
-`<sha>:<workflow path>`, `<run id>:<attempt>:<status>`), so re-sent records collapse
-downstream. Corrupt or unknown checkpoint versions start a fresh baseline; all checkpoint
-collections are bounded.
+derived from the commit SHA, the commit SHA plus workflow path, or the versioned workflow
+run transition key (`workflow-run.v2` with run ID, attempt, status, conclusion and native
+revision timestamp when available). The current collector can read old checkpoint run
+signatures and skips unchanged states, so an upgrade with intact checkpoints does not
+re-emit those states. Historical run events keep their original identities. If the old
+checkpoint is lost, a re-observed historical run can have one legacy and one v2 event.
+Corrupt or unknown checkpoint versions start a fresh baseline; all checkpoint collections
+are bounded.
 
 Time semantics: `event_time` of commit and workflow events is the push time from the
 activity API (`attributes.time_basis=push_activity`, actor = pusher) when available, else
@@ -311,8 +312,11 @@ Known limitations:
 * Polling latency up to `interval_seconds` (120 s) plus processing; states shorter than one
   interval (e.g. a workflow pushed and reverted between polls) are seen only through the
   commit history, which is complete unless force-pushed away (then a gap event is emitted).
-* Workflow re-runs keep the original `created_at`; attempts of runs created more than 6 h
-  earlier are not observed (`RUNS_RERUN_WINDOW`).
+* Workflow re-runs keep the original `created_at`. Routine listings revisit a rolling 6 h
+  window and use up to `runs_lookback_hours` for catch-up and open-run coverage. Known open
+  runs absent from listing are tracked separately. A re-run of a previously completed run
+  outside the current listing window can be missed. GitHub provides the current run state,
+  so intermediate states between polls can be missed too.
 * Only the default branch plus up to 10 configured branches are monitored; workflow files
   are analysed as of each commit on those branches. Reusable workflows in other
   repositories are classified by reference only.
@@ -335,53 +339,23 @@ The lab runs on a laptop with every service bound to 127.0.0.1. Polling needs on
 read-only token, survives collector downtime (checkpoints, bounded catch-up) and is cheap
 with conditional requests. Webhook ingestion is **planned**, not implemented.
 
-## 10. GH-001 scenario
+## 10. GH-001 validation
 
-`simulations/github/gh_001_workflow_permissions.sh --repo <owner>/extorq-lab`:
+Use `uv run python -m detection_tests list` to inspect the current validation matrix.
+The authorised GitHub validation uses a dedicated private repository and a write identity
+separate from the collector's read-only token. See the [demo runbook](../demo-runbook.md)
+for release evidence requirements and scope.
 
-* `--dry-run` (default, offline): builds a throwaway git repository from `lab/github-repo`,
-  applies `simulations/github/templates/ci-gh001.yml` (`permissions: write-all` plus a
-  `pull_request_target` job checking out the PR head with `allow-unsafe-pr-checkout: true`;
-  no PR code is executed), runs the analyser on the change (expects escalation) and on the
-  cleanup (expects none), and checks the `[extorq-sim <run_id>]` marker.
-* `--execute` (requires explicit user approval: pushes to GitHub): refuses non-private
-  repositories and names not starting with `extorq-lab`; clones into `var/github/`, commits
-  with the marker, pushes to the default branch (git authenticated through `gh auth
-  git-credential` for that command only), records the SimulationRun
-  (`extorq-collect sim-record`, expected rule GH-001) and prints the expected telemetry.
-* `--cleanup --run-id <id>`: restores the baseline with a new commit (history is never
-  rewritten) and records `cleaned_up`.
-
-`simulations/github/create_lab_repo.sh --repo <owner>/extorq-lab [--enable-dependabot-alerts]`
-creates the private lab repository from `lab/github-repo` (requires explicit user approval).
-
-`uv run python simulations/github/verify_gh001.py --repo <owner>/extorq-lab --run-id <id>
-[--stage executed|cleaned]` checks, read-only as `extorq_api_ro`, that the run's
-SimulationRun rows, the tagged commit / workflow / run events, the GH-001 alert and the
-`github.workflow.write_all` posture finding are present (exit 0) or names what is missing.
-
-Offline contract check: `tests/fixtures/github/gh001_collector_output.jsonl` (synthetic,
-regenerated by `tests/fixtures/github/generate_gh001_fixture.py` from the real collector
-code path and the real lab workflow files) produces exactly one high-confidence GH-001
-alert with C2's rule in an ephemeral ClickHouse, and none for the baseline or cleanup.
-`tests/fixtures/github/gh001_lexical_fallback.jsonl` (same generator; the escalation version
-padded beyond 512 KiB, run marker `gh001lexical`) produces exactly one GH-001 alert with
-confidence `medium` under GH-001 v1.1.0 (lexical fallback), and none for the baseline or
-cleanup.
-
-Live lab repository (private, created by the lead with the user's approval):
-`Exigent07/extorq-lab`, commits `572f066` (initial, baseline workflow), `bf4026a` (GH-001
-escalation, `[extorq-sim 8dwz3wf6zji4]`) and `b464b80` (cleanup). A read-only clone for the
-scanners' git-history scan (C3, `config/scanners.yaml` target `gitleaks-lab-repo-history`)
-is at `var/cache/scanners/repos/extorq-lab` (full history; push URL disabled; refresh with
-`git -C var/cache/scanners/repos/extorq-lab pull --ff-only`).
+`tests/rules/test_gh001_collector_contract.py` tests synthetic collector output against
+GH-001 through the isolated ClickHouse harness. The historical results below predate the
+current token-file policy and workflow-run identity format.
 
 ## 11. Verification record (2026-11-21)
 
 | Claim | Command | Result |
 |---|---|---|
 | Unit tests (client, analyser, token, records, poller, posture, collector via SDK, simulation) | `uv run pytest tests/unit/github -q` | 176 passed |
-| Collector output satisfies GH-001 | C2 harness `run_case` with the fixture above, ephemeral ClickHouse `extorq-c1-gh001-ch` | 1 alert, confidence high, escalation commit only; `verify_gh001.py` exit 0 for `executed` and `cleaned` on the same data |
+| Collector output satisfies GH-001 | C2 harness `run_case` with synthetic collector output, ephemeral ClickHouse `extorq-c1-gh001-ch` | 1 alert, confidence high, escalation commit only; historical `verify_gh001.py` exit 0 for `executed` and `cleaned` on the same data |
 | Lab repository CI would pass | `python:3.12-slim-bookworm` container: `pip install -r requirements.txt -r requirements-dev.txt && pytest -q` | 9 passed |
 | Offline GH-001 dry run | `simulations/github/gh_001_workflow_permissions.sh --repo Exigent07/extorq-lab --dry-run` | escalation detected (write-all, 14 write scopes, `pull_request_target`, untrusted checkout); cleanup: no escalation; marker parsed |
 | Live read-only collection through the SDK runner and gateway | `uv run extorq-collect run --config <scratch config: octocat/Hello-World + actions/hello-world-javascript-action, page_size 2> --once` (twice) | cycle 1: 44 requests, 6 events, 4 scan runs, 4 findings, 8 inventory items, 15 permission gaps, health ok; cycle 2: 18 requests, 4 not-modified, 0 new events |

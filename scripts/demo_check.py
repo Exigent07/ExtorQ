@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Read-only demo readiness report (``make demo-check``).
 
-Checks, without changing anything (exit 1 when any FAIL check fails):
+Checks, without changing anything (exit 1 when any FAIL check fails; WARN never fails):
 
 * compose services: core + full profile running and healthy (``ai-worker`` optional);
 * the ingest gateway (``/healthz``; ``/v1/status`` with the least-privileged
-  ``extorq-selftest`` token: spool depth, dead letters, acceptance window);
+  ``extorq-selftest`` token: contract schema, spool depth, dead letters);
 * the analyst API (``/healthz``; authenticated viewer ``GET /api/v1/health``), the
   console (``/healthz``, ``/login``) and Grafana (``/api/health``; the provisioned
   ClickHouse datasource health with the admin account);
@@ -13,15 +13,19 @@ Checks, without changing anything (exit 1 when any FAIL check fails):
   the same read-only queries run inside the ``api`` container, so the proxy can stay
   off during the demo, F-01):
 
-  - every migration file is applied;
-  - the five mandatory scenarios (VM-001, VM-002, K8S-001, K8S-002, GH-001) each have
-    at least one alert whose evidence ALL resolves to stored events, none of them
-    labelled synthetic;
-  - every enabled host collector (``config/collectors``) reports ok/degraded with a
-    fresh ``last_success_at`` (age <= max(3 x interval, 180 s));
+  - every migration file is applied (schema 2.0 needs 0008);
+  - telemetry per asset class (macOS, Linux, Kubernetes, GitHub): state records
+    (assets, inventory, services) received recently, and events received recently for
+    the classes whose sources never go quiet (see :data:`ASSET_CLASSES`);
+  - every enabled host collector (``config/collectors``) reports ok (degraded: WARN)
+    with a fresh ``last_success_at`` (age <= max(3 x interval, 180 s));
   - every rule in ``rules/`` ran in the last 15 min and has no failed run in 24 h;
-  - informational: data freshness per source, pipeline, alerts, services, simulations,
-    the Kubernetes inventory token lifetime.
+  - WARN on quarantined records or refused (401/403) requests in the last 24 h;
+  - informational: events per source, pipeline health, alerts per rule, services;
+
+* detection tests: the newest ``var/reports/detection-tests-*.json`` report that covers
+  each asset class (``make test-detections``) shows every positive test passed (the rule
+  alerted) and every negative control passed (the rule stayed silent).
 
 Prints names, counts, ids and timestamps only: never tokens, passwords or telemetry.
 """
@@ -34,23 +38,66 @@ import json
 import ssl
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
+REPORTS_DIR = REPO / "var" / "reports"
+REPORT_SCHEMA = "extorq.detection-tests.report.v2"
 REQUIRED_SERVICES = ("clickhouse", "ingest", "writer", "detector", "api", "frontend", "grafana")
 OPTIONAL_SERVICES = ("ai-worker",)
-MANDATORY_RULES = ("VM-001", "VM-002", "K8S-001", "K8S-002", "GH-001")
 RULE_RUN_MAX_AGE_SECONDS = 15 * 60
 MIN_STALE_SECONDS = 180
 TOKEN_WARN_SECONDS = 24 * 3600
+#: Older detection-test reports are still evaluated but flagged.
+REPORT_WARN_AGE_SECONDS = 24 * 3600
+#: Detection-test reports read at most (newest first).
+MAX_REPORTS = 50
+#: PLAN section 12: at least five distinct real tests per asset class.
+MIN_TESTS_PER_ASSET = 5
 API = "http://127.0.0.1:8000"
 CONSOLE = "http://127.0.0.1:3000"
 GRAFANA = "http://127.0.0.1:3001"
+
+
+@dataclass(frozen=True)
+class AssetClass:
+    """Freshness expectations for one monitored asset class."""
+
+    label: str
+    #: Namespace of the class's asset ids (``<namespace>:<name>``).
+    namespace: str
+    #: Max age of the newest state record (assets, inventory, services). Every collector
+    #: re-sends its asset at least every 15 min (asset refresh), so 3 x 15 min.
+    max_state_age: int = 45 * 60
+    #: Max age of the newest event, or None when the class only has events on activity.
+    max_event_age: int | None = None
+
+
+#: Linux journald always has entries (cron, systemd, the collector's own SSH sessions are
+#: recorded, labelled self) and the Kubernetes API server writes audit events constantly.
+#: macOS unified-log predicates are narrow and GitHub events need repository activity, so
+#: for those two classes only the state records are required.
+ASSET_CLASSES: dict[str, AssetClass] = {
+    "macos": AssetClass("macOS host", "macos"),
+    "linux": AssetClass("Ubuntu VM", "linux", max_event_age=15 * 60),
+    "kubernetes": AssetClass("Kubernetes cluster", "k8s", max_event_age=15 * 60),
+    "github": AssetClass("GitHub repository", "github"),
+}
+
+
+def asset_class_of(namespace: str) -> str:
+    """ASSET_CLASSES key for an asset-id namespace (``other`` when unknown)."""
+    for key, spec in ASSET_CLASSES.items():
+        if spec.namespace == namespace:
+            return key
+    return "other"
 
 
 @dataclass
@@ -153,6 +200,7 @@ def http_get(
 
 
 def _secret(path: Path) -> str | None:
+    """A secret's value for an authenticated request (never printed)."""
     try:
         return path.read_text(encoding="utf-8").strip() or None
     except OSError:
@@ -231,49 +279,44 @@ def check_endpoints(report: Report) -> None:
 
 # ── ClickHouse (read-only, extorq_api_ro) ─────────────────────────────
 
+#: Asset ids are ``<namespace>:<name>`` (``macos:``, ``linux:``, ``k8s:``, ``github:``); the
+#: queries group by that namespace and :func:`asset_class_of` maps it to ASSET_CLASSES.
 QUERIES: dict[str, tuple[str, dict[str, Any]]] = {
     "migrations": (
         "SELECT concat(version, '_', name) FROM extorq.schema_migrations FINAL ORDER BY version",
         {},
     ),
-    "scenarios": (
-        """
-        WITH ev AS (
-            SELECT alert_id, groupUniqArray(event_id) AS ids
-            FROM extorq.alert_evidence FINAL
-            WHERE alert_id IN (
-                SELECT alert_id FROM extorq.v_alerts WHERE rule_id IN {rules:Array(String)})
-            GROUP BY alert_id
-        ),
-        stored AS (
-            SELECT event_id, max(labels['synthetic'] = 'true') AS synthetic
-            FROM extorq.events
-            WHERE event_id IN (SELECT arrayJoin(ids) FROM ev)
-            GROUP BY event_id
-        ),
-        per_alert AS (
-            SELECT ev.alert_id AS alert_id, length(any(ev.ids)) AS n_evidence,
-                   countIf(stored.event_id != '') AS n_stored,
-                   sumIf(stored.synthetic, stored.event_id != '') AS n_synthetic
-            FROM ev ARRAY JOIN ev.ids AS id
-            LEFT JOIN stored ON stored.event_id = id
-            GROUP BY ev.alert_id
-        )
-        SELECT a.rule_id, a.alert_id, a.confidence, a.simulation_run_ids,
-               ifNull(p.n_evidence, 0), ifNull(p.n_stored, 0), ifNull(p.n_synthetic, 0),
-               toString(a.updated_at)
-        FROM extorq.v_alerts AS a
-        LEFT JOIN per_alert AS p ON p.alert_id = a.alert_id
-        WHERE a.rule_id IN {rules:Array(String)}
-        ORDER BY a.rule_id, notEmpty(a.simulation_run_ids) DESC, a.updated_at DESC, a.alert_id
-        """,
-        {"rules": list(MANDATORY_RULES)},
+    # Newest event per asset namespace (ingestion time: proves the pipeline delivers now).
+    "events_by_class": (
+        "SELECT splitByChar(':', asset_id)[1] AS namespace, "
+        "dateDiff('second', max(ingested_time), now64(3)), uniqExact(event_id) "
+        "FROM extorq.events WHERE ingested_time > now64(3) - INTERVAL 24 HOUR "
+        "GROUP BY namespace ORDER BY namespace",
+        {},
+    ),
+    # Newest state record (asset, inventory item, service) per asset namespace.
+    "state_by_class": (
+        "SELECT namespace, min(age) FROM ("
+        " SELECT splitByChar(':', asset_id)[1] AS namespace,"
+        " dateDiff('second', max(ingested_at), now64(3)) AS age FROM extorq.assets"
+        " WHERE ingested_at > now64(3) - INTERVAL 24 HOUR GROUP BY namespace"
+        " UNION ALL"
+        " SELECT splitByChar(':', asset_id)[1] AS namespace,"
+        " dateDiff('second', max(ingested_at), now64(3)) AS age FROM extorq.inventory_items"
+        " WHERE ingested_at > now64(3) - INTERVAL 24 HOUR GROUP BY namespace"
+        " UNION ALL"
+        " SELECT splitByChar(':', ifNull(asset_id, ''))[1] AS namespace,"
+        " dateDiff('second', max(ingested_at), now64(3)) AS age FROM extorq.services"
+        " WHERE ingested_at > now64(3) - INTERVAL 24 HOUR GROUP BY namespace"
+        ") GROUP BY namespace ORDER BY namespace",
+        {},
     ),
     "collectors": (
         "SELECT collector_id, collector_type, status, toString(last_success_at), "
         "dateDiff('second', last_success_at, now64(3)), interval_seconds, records_buffered, "
         "JSONExtractRaw(details, 'token_expires_in_seconds'), "
-        "dateDiff('second', last_reported_at, now64(3)) "
+        "dateDiff('second', last_reported_at, now64(3)), "
+        "JSONExtractInt(details, 'outbox_dead') "
         "FROM extorq.v_collector_latest ORDER BY collector_id",
         {},
     ),
@@ -281,6 +324,18 @@ QUERIES: dict[str, tuple[str, dict[str, Any]]] = {
         "SELECT rule_id, last_status, toString(last_run_at), "
         "dateDiff('second', last_run_at, now64(3)), runs_24h, failures_24h, missing_sources "
         "FROM extorq.v_rule_latest_run ORDER BY rule_id",
+        {},
+    ),
+    "quarantine": (
+        "SELECT producer_id, substring(reason, 1, 80) AS reason_prefix, count() "
+        "FROM extorq.ingest_quarantine WHERE received_at > now64(3) - INTERVAL 24 HOUR "
+        "GROUP BY producer_id, reason_prefix ORDER BY count() DESC LIMIT 20",
+        {},
+    ),
+    "audit": (
+        "SELECT decision, ifNull(authenticated_producer, '-'), substring(reason, 1, 80), count() "
+        "FROM extorq.ingest_audit WHERE occurred_at > now64(3) - INTERVAL 24 HOUR "
+        "GROUP BY 1, 2, 3 ORDER BY count() DESC LIMIT 20",
         {},
     ),
     "freshness": (
@@ -304,11 +359,6 @@ QUERIES: dict[str, tuple[str, dict[str, Any]]] = {
         "SELECT asset_id, adapter_support, monitoring_status, count() FROM extorq.v_services "
         "WHERE present = 1 GROUP BY asset_id, adapter_support, monitoring_status "
         "ORDER BY asset_id, adapter_support, monitoring_status",
-        {},
-    ),
-    "simulations": (
-        "SELECT scenario_id, run_id, status, toString(started_at) FROM extorq.simulation_runs "
-        "FINAL WHERE started_at > now64(3) - INTERVAL 48 HOUR ORDER BY started_at",
         {},
     ),
 }
@@ -400,29 +450,68 @@ def repository_rules() -> list[str]:
     return sorted(rule.rule_id for rule in rules)
 
 
-def check_scenarios(report: Report, rows: list[list[Any]]) -> None:
-    section("mandatory scenarios (>= 1 alert whose evidence resolves to stored, real events)")
-    by_rule: dict[str, list[list[Any]]] = {rule: [] for rule in MANDATORY_RULES}
-    for row in rows:
-        by_rule.setdefault(str(row[0]), []).append(row)
-    for rule in MANDATORY_RULES:
-        alerts = by_rule.get(rule, [])
-        good = [r for r in alerts if r[4] > 0 and r[5] == r[4] and r[6] == 0]
-        if good:
-            shown = good[0]  # simulation-backed first, then the newest
-            runs = ",".join(shown[3]) or "-"
-            detail = (
-                f"{len(good)}/{len(alerts)} alerts; e.g. {str(shown[1])[:12]} "
-                f"({shown[2]}, evidence {shown[5]}/{shown[4]} stored, sim run {runs}, "
-                f"updated {shown[7]})"
+def _age(seconds: Any) -> str:
+    return "never" if seconds is None else f"{int(seconds)} s ago"
+
+
+def check_telemetry(
+    report: Report, events: list[list[Any]], state: list[list[Any]]
+) -> dict[str, tuple[int | None, int]]:
+    """Per asset class: recent state records, and recent events where sources never pause.
+
+    Returns ``{class: (newest event age or None, events in 24 h)}`` for the caller.
+    """
+    section("telemetry per asset class (ingested in the last 24 h)")
+    event_rows: dict[str, tuple[int, int]] = {}
+    for namespace, age, count in ((str(r[0]), int(r[1]), int(r[2])) for r in events):
+        key = asset_class_of(namespace)
+        previous = event_rows.get(key)
+        event_rows[key] = (
+            min(age, previous[0]) if previous else age,
+            count + (previous[1] if previous else 0),
+        )
+    state_ages: dict[str, int] = {}
+    for namespace, age in ((str(r[0]), int(r[1])) for r in state):
+        key = asset_class_of(namespace)
+        state_ages[key] = min(age, state_ages.get(key, age))
+    seen: dict[str, tuple[int | None, int]] = {}
+    for key, spec in ASSET_CLASSES.items():
+        event_age, event_count = event_rows.get(key, (None, 0))
+        seen[key] = (event_age, event_count)
+        state_age = state_ages.get(key)
+        state_ok = state_age is not None and state_age <= spec.max_state_age
+        report.check(
+            state_ok,
+            f"{spec.label} ({spec.namespace}:*) state records",
+            f"newest {_age(state_age)} (limit {spec.max_state_age} s)",
+        )
+        if spec.max_event_age is not None:
+            fresh = event_age is not None and event_age <= spec.max_event_age
+            report.check(
+                fresh,
+                f"{spec.label} events",
+                f"{event_count} in 24 h, newest {_age(event_age)} (limit {spec.max_event_age} s)",
             )
         else:
-            detail = f"{len(alerts)} alerts, none with fully stored non-synthetic evidence"
-        report.check(bool(good), rule, detail)
+            report.check(
+                event_count > 0,
+                f"{spec.label} events",
+                f"{event_count} in 24 h, newest {_age(event_age)} (only on activity)",
+                warn_only=True,
+            )
+    other = event_rows.get("other")
+    if other:
+        report.check(
+            False,
+            "events of unknown asset classes",
+            f"{other[1]} in 24 h (asset ids outside macos:/linux:/k8s:/github:)",
+            warn_only=True,
+        )
+    return seen
 
 
 def check_collectors(report: Report, rows: list[list[Any]]) -> None:
-    section("collectors (enabled host collectors must be ok/degraded and fresh)")
+    section("collectors (enabled host collectors ok and fresh; degraded is a warning)")
     enabled = enabled_host_collectors()
     if not enabled:
         report.check(False, "enabled collectors", "config/collectors could not be loaded")
@@ -435,11 +524,14 @@ def check_collectors(report: Report, rows: list[list[Any]]) -> None:
         status, age = str(row[2]), row[4]
         limit = max(3 * int(row[5] or interval), MIN_STALE_SECONDS)
         fresh = age is not None and int(age) <= limit
-        report.check(
-            status in ("ok", "degraded") and fresh,
-            collector_id,
-            f"{status}, last success {age} s ago (limit {limit} s), buffered {row[6]}",
+        detail = (
+            f"{status}, last success {age} s ago (limit {limit} s), buffered {row[6]}, "
+            f"dead letters {row[9] or 0}"
         )
+        if status == "degraded" and fresh:
+            report.check(False, collector_id, detail, warn_only=True)
+        else:
+            report.check(status == "ok" and fresh, collector_id, detail)
         if str(row[1]) == "k8s_inventory" and row[7] not in (None, "", "null"):
             try:
                 remaining = float(str(row[7])) - float(row[8] or 0)
@@ -448,7 +540,7 @@ def check_collectors(report: Report, rows: list[list[Any]]) -> None:
             report.check(
                 remaining > TOKEN_WARN_SECONDS,
                 f"{collector_id} credential lifetime",
-                f"~{remaining / 3600:.1f} h left (re-mint: infra/kind/kind.sh token, owner B2)",
+                f"~{remaining / 3600:.1f} h left (re-mint: infra/kind/kind.sh token)",
                 warn_only=True,
             )
     for collector_id, row in sorted(seen.items()):
@@ -475,6 +567,212 @@ def check_rules(report: Report, rows: list[list[Any]]) -> None:
             rule_id,
             f"last {row[1]} {age} s ago, {row[4]} runs / {failures} failed in 24 h, "
             f"missing sources {missing}",
+        )
+
+
+def check_ingest_problems(
+    report: Report, quarantine: list[list[Any]], audit: list[list[Any]]
+) -> None:
+    section("ingest problems in the last 24 h (quarantined records, refused requests)")
+    total = sum(int(r[2]) for r in quarantine)
+    report.check(total == 0, "quarantined records", str(total), warn_only=True)
+    for row in quarantine[:10]:
+        report.info(f"{row[0]:<26} {int(row[2]):>6}  {row[1]}")
+    refused = sum(int(r[3]) for r in audit)
+    report.check(refused == 0, "refused requests (401/403)", str(refused), warn_only=True)
+    for row in audit[:10]:
+        report.info(f"{row[0]:<15} {row[1]:<26} {int(row[3]):>6}  {row[2]}")
+
+
+# ── detection-test reports (``make test-detections``) ─────────────────
+
+_ASSET_ALIASES = {
+    "k8s": "kubernetes",
+    "kind": "kubernetes",
+    "mac": "macos",
+    "darwin": "macos",
+    "vm": "linux",
+    "ubuntu": "linux",
+    "gh": "github",
+}
+_PASS = {"pass", "passed", "ok", "success", "succeeded"}
+_FAIL = {"fail", "failed", "error", "errored", "failure", "timeout", "timed_out"}
+_SKIP = {"skip", "skipped", "not_run", "blocked", "unavailable"}
+
+
+@dataclass(frozen=True)
+class TestResult:
+    """One detection-test result, normalised from the runner's report."""
+
+    test_id: str
+    asset: str
+    rule_id: str
+    positive: bool | None
+    outcome: str  # pass | fail | skip | unknown
+    detail: str
+
+
+def _first(item: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if item.get(key) not in (None, ""):
+            return item[key]
+    return None
+
+
+def normalise_asset(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = text.split(":", 1)[0] if ":" in text else text
+    return _ASSET_ALIASES.get(text, text) or "unknown"
+
+
+def normalise_result(item: dict[str, Any]) -> TestResult:
+    """Tolerant mapping of one report entry (field names agreed in interface-changes/P.md)."""
+    polarity = str(_first(item, "kind", "polarity", "type", "expectation") or "").lower()
+    expect_alert = _first(item, "expect_alert", "expected_alert", "should_alert")
+    positive: bool | None
+    if polarity.startswith("pos"):
+        positive = True
+    elif polarity.startswith("neg"):
+        positive = False
+    elif isinstance(expect_alert, bool):
+        positive = expect_alert
+    else:
+        positive = None
+    raw = _first(item, "status", "outcome", "result", "verdict")
+    passed = item.get("passed")
+    if isinstance(raw, str) and raw.strip().lower() in _PASS | _FAIL | _SKIP:
+        word = raw.strip().lower()
+        outcome = "pass" if word in _PASS else "fail" if word in _FAIL else "skip"
+    elif isinstance(passed, bool):
+        outcome = "pass" if passed else "fail"
+    else:
+        outcome = "unknown"
+    detail = str(_first(item, "detail", "reason", "message", "error") or "")[:160]
+    return TestResult(
+        test_id=str(_first(item, "test_id", "id", "name") or "?")[:80],
+        asset=normalise_asset(_first(item, "asset", "asset_class", "target")),
+        rule_id=str(_first(item, "rule_id", "rule") or "?")[:20],
+        positive=positive,
+        outcome=outcome,
+        detail=detail,
+    )
+
+
+def report_results(document: Any) -> list[TestResult]:
+    """Every result of one report document (a list, or a mapping with results/tests)."""
+    items: Any = document
+    if isinstance(document, dict):
+        items = _first(document, "results", "tests", "cases") or []
+    if not isinstance(items, list):
+        return []
+    if isinstance(document, dict) and document.get("schema") == REPORT_SCHEMA:
+        results = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            positive = item.get("positive")
+            negative = item.get("negative")
+            verified = isinstance(positive, dict) and any(
+                isinstance(alert, dict) and bool(alert.get("verified_evidence"))
+                for alert in positive.get("alerts") or []
+            )
+            common = {k: item.get(k) for k in ("test_id", "asset", "rule_id")}
+            for kind, phase in (("positive", positive), ("negative", negative)):
+                values = phase if isinstance(phase, dict) else {}
+                status = values.get("outcome", "unknown")
+                if status == "passed" and (
+                    not item.get("rule_version")
+                    or not item.get("cleanup_ok")
+                    or (kind == "positive" and not verified)
+                    or (kind == "negative" and not values.get("conclusive_run"))
+                ):
+                    status = "failed"
+                results.append(normalise_result({**common, "kind": kind, "status": status}))
+        return results
+    return [normalise_result(item) for item in items if isinstance(item, dict)]
+
+
+def report_time(document: Any, path: Path) -> float:
+    """Epoch seconds the report finished (its own timestamps, else the file mtime)."""
+    if isinstance(document, dict):
+        stamp = _first(document, "finished_at", "completed_at", "generated_at", "started_at")
+        if isinstance(stamp, str):
+            try:
+                return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                pass
+    return path.stat().st_mtime
+
+
+def newest_per_asset(
+    reports: Iterable[tuple[Path, float, list[TestResult]]],
+) -> dict[str, tuple[Path, float, list[TestResult]]]:
+    """For each asset class, the newest report that contains results for it."""
+    chosen: dict[str, tuple[Path, float, list[TestResult]]] = {}
+    for path, stamp, results in reports:
+        for asset in {r.asset for r in results}:
+            current = chosen.get(asset)
+            if current is None or stamp > current[1]:
+                chosen[asset] = (path, stamp, [r for r in results if r.asset == asset])
+    return chosen
+
+
+def load_reports(directory: Path) -> list[tuple[Path, float, list[TestResult]]]:
+    paths = sorted(
+        directory.glob("detection-tests-*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )[:MAX_REPORTS]
+    loaded: list[tuple[Path, float, list[TestResult]]] = []
+    for path in paths:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(document, dict) or document.get("schema") != REPORT_SCHEMA:
+            continue
+        loaded.append((path, report_time(document, path), report_results(document)))
+    return loaded
+
+
+def check_detection_tests(report: Report, directory: Path = REPORTS_DIR) -> None:
+    section("detection tests (newest report per asset: positives alert, negatives stay silent)")
+    reports = load_reports(directory)
+    if not reports:
+        report.check(False, "detection-test report", "none in var/reports (make test-detections)")
+        return
+    now = time.time()
+    chosen = newest_per_asset(reports)
+    for asset in ASSET_CLASSES:
+        if asset not in chosen:
+            report.check(False, f"{asset} detection tests", "no report covers this asset")
+            continue
+        path, stamp, results = chosen[asset]
+        positives = [r for r in results if r.positive is True]
+        negatives = [r for r in results if r.positive is False]
+        bad = [r for r in results if r.outcome != "pass" or r.positive is None]
+        when = datetime.fromtimestamp(stamp, UTC).isoformat(timespec="seconds")
+        detail = (
+            f"{sum(r.outcome == 'pass' for r in positives)}/{len(positives)} positives alerted, "
+            f"{sum(r.outcome == 'pass' for r in negatives)}/{len(negatives)} negatives silent "
+            f"({path.name}, {when})"
+        )
+        report.check(not bad and bool(positives), f"{asset} detection tests", detail)
+        for result in bad[:10]:
+            kind = {True: "positive", False: "negative", None: "unknown kind"}[result.positive]
+            report.info(
+                f"{result.test_id} [{result.rule_id}, {kind}]: {result.outcome}"
+                + (f" ({result.detail})" if result.detail else "")
+            )
+        distinct = {r.test_id for r in positives}
+        report.check(
+            len(distinct) >= MIN_TESTS_PER_ASSET,
+            f"{asset} test coverage",
+            f"{len(distinct)} distinct positive tests (PLAN section 12: >= {MIN_TESTS_PER_ASSET})",
+        )
+        report.check(
+            now - stamp <= REPORT_WARN_AGE_SECONDS,
+            f"{asset} report age",
+            f"{int(now - stamp)} s",
+            warn_only=True,
         )
 
 
@@ -509,9 +807,14 @@ def main(argv: list[str] | None = None) -> int:
             "migrations applied",
             ", ".join(applied) if not pending else f"pending: {', '.join(pending)}",
         )
-        check_scenarios(report, _rows(data, "scenarios", report))
+        check_telemetry(
+            report, _rows(data, "events_by_class", report), _rows(data, "state_by_class", report)
+        )
         check_collectors(report, _rows(data, "collectors", report))
         check_rules(report, _rows(data, "rules", report))
+        check_ingest_problems(
+            report, _rows(data, "quarantine", report), _rows(data, "audit", report)
+        )
         _print_rows(
             "events in the last 24 h (asset, source, newest, unique events)",
             _rows(data, "freshness", report),
@@ -532,11 +835,7 @@ def main(argv: list[str] | None = None) -> int:
             _rows(data, "services", report),
             lambda r: f"{r[0]:<34} {r[1]:<12} {r[2]:<12} {r[3]:>4}",
         )
-        _print_rows(
-            "simulation runs in the last 48 h (scenario, run, status, started)",
-            _rows(data, "simulations", report),
-            lambda r: f"{r[0]:<9} {r[1]:<14} {r[2]:<11} {r[3]}",
-        )
+    check_detection_tests(report)
 
     print()
     if report.warnings:

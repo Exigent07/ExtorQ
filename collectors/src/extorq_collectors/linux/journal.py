@@ -25,7 +25,15 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from extorq.contracts import Actor, ActorType, Outcome, ProcessInfo, SecurityEvent, SourceType
+from extorq.contracts import (
+    Actor,
+    ActorType,
+    Network,
+    Outcome,
+    ProcessInfo,
+    SecurityEvent,
+    SourceType,
+)
 from extorq_collectors.linux.common import (
     ParseContext,
     build_event,
@@ -154,6 +162,7 @@ def process_of(entry: JournalEntry, name: str | None = None) -> ProcessInfo:
 
 def forged_identity_event(entry: JournalEntry, ctx: ParseContext, claimed: str) -> SecurityEvent:
     """A line whose claimed program contradicts journald's trusted fields."""
+    sudo = claimed == "sudo"
     return build_event(
         ctx,
         event_type="system.log.notable",
@@ -170,8 +179,8 @@ def forged_identity_event(entry: JournalEntry, ctx: ParseContext, claimed: str) 
             id=str(entry.uid) if entry.uid is not None else None,
         ),
         process=process_of(entry),
-        message=entry.message,
-        raw=entry.message,
+        message="journald sender does not match sudo" if sudo else entry.message,
+        raw=None if sudo else entry.message,
         attributes={
             "subsystem": claimed,
             "claimed_identifier": claimed,
@@ -199,7 +208,9 @@ def notable_event(
     actor_name: str | None = None,
     attributes: dict[str, Any] | None = None,
     outcome: Outcome = Outcome.UNKNOWN,
+    network: Network | None = None,
 ) -> SecurityEvent:
+    """``system.log.notable`` for a recognised line that has no more specific catalog type."""
     attrs: dict[str, Any] = {
         "subsystem": subsystem,
         "boot_id": entry.boot_id,
@@ -220,6 +231,7 @@ def notable_event(
         outcome=outcome,
         severity_hint=severity_from_priority(entry.priority),
         actor=Actor(type=ActorType.USER, name=clean(actor_name)) if actor_name else None,
+        network=network,
         process=process_of(entry),
         message=entry.message,
         raw=entry.message,

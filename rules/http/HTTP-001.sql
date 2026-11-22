@@ -1,4 +1,4 @@
--- HTTP-001 v1.0.0: web probing from one source against one asset.
+-- HTTP-001 v1.1.0: web probing from one source against one asset.
 --
 -- Sliding-window threshold (like VM-001): a request is a "crossing" when the trailing
 -- {window_seconds} window of client-error (4xx) responses to the same source on the same
@@ -11,7 +11,7 @@
 -- lab application (linux.app) and Kubernetes container logs (k8s.container_log).
 -- Confidence: high when the source is not a shared NAT/gateway address; medium when it is
 -- (probing is real, its origin is not attributable). Duplicate-safe (LIMIT 1 BY event_id,
--- uniqExact). Simulation-tagged events are NOT filtered.
+-- uniqExact).
 WITH
     ev AS (
         SELECT
@@ -23,8 +23,7 @@ WITH
             substring(ifNull(http_route, ''), 1, 256) AS route,
             http_status AS status,
             substring(ifNull(http_user_agent, ''), 1, 200) AS user_agent,
-            ifNull(service_name, '') AS service,
-            simulation_run_id
+            ifNull(service_name, '') AS service
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -89,12 +88,10 @@ SELECT
               'peak_window_probe_routes UInt32, src_ip_shared_nat Bool, window_seconds UInt32)')))
         AS features,
     c.bucket_start AS bucket_start,
-    if(has({shared_nat_ips:Array(String)}, c.src), 'medium', 'high') AS confidence,
-    groupUniqArray(16)(e.simulation_run_id) AS simulation_run_ids
+    if(has({shared_nat_ips:Array(String)}, c.src), 'medium', 'high') AS confidence
 FROM crossings AS c
 INNER JOIN ev AS e ON e.asset_id = c.asset_id AND e.src = c.src
 WHERE e.event_time >= c.first_crossing - toIntervalMillisecond({window_seconds:UInt32} * 1000)
   AND e.event_time <= c.last_crossing
 GROUP BY c.asset_id, c.src, c.bucket_start
 ORDER BY first_seen
-LIMIT 1000

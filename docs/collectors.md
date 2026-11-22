@@ -1,9 +1,10 @@
 # Collectors and the collector SDK
 
-Owner of the SDK: agent A (`collectors/src/extorq_collectors/sdk/`,
-`collectors/src/extorq_collectors/cli.py`). Platform collectors are owned by their
-teams: Linux (B1), Kubernetes inventory (B2), macOS (B3), GitHub (C1); scanners (C3)
-use the same outbox. Telemetry details per source: `docs/telemetry/*.md`.
+Owner of the SDK: platform (`collectors/src/extorq_collectors/sdk/`,
+`collectors/src/extorq_collectors/cli.py`). The platform collectors (Linux VM, macOS
+host, Kubernetes inventory, GitHub repository) are owned by their telemetry teams; the
+scanners use the same outbox. Contract schema 2.0. Telemetry details per source:
+`docs/telemetry/*.md`.
 
 ## 1. Concepts
 
@@ -23,7 +24,7 @@ use the same outbox. Telemetry details per source: `docs/telemetry/*.md`.
 
 ```yaml
 collectors:
-  - collector_id: linux-lab-vm-01            # [a-z0-9][a-z0-9._-]{1,127}, unique
+  - collector_id: linux-ssh-lab-vm-01        # [a-z0-9][a-z0-9._-]{1,127}, unique
     producer_id: linux-ssh-lab-vm-01         # token: var/secrets/tokens/<producer_id>.token
     asset_id: linux:lab-vm-01
     module: extorq_collectors.linux.collector:LinuxSSHCollector
@@ -35,11 +36,11 @@ collectors:
 A file may hold one mapping, a list, or `{collectors: [...]}`. String settings that
 look like credentials are rejected at load time (each string is checked together with
 its key, so `password: x` is refused); the error names the setting path, never the
-value. Booleans, numbers, dates and nulls are never candidates: a flag such as
-`allow_gh_cli_token: true` is accepted. Reference secrets by file path (`*_file`
+value. Booleans, numbers, dates and nulls are outside the string credential check.
+Reference secrets by file path (`*_file`
 settings). Producer authorization (kinds, source types, asset patterns) is enforced by
-the gateway from `var/secrets/producers.json` (PLAN §4.3; service kinds for the macOS,
-Linux and Kubernetes-inventory producers since contract 1.1).
+the gateway from `var/secrets/producers.json` (PLAN §4.3; the macOS, Linux and
+Kubernetes-inventory producers may also send `service` and `service_instance`).
 
 ## 3. Writing a collector
 
@@ -80,9 +81,13 @@ class ExampleCollector(Collector):
 Rules:
 
 * Records are contract models (`SecurityEvent`, `Asset`, `InventoryItem`,
-  `PostureFinding`, `ScanRun`, `SimulationRun`, `Service`, `ServiceInstance`) or
+  `PostureFinding`, `ScanRun`, `CollectorHealth`, `Service`, `ServiceInstance`) or
   `{"kind": ..., "data": ...}` dicts. `emit` validates all of them **before**
   committing anything; one invalid record raises and nothing is written.
+* The first snapshot of a category is a **baseline**: emit the current items as
+  inventory/service records but no change events (or mark them
+  `attributes.baseline=true` where a rule needs to see them), so a new deployment or a
+  clean-slate reset never raises "new persistence item" alerts for what already existed.
 * Use deterministic ids (`extorq.contracts.identity`) from source-native identity;
   never derive ids from collection time.
 * Unknown values stay `None`. Free text from sources is attacker-controlled: keep it
@@ -105,11 +110,11 @@ Rules:
   `last_success_at` still advances. The hint applies to the current cycle only: call it
   again every cycle while the condition lasts. A cycle that raises stays `failed`.
 
-### Services (contract 1.1)
+### Services
 
 Host and Kubernetes inventory collectors report `Service` and `ServiceInstance`
 records through the same `emit`. The shared discovery/adapter interface is
-`extorq_collectors.services` (owner B1; `ServiceCandidate`, `ServiceAdapter`,
+`extorq_collectors.services` (`ServiceCandidate`, `ServiceAdapter`,
 registry, `classify_coverage`, `build_service`, `service_ref`). Use
 `diff_snapshot` over service keys to emit changes and tombstones (`present=False`).
 Always set `ServiceInstance.asset_id` (host or node asset): the gateway quarantines
@@ -126,7 +131,7 @@ Include the returned record in your `emit` (or pass `emit=True`).
 
 ```
 uv run extorq-collect run                       # every enabled collector, one thread each
-uv run extorq-collect run --only linux-lab-vm-01,github-lab
+uv run extorq-collect run --only linux-ssh-lab-vm-01,github-repos
 uv run extorq-collect run --once                # one cycle each, deliver, exit 0/1
 uv run extorq-collect run --config path/to/file.yaml
 uv run extorq-collect status [--json]           # outbox, dead letters, last health (read-only)
@@ -175,20 +180,26 @@ directory. Relevant settings: `EXTORQ_GATEWAY_URL` (default `https://127.0.0.1:8
   detail never suppresses the health record.
 * Stop with SIGTERM/SIGINT: threads finish their current step; nothing committed is lost.
 
-## 6. Simulation runs (`sim-record`)
+## 6. Clean-slate re-baseline (`make reset-data`)
 
-```
-uv run extorq-collect sim-record --scenario VM-001 --asset linux:lab-vm-01 \
-    --status started --run-id a1b2c3d4e5 --description "SSH brute force" --expected-rules VM-001
-uv run extorq-collect sim-record --scenario VM-001 --asset linux:lab-vm-01 \
-    --status completed --run-id a1b2c3d4e5
-```
+After the database is cleared (`make reset-data YES=1`, see
+[data-model.md](data-model.md#61-clean-slate-make-reset-data-yes1)) every collector must
+send its current state again, while log sources must not re-read old activity.
+`extorq_collectors.sdk.baseline.rebaseline()` resets one stopped collector's state DB in
+one transaction, with a policy chosen by the collector's `module`:
 
-Producer `simulation-runner`; state `var/collectors/simulation-runner/state.db`.
-Later statuses reuse the locally remembered `started_at`, description and expected
-rules (or pass `--started-at`); reusing a run id for another scenario/asset is refused.
-Exit codes: 0 delivered, 75 committed locally but still buffered (delivered by the next
-`sim-record` or `flush`), 2 invalid input, 1 rejected.
+| Collector | Cleared (re-sent as a baseline) | Kept (cursors) |
+|---|---|---|
+| every collector | outbox and dead letters (records collected before the reset) | |
+| Linux (`extorq_collectors.linux`) | all snapshots; `linux.last_run.*` (inventory, packages, posture schedules), `linux.inventory.last_full`, `linux.services.last_event` | `journal.cursor`, `audit.inode`, `audit.offset`; first-seen history, known units |
+| macOS (`extorq_collectors.macos`) | all snapshots; `macos.sources` (per-source schedule), `macos.full_inventory`, `macos.adapter_last_event` | `unified_log.window` |
+| Kubernetes (`extorq_collectors.kubernetes`) | object, service, instance and asset snapshots; `k8s.last_full_refresh` | `k8s-events` snapshot (Event versions already emitted), `k8s.last_cycle`, `k8s.events_last_success` |
+| GitHub (`extorq_collectors.github`) | inside each `github:repo:*` checkpoint: settings, protection, branch info, inventory key lists, ETags, posture/alerts/asset schedules | branch heads (commits), workflow-run tracking, activity id, change sequence, commit retries |
+| any other collector | all snapshots | checkpoints and KV |
+
+A collector that adds state keys keeps its row of `POLICIES` in sync
+(`tests/unit/platform/test_platform_reset.py`). `rebaseline` refuses while a collector
+holds an instance lock (`*.lock` in its state directory) and never creates state.
 
 ## 7. The heartbeat example (SDK self-test)
 
@@ -205,8 +216,9 @@ It reports only while run, so it shows as stale afterwards; treat it as a self-t
 `tests/unit/platform/test_platform_sdk.py` (atomic emit, rollback, diffs, sender
 retry/backoff/Retry-After, lost-202 replay, 403 bisection, systemic 422, dead-letter
 requeue, runner isolation, health sanitisation, degraded hint, committed snapshots,
-string-only config secret check, sim-record, asset upserts) with the in-process fake
+string-only config secret check, asset upserts) with the in-process fake
 gateway `tests/unit/platform/fake_gateway.py`;
+`tests/unit/platform/test_platform_reset.py` (re-baseline policies on real state DBs);
 `tests/unit/platform/test_platform_collectors_ctl.py` (background runner start/stop/
 status with a fake `uv`); `tests/failure/test_failure_durability.py` exercises a real
 outbox across gateway and writer restarts.

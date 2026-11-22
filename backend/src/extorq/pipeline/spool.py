@@ -26,12 +26,15 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+from extorq.ingest.event_identity import EventReceipt, historical_receipt
 
-#: Spool kinds besides the seven ingest RecordKinds.
+SCHEMA_VERSION = 2
+
+#: Spool kinds besides the ingest ``RecordKind`` values (gateway and writer bookkeeping).
 INTERNAL_KINDS = ("pipeline_health", "quarantine", "ingest_audit")
 
 _SCHEMA = """
@@ -65,6 +68,13 @@ CREATE TABLE IF NOT EXISTS dedup (
     PRIMARY KEY (kind, record_key)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS dedup_first_seen ON dedup (first_seen);
+CREATE TABLE IF NOT EXISTS event_identities (
+    canonical_key TEXT PRIMARY KEY,
+    stored_id     TEXT NOT NULL,
+    fingerprint   TEXT NOT NULL,
+    expires_at    REAL NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS event_identities_expires ON event_identities (expires_at);
 CREATE TABLE IF NOT EXISTS dead_letter (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     seq          INTEGER NOT NULL,
@@ -93,6 +103,8 @@ class NewRecord:
     record_key: str
     payload: str
     dedup: bool = True
+    event_receipt: EventReceipt | None = None
+    index: int = 0
 
 
 @dataclass(frozen=True)
@@ -119,6 +131,10 @@ class SpoolUnavailable(RuntimeError):
     """The spool cannot accept writes (disk full, I/O error, locked too long)."""
 
 
+class SpoolFull(SpoolUnavailable):
+    """The batch would exceed the configured spool depth budget."""
+
+
 class Spool:
     def __init__(self, path: Path, *, busy_timeout_ms: int = 10_000) -> None:
         self.path = path
@@ -138,8 +154,13 @@ class Spool:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA temp_store = MEMORY")
         with self._tx():
+            version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise SpoolUnavailable("spool schema is newer than this application")
             for statement in filter(None, (s.strip() for s in _SCHEMA.split(";"))):
                 self._conn.execute(statement)
+            if version == 1:
+                self._seed_pending_events(self._conn)
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self._depth_cache: tuple[float, int] = (0.0, 0)
 
@@ -154,14 +175,20 @@ class Spool:
                 raise SpoolUnavailable(f"spool busy: {exc}") from exc
             try:
                 yield self._conn
+            except sqlite3.OperationalError as exc:
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise SpoolUnavailable("spool transaction failed") from exc
             except BaseException:
-                self._conn.execute("ROLLBACK")
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
                 raise
             else:
                 try:
                     self._conn.execute("COMMIT")
                 except sqlite3.OperationalError as exc:
-                    self._conn.execute("ROLLBACK")
+                    if self._conn.in_transaction:
+                        self._conn.execute("ROLLBACK")
                     raise SpoolUnavailable(f"spool commit failed: {exc}") from exc
 
     def close(self) -> None:
@@ -212,6 +239,54 @@ class Spool:
 
     # ── gateway side ──────────────────────────────────────────────────
 
+    @staticmethod
+    def _register_event(conn: sqlite3.Connection, receipt: EventReceipt) -> str:
+        cur = conn.execute(
+            "INSERT INTO event_identities(canonical_key, stored_id, fingerprint, expires_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(canonical_key) DO NOTHING",
+            (
+                receipt.identity.key,
+                receipt.stored_id,
+                receipt.identity.fingerprint,
+                receipt.expires_at,
+            ),
+        )
+        if cur.rowcount:
+            return "accepted"
+        (fingerprint,) = conn.execute(
+            "SELECT fingerprint FROM event_identities WHERE canonical_key = ?",
+            (receipt.identity.key,),
+        ).fetchone()
+        return "duplicate" if fingerprint == receipt.identity.fingerprint else "conflict"
+
+    @classmethod
+    def _seed_pending_events(cls, conn: sqlite3.Connection) -> None:
+        # Version 1 could have queued pre-canonical events. Preserve their IDs and
+        # register only the authenticated producer and payload actually on disk.
+        for producer_id, key, payload in conn.execute(
+            "SELECT producer_id, record_key, payload FROM records WHERE kind = 'event' ORDER BY seq"
+        ):
+            try:
+                data = json.loads(payload).get("data")
+            except (ValueError, AttributeError):
+                continue  # Preserve unparseable data for the writer's existing dead-letter path.
+            if isinstance(data, dict):
+                receipt = historical_receipt(producer_id, key, data, horizon=timedelta(days=91))
+                if receipt is not None:
+                    cls._register_event(conn, receipt)
+
+    def seed_event_identities(self, receipts: Iterable[EventReceipt]) -> dict[str, int]:
+        """Import trusted historical mappings atomically, leaving stored evidence untouched."""
+        results = {"accepted": 0, "duplicate": 0, "conflict": 0, "expired": 0}
+        with self._tx() as conn:
+            now = time.time()
+            for receipt in receipts:
+                outcome = (
+                    "expired" if receipt.expires_at <= now else self._register_event(conn, receipt)
+                )
+                results[outcome] += 1
+        return results
+
     def lookup_batch(self, producer_id: str, batch_id: str) -> tuple[str, dict[str, Any]] | None:
         with self._lock:
             row = self._conn.execute(
@@ -233,11 +308,13 @@ class Spool:
         extra: Sequence[NewRecord],
         build_result: Callable[[int, int], dict[str, Any]],
         counters: dict[str, int] | None = None,
+        quarantine_conflict: Callable[[NewRecord], NewRecord] | None = None,
+        max_records: int | None = None,
     ) -> CommitOutcome:
         """Atomically enqueue a batch. ``build_result(accepted, duplicates)`` makes the result.
 
-        ``records`` are deduplicated by (kind, record_key); ``extra`` rows
-        (quarantine, audit) are always enqueued. A previously committed
+        Canonical events use their persistent identity and fingerprint. Other
+        records use (kind, record_key); ``extra`` rows are always enqueued. A previously committed
         ``(producer_id, batch_id)`` returns the stored result with ``replayed``.
         """
         now = time.time()
@@ -253,9 +330,25 @@ class Spool:
                     )
                 self._incr(conn, "replayed_batches_total", 1)
                 return CommitOutcome(replayed=True, result=json.loads(existing[1]))
-            accepted = duplicates = 0
+            accepted = duplicates = conflicts = 0
             for rec in records:
-                if rec.dedup:
+                if rec.event_receipt is not None:
+                    if rec.kind != "event" or rec.record_key != rec.event_receipt.stored_id:
+                        raise ValueError("event receipt does not describe its spool record")
+                    disposition = self._register_event(conn, rec.event_receipt)
+                    if disposition == "duplicate":
+                        duplicates += 1
+                        continue
+                    if disposition == "conflict":
+                        if quarantine_conflict is None:
+                            raise ValueError("event conflict requires a quarantine handler")
+                        conflict = quarantine_conflict(rec)
+                        self._insert_record(conn, conflict, producer_id, batch_id, ingested_at, now)
+                        self._incr(conn, "quarantined_total", 1)
+                        self._incr(conn, "event_identity_conflicts_total", 1)
+                        conflicts += 1
+                        continue
+                elif rec.dedup:
                     cur = conn.execute(
                         "INSERT OR IGNORE INTO dedup(kind, record_key, first_seen) "
                         "VALUES (?, ?, ?)",
@@ -268,6 +361,10 @@ class Spool:
                 accepted += 1
             for rec in extra:
                 self._insert_record(conn, rec, producer_id, batch_id, ingested_at, now)
+            if max_records is not None and (accepted or conflicts or extra):
+                (depth,) = conn.execute("SELECT count(*) FROM records").fetchone()
+                if depth > max_records:
+                    raise SpoolFull("spool is full")
             result = build_result(accepted, duplicates)
             conn.execute(
                 "INSERT INTO batches(producer_id, batch_id, content_sha256, received_ts, result) "
@@ -471,8 +568,85 @@ class Spool:
         with self._tx() as conn:
             d = conn.execute("DELETE FROM dedup WHERE first_seen < ?", (dedup_older_than,))
             b = conn.execute("DELETE FROM batches WHERE received_ts < ?", (batches_older_than,))
+            conn.execute("DELETE FROM event_identities WHERE expires_at <= ?", (time.time(),))
             return d.rowcount, b.rowcount
 
     def checkpoint(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+
+    # ── clean-slate reset (``extorq spool clear``; ``make reset-data``) ──────
+
+    def table_counts(self) -> dict[str, int]:
+        """Rows per spool table (queued records, replay results, dedup keys, ...)."""
+        with self._lock:
+            return {
+                name: int(self._conn.execute(_COUNT_SQL[name]).fetchone()[0]) for name in _COUNT_SQL
+            }
+
+    def clear(self) -> dict[str, int]:
+        """Empty every spool table in ONE transaction; return the rows each one held.
+
+        Removes queued records (including quarantine, audit and health rows not yet
+        written), the batch replay results, the dedup index, dead letters and the
+        cumulative counters, so the next gateway and writer start from zero. Only for a
+        clean-slate reset while the gateway AND the writer are stopped: records cleared
+        here are never delivered, and a running writer could still insert a batch it
+        fetched before the clear. The WAL is truncated afterwards to release disk space.
+        """
+        with self._tx() as conn:
+            counts = {
+                name: int(conn.execute(_COUNT_SQL[name]).fetchone()[0]) for name in _COUNT_SQL
+            }
+            for statement in _CLEAR_SQL:
+                conn.execute(statement)
+        self._depth_cache = (0.0, 0)
+        with self._lock:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        return counts
+
+
+#: Static statements (no identifiers from input) used by table_counts() and clear().
+_COUNT_SQL: dict[str, str] = {
+    "records": "SELECT count(*) FROM records",
+    "dead_letter": "SELECT count(*) FROM dead_letter",
+    "dedup": "SELECT count(*) FROM dedup",
+    "event_identities": "SELECT count(*) FROM event_identities",
+    "batches": "SELECT count(*) FROM batches",
+    "counters": "SELECT count(*) FROM counters",
+}
+_CLEAR_SQL: tuple[str, ...] = (
+    "DELETE FROM records",
+    "DELETE FROM dead_letter",
+    "DELETE FROM dedup",
+    "DELETE FROM event_identities",
+    "DELETE FROM batches",
+    "DELETE FROM counters",
+)
+
+
+def admin_main(*, confirm: bool, status_only: bool = False) -> int:
+    """``extorq spool status`` / ``extorq spool clear --yes`` (one JSON line, counts only).
+
+    ``make reset-data`` runs ``clear`` in a one-off ``writer`` container (it mounts the
+    spool volume) after stopping ``ingest`` and ``writer``. A spool file that does not
+    exist is reported, never created. Exit codes: 0 done, 2 ``clear`` without ``--yes``.
+    """
+    from extorq.common.config import get_settings
+
+    settings = get_settings()
+    path = settings.resolve(settings.spool_path)
+    if not status_only and not confirm:
+        print(json.dumps({"error": "refusing to clear the spool without --yes"}), flush=True)
+        return 2
+    if not path.is_file():
+        print(json.dumps({"spool": path.name, "exists": False, "tables": {}}), flush=True)
+        return 0
+    spool = Spool(path, busy_timeout_ms=settings.spool_busy_timeout_ms)
+    try:
+        counts = spool.table_counts() if status_only else spool.clear()
+    finally:
+        spool.close()
+    key = "tables" if status_only else "cleared"
+    print(json.dumps({"spool": path.name, "exists": True, key: counts}, sort_keys=True), flush=True)
+    return 0

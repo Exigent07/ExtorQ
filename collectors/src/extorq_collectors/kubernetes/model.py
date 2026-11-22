@@ -45,7 +45,6 @@ from extorq.ingest.otlp_k8s import (
     is_static_pod_uid,
     pod_instance_id,
     risk_flags_for_summary,
-    simulation_tag,
     summarize_k8s_object,
     valid_k8s_name,
     workload_service_id,
@@ -53,7 +52,8 @@ from extorq.ingest.otlp_k8s import (
 )
 
 PARSER = "k8s-inventory"
-PARSER_VERSION = "1.0.0"
+#: 1.1.0: schema 2.0 (no simulation marker); Namespace Pod Security labels as attributes.
+PARSER_VERSION = "1.1.0"
 ACCEPTED_RISK_ANNOTATION = "extorq.io/accepted-risk"
 STATIC_POD_HASH_ANNOTATION = "kubernetes.io/config.hash"
 #: Owner of RBAC objects that Kubernetes itself reconciles at API server start.
@@ -349,6 +349,29 @@ def object_sections(kind: str, obj: Mapping[str, Any]) -> dict[str, Any]:
     return sections
 
 
+#: Pod Security Admission namespace labels (``<prefix><mode>`` and ``<prefix><mode>-version``).
+PSA_LABEL_PREFIX = "pod-security.kubernetes.io/"
+PSA_MODES = ("enforce", "audit", "warn")
+
+
+def namespace_pod_security(obj: Mapping[str, Any]) -> dict[str, str]:
+    """Pod Security labels of a Namespace as flat attributes; absent labels are omitted.
+
+    ``pod_security_enforce`` is the level admission enforces in that namespace. When the
+    label is absent the API server's cluster-wide default applies, which the API does not
+    expose (``privileged`` unless an AdmissionConfiguration says otherwise), so it is left
+    unset here; the audit normaliser records the level actually enforced per request.
+    """
+    labels = as_dict(meta(obj).get("labels"))
+    out: dict[str, str] = {}
+    for mode in PSA_MODES:
+        for suffix, key in (("", mode), ("-version", f"{mode}_version")):
+            value = clean(labels.get(f"{PSA_LABEL_PREFIX}{mode}{suffix}"), 32)
+            if value:
+                out[f"pod_security_{key}"] = value
+    return out
+
+
 def security_summary(kind: str, obj: Mapping[str, Any]) -> dict[str, Any] | None:
     """Compact security summary (shared vocabulary with the audit normaliser)."""
     if kind in ("Pod", *WORKLOAD_KINDS, "Role", "ClusterRole", "RoleBinding", "ClusterRoleBinding"):
@@ -424,7 +447,7 @@ def object_state(
         set(risk_flags_for_summary(summary)) | set(extra_risk_flags(rk.kind, obj, summary))
     )
     m = meta(obj)
-    return {
+    state: dict[str, Any] = {
         "kind": rk.kind,
         "namespace": namespace,
         "name": name,
@@ -436,6 +459,11 @@ def object_state(
         "owner": owner,
         "created_at": iso(parse_time(m.get("creationTimestamp"))),
     }
+    if rk.kind == "Namespace":
+        # Derived from the labels (already part of "sections"): a parser upgrade that adds
+        # it refreshes the inventory item without reporting the namespace as updated.
+        state["pod_security"] = namespace_pod_security(obj)
+    return state
 
 
 # ── workloads and owners ──────────────────────────────────────────────
@@ -460,13 +488,14 @@ class WorkloadRef:
         return f"{self.kind}/{self.name}"
 
 
-def controller_owner(obj: Mapping[str, Any]) -> tuple[str, str] | None:
+def controller_owner(obj: Mapping[str, Any]) -> tuple[str, str, str | None] | None:
     for ref in as_list(meta(obj).get("ownerReferences"))[:16]:
         ref = as_dict(ref)
         if ref.get("controller") is True:
             kind, name = ref.get("kind"), ref.get("name")
             if isinstance(kind, str) and isinstance(name, str) and _KIND_RE.match(kind):
-                return kind, name
+                uid = ref.get("uid")
+                return kind, name, uid if isinstance(uid, str) and uid else None
     return None
 
 
@@ -474,8 +503,12 @@ def controller_owner(obj: Mapping[str, Any]) -> tuple[str, str] | None:
 class OwnerIndex:
     """ReplicaSet / Job owners, to resolve a pod's top-level workload."""
 
-    replicasets: dict[tuple[str, str], tuple[str, str] | None] = field(default_factory=dict)
-    jobs: dict[tuple[str, str], tuple[str, str] | None] = field(default_factory=dict)
+    replicasets: dict[tuple[str, str, str], tuple[str, str, str | None] | None] = field(
+        default_factory=dict
+    )
+    jobs: dict[tuple[str, str, str], tuple[str, str, str | None] | None] = field(
+        default_factory=dict
+    )
 
     @classmethod
     def build(
@@ -484,12 +517,14 @@ class OwnerIndex:
         index = cls()
         for rs in replicasets:
             name = obj_name(rs)
-            if name:
-                index.replicasets[(obj_namespace(rs), name)] = controller_owner(rs)
+            uid = meta(rs).get("uid")
+            if name and isinstance(uid, str) and uid:
+                index.replicasets[(obj_namespace(rs), name, uid)] = controller_owner(rs)
         for job in jobs:
             name = obj_name(job)
-            if name:
-                index.jobs[(obj_namespace(job), name)] = controller_owner(job)
+            uid = meta(job).get("uid")
+            if name and isinstance(uid, str) and uid:
+                index.jobs[(obj_namespace(job), name, uid)] = controller_owner(job)
         return index
 
     def workload_of(self, pod: Mapping[str, Any]) -> WorkloadRef | None:
@@ -502,20 +537,21 @@ class OwnerIndex:
         if owner is None or owner[0] == "Node":
             # Bare pod (no controller) or static pod (mirror pod owned by its Node).
             return WorkloadRef(namespace, POD_WORKLOAD_KIND, name)
-        kind, owner_name = owner
-        if not valid_k8s_name(owner_name):
+        kind, owner_name, owner_uid = owner
+        if not valid_k8s_name(owner_name) or owner_uid is None:
             return None
+        key = (namespace, owner_name, owner_uid)
         if kind == "ReplicaSet":
-            if (namespace, owner_name) not in self.replicasets:
+            if key not in self.replicasets:
                 return None  # not listed yet (race) -> unknown, never guessed
-            parent = self.replicasets[(namespace, owner_name)]
+            parent = self.replicasets[key]
             if parent and parent[0] == "Deployment" and valid_k8s_name(parent[1]):
                 return WorkloadRef(namespace, "Deployment", parent[1])
             return WorkloadRef(namespace, "ReplicaSet", owner_name)
         if kind == "Job":
-            if (namespace, owner_name) not in self.jobs:
+            if key not in self.jobs:
                 return None
-            parent = self.jobs[(namespace, owner_name)]
+            parent = self.jobs[key]
             if parent and parent[0] == "CronJob" and valid_k8s_name(parent[1]):
                 return WorkloadRef(namespace, "CronJob", parent[1])
             return WorkloadRef(namespace, "Job", owner_name)
@@ -647,6 +683,8 @@ def resource_change_event(
         "owner": state.get("owner"),
         "time_source": time_source,
         "resource_version": resource_version,
+        "object_uid": uid,
+        **as_dict(state.get("pod_security")),
     }
     if obj is not None:
         managers = field_managers(obj)
@@ -664,10 +702,6 @@ def resource_change_event(
         if added:
             attributes["risk_flags_added"] = added
     attributes = {k: v for k, v in attributes.items() if v is not None}
-    subjects: list[str] = []
-    if obj is not None and rk.kind in ("RoleBinding", "ClusterRoleBinding"):
-        subjects = [str(as_dict(s).get("name")) for s in as_list(obj.get("subjects"))[:32]]
-    simulation = simulation_tag(name, state.get("owner"), subjects)
     k8s_fields: dict[str, Any] = {
         "cluster": CLUSTER_NAME,
         "namespace": namespace,
@@ -708,7 +742,6 @@ def resource_change_event(
         message=clean(label, 512),
         attributes=attributes,
         provenance=Provenance(parser=PARSER, parser_version=PARSER_VERSION, raw_sha256=content),
-        simulation=simulation,
     )
 
 
@@ -733,6 +766,7 @@ def inventory_item(
         "owner": state.get("owner"),
         "accepted_risk": state.get("accepted_risk"),
         "created_at": state.get("created_at"),
+        **as_dict(state.get("pod_security")),
     }
     return InventoryItem(
         asset_id=ASSET_ID,
@@ -855,7 +889,6 @@ def k8s_event(
             parser_version=PARSER_VERSION,
             raw_sha256=sha256_hex(canonical_json(dict(obj))),
         ),
-        simulation=simulation_tag(name, m.get("name")),
     )
 
 
@@ -907,6 +940,7 @@ __all__ = [
     "inventory_item",
     "is_bootstrap_rbac",
     "k8s_event",
+    "namespace_pod_security",
     "object_key",
     "object_state",
     "pod_instance_id",

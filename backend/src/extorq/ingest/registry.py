@@ -16,15 +16,22 @@ Authorization (per record):
   (``event.source.source_type`` and every ``collector_health.source_types`` entry);
   exception: ``extorq.collector.gap_detected`` events with the legacy catalog
   source ``extorq.pipeline`` are allowed when ``attributes.source_type`` names a
-  source type the producer is authorized for (B1 interface note 4.1; since
-  catalog 1.1 gap events may also use the collector's own source types, which
-  pass the normal check). ``service.telemetry_sources`` is descriptive metadata
-  and is NOT checked: a Kubernetes workload's logs arrive through a different
-  producer (the OTel pipeline) than its inventory record;
+  source type the producer is authorized for (B1 interface note 4.1; gap events
+  may also use the collector's own source types, which pass the normal check).
+  ``service.telemetry_sources`` is descriptive metadata and is NOT checked: a
+  Kubernetes workload's logs arrive through a different producer (the OTel
+  pipeline) than its inventory record;
 * a ``service_instance`` without ``asset_id`` passes this check only on its kind;
   :func:`extorq.ingest.processing.prepare_batch` then quarantines it
   (``asset_unattributable``) because its asset cannot be verified;
 * ``scan_run.producer_id`` must equal the authenticated producer.
+
+Contract upgrades: ``allowed_kinds`` that the running contracts no longer define (schema
+2.0 retired ``simulation_run``) are dropped while loading, and an entry left with no kind
+is skipped. Both fail closed (nothing unknown can be authorized) and are logged
+(``producer_registry_entries_adjusted``), so a ``producers.json`` written by an older
+``make bootstrap`` never stops the gateway from starting; re-run ``make bootstrap`` to
+rewrite it.
 """
 
 from __future__ import annotations
@@ -36,18 +43,23 @@ import threading
 import time
 from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from extorq.common.logging import get_logger
 from extorq.contracts.common import Identifier, Sha256Hex
 from extorq.contracts.event import SecurityEvent
 from extorq.contracts.health import CollectorHealth
 from extorq.contracts.ingest import IngestRecord, RecordKind
 from extorq.contracts.scan import ScanRun
 from extorq.contracts.service import ServiceInstance
+from extorq.ingest.otlp_health import COLLECTOR_PREFIX, PRODUCER_ID
 
 GAP_EVENT_TYPE = "extorq.collector.gap_detected"
 GAP_SOURCE_TYPE = "extorq.pipeline"
+
+log = get_logger("extorq.ingest.registry")
 
 
 class ProducerEntry(BaseModel):
@@ -76,7 +88,7 @@ class ProducerEntry(BaseModel):
         data = record.data
         asset_id = data.asset_id
         if asset_id is None:
-            # Only ServiceInstance may omit asset_id (contract 1.1); prepare_batch quarantines it.
+            # Only ServiceInstance may omit asset_id (contract); prepare_batch quarantines it.
             return None if isinstance(data, ServiceInstance) else "asset_missing"
         if not self.asset_allowed(asset_id):
             return f"asset_not_allowed:{asset_id}"
@@ -92,6 +104,11 @@ class ProducerEntry(BaseModel):
             elif not self.source_type_allowed(source_type):
                 return f"source_type_not_allowed:{source_type}"
         elif isinstance(data, CollectorHealth):
+            is_otel_health = data.collector_type == "k8s_otel" or data.collector_id.startswith(
+                COLLECTOR_PREFIX
+            )
+            if is_otel_health and self.producer_id != PRODUCER_ID:
+                return "collector_health_producer_mismatch"
             for source_type in data.source_types:
                 if not self.source_type_allowed(source_type):
                     return f"source_type_not_allowed:{source_type}"
@@ -111,8 +128,47 @@ class RegistryError(RuntimeError):
     """producers.json missing or invalid (message never includes token material)."""
 
 
+def _validated_entries(entries: list[ProducerEntry]) -> tuple[ProducerEntry, ...]:
+    if len({entry.producer_id for entry in entries}) != len(entries):
+        raise RegistryError("producer registry contains duplicate producer IDs")
+    if len({entry.token_sha256 for entry in entries}) != len(entries):
+        raise RegistryError("producer registry contains a credential shared by multiple producers")
+    return tuple(entries)
+
+
 def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def drop_retired_kinds(document: Any) -> tuple[Any, list[str]]:
+    """Remove ``allowed_kinds`` the contracts no longer define; drop entries left empty.
+
+    Returns the adjusted document and one note per change (producer ids and kind names
+    only, never token digests). Anything that is not the expected shape is returned
+    unchanged so that strict validation reports it.
+    """
+    if not isinstance(document, dict) or not isinstance(document.get("producers"), list):
+        return document, []
+    known = {kind.value for kind in RecordKind}
+    notes: list[str] = []
+    producers: list[Any] = []
+    for entry in document["producers"]:
+        kinds = entry.get("allowed_kinds") if isinstance(entry, dict) else None
+        if not isinstance(kinds, list):
+            producers.append(entry)
+            continue
+        retired = [k for k in kinds if isinstance(k, str) and k not in known]
+        if not retired:
+            producers.append(entry)
+            continue
+        kept = [k for k in kinds if k not in retired]
+        producer_id = str(entry.get("producer_id"))[:128]
+        if kept:
+            notes.append(f"{producer_id}: retired kinds dropped ({', '.join(retired)})")
+            producers.append({**entry, "allowed_kinds": kept})
+        else:
+            notes.append(f"{producer_id}: skipped (only retired kinds: {', '.join(retired)})")
+    return {**document, "producers": producers}, notes
 
 
 class ProducerRegistry:
@@ -133,7 +189,7 @@ class ProducerRegistry:
         registry.path = Path("/dev/null")
         registry.reload_interval = float("inf")
         registry._lock = threading.Lock()
-        registry._entries = tuple(entries)
+        registry._entries = _validated_entries(entries)
         registry._mtime = None
         registry._checked_at = float("inf")
         return registry
@@ -145,14 +201,15 @@ class ProducerRegistry:
         except OSError as exc:
             raise RegistryError(f"producer registry unreadable: {type(exc).__name__}") from None
         try:
-            document = RegistryDocument.model_validate(json.loads(raw))
+            adjusted, notes = drop_retired_kinds(json.loads(raw))
+            document = RegistryDocument.model_validate(adjusted)
         except (ValueError, TypeError) as exc:
             raise RegistryError(f"producer registry invalid: {type(exc).__name__}") from None
-        ids = [entry.producer_id for entry in document.producers]
-        if len(ids) != len(set(ids)):
-            raise RegistryError("producer registry contains duplicate producer ids")
+        if notes:
+            log.warning("producer_registry_entries_adjusted", notes=notes)
+        entries = _validated_entries(document.producers)
         with self._lock:
-            self._entries = tuple(document.producers)
+            self._entries = entries
             self._mtime = stat.st_mtime
             self._checked_at = time.monotonic()
 
@@ -167,8 +224,9 @@ class ProducerRegistry:
         if mtime != self._mtime:
             try:
                 self._load()
-            except RegistryError:
-                return  # keep the last good registry; the error is visible at startup
+            except RegistryError as exc:
+                log.warning("producer_registry_reload_rejected", reason=str(exc))
+                return  # keep the last good registry
 
     @property
     def producer_ids(self) -> list[str]:

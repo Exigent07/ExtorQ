@@ -27,22 +27,13 @@ from extorq.detection.service_identity import (
 )
 
 # Shared, DDL-tested row mappers (owner A): alerts incl. 0004 service_ids, pipeline_health.
-from extorq.storage.rows import alert_to_row
+from extorq.storage.rows import alert_evidence_to_row, alert_to_row
 from extorq.storage.rows import pipeline_health_to_row as health_to_row
 
 if TYPE_CHECKING:
     from extorq.detection.registry import LoadedRule
 
 _ID_CHUNK = 500
-
-
-def evidence_to_row(evidence: AlertEvidence) -> dict[str, Any]:
-    return {
-        "alert_id": evidence.alert_id,
-        "event_id": evidence.event_id,
-        "role": evidence.role.value,
-        "added_at": evidence.added_at,
-    }
 
 
 def rule_run_to_row(run: RuleRun, instance: str) -> dict[str, Any]:
@@ -140,18 +131,18 @@ class DetectionStore:
             return None
         return DetectionAlert.model_validate_json(result.rows[0][0])
 
-    def load_evidence(self, alert_ids: Iterable[str]) -> dict[str, dict[str, str]]:
-        """Full evidence set per alert: ``{alert_id: {event_id: role}}``."""
-        evidence: dict[str, dict[str, str]] = defaultdict(dict)
+    def load_evidence(self, alert_ids: Iterable[str]) -> dict[str, dict[str, datetime]]:
+        """Evidence association times per alert, including interrupted writes."""
+        evidence: dict[str, dict[str, datetime]] = defaultdict(dict)
         for batch in chunked(sorted(set(alert_ids)), _ID_CHUNK):
             result = self.read.select(
-                "SELECT alert_id, event_id, any(role) FROM alert_evidence "
+                "SELECT alert_id, event_id, max(added_at) FROM alert_evidence "
                 "WHERE alert_id IN {ids:Array(String)} GROUP BY alert_id, event_id "
                 "LIMIT 200000",
                 {"ids": batch},
             )
-            for alert_id, event_id, role in result.rows:
-                evidence[str(alert_id)][str(event_id)] = str(role)
+            for alert_id, event_id, added_at in result.rows:
+                evidence[str(alert_id)][str(event_id)] = added_at
         return dict(evidence)
 
     def present_source_types(
@@ -168,6 +159,25 @@ class DetectionStore:
             {"start": start, "end": end, "sources": list(source_types)},
         )
         return {str(row[0]) for row in result.rows}
+
+    def evidence_events(
+        self, event_ids: Iterable[str]
+    ) -> dict[str, tuple[str, datetime, str, str]]:
+        """Resolve proof references, excluding ambiguous legacy event IDs."""
+        records: dict[str, tuple[str, datetime, str, str]] = {}
+        ambiguous: set[str] = set()
+        for batch in chunked(sorted(set(event_ids)), _ID_CHUNK):
+            result = self.read.select(
+                "SELECT event_id, asset_id, event_time, source_type, event_type FROM events "
+                "WHERE event_id IN {ids:Array(String)} "
+                "GROUP BY event_id, asset_id, event_time, source_type, event_type, producer_id",
+                {"ids": batch},
+            )
+            for eid, asset, event_time, source, event_type in result.rows:
+                if eid in records:
+                    ambiguous.add(eid)
+                records[eid] = (asset, event_time, source, event_type)
+        return {eid: record for eid, record in records.items() if eid not in ambiguous}
 
     def earliest_late_event(
         self,
@@ -249,7 +259,7 @@ class DetectionStore:
 
     def write_evidence(self, evidence: Sequence[AlertEvidence]) -> None:
         for batch in chunked(evidence, 5000):
-            self.write.insert_rows("alert_evidence", [evidence_to_row(e) for e in batch])
+            self.write.insert_rows("alert_evidence", [alert_evidence_to_row(e) for e in batch])
 
     def write_rule_runs(self, runs: Sequence[RuleRun]) -> None:
         self.write.insert_rows("rule_runs", [rule_run_to_row(r, self.instance) for r in runs])

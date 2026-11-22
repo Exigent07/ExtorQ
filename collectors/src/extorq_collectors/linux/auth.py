@@ -2,7 +2,7 @@
 
 Formats are those of OpenSSH 9.6 / sudo 1.9 / pam_unix on Ubuntu 24.04 with
 ``LogLevel VERBOSE`` (fixtures under tests/fixtures/linux/ are real lines
-captured from the lab VM). User names are attacker-controlled and may contain
+captured from the Ubuntu VM). User names are attacker-controlled and may contain
 spaces, so every pattern is anchored at the end and the user group is greedy:
 the trailing ``from <ip> port <n>`` written by sshd always wins.
 """
@@ -23,12 +23,12 @@ from extorq.contracts import (
     Severity,
     SourceType,
 )
+from extorq.contracts.identity import sha256_hex
 from extorq_collectors.linux.common import (
     SELF_LABEL,
     ParseContext,
     build_event,
     clean,
-    redact_clean,
     severity_from_priority,
 )
 from extorq_collectors.linux.journal import (
@@ -90,8 +90,14 @@ PAM_FAILURE = re.compile(
 )
 _PAM_KV = re.compile(r"(?P<key>logname|uid|euid|tty|ruser|rhost|user)=(?P<value>\S*)")
 
+# sudo 1.9 log line (sudoers(5) "EVENT LOGGING"):
+#   "<user> : [<reason> ; ]TTY=.. ; [CHROOT=.. ;] PWD=.. ; USER=.. ; [GROUP=.. ;] [TSID=.. ;]
+#    [ENV=<vars> ]COMMAND=<cmd>"   (ENV is separated from COMMAND by one space, not " ; ")
 SUDO_LINE = re.compile(r"^\s{0,8}(?P<user>[^\s:]{1,64}) : (?P<rest>.+)$")
-_SUDO_KEYS = frozenset({"TTY", "PWD", "USER", "GROUP", "ENV", "CHROOT", "CWD"})
+_SUDO_KEYS = frozenset({"TTY", "PWD", "USER", "GROUP", "ENV", "CHROOT", "CWD", "TSID"})
+#: A wrong password is an authentication failure; a policy refusal is an authorization denial.
+_SUDO_PASSWORD_FAILURE = ("incorrect password", "password is required", "authentication failure")
+_SUDO_ATTEMPTS = re.compile(r"^(?P<count>\d{1,4}) incorrect password attempts?$")
 
 
 def _ip_or_none(value: str | None) -> str | None:
@@ -152,7 +158,6 @@ def _ssh_event(
         message=entry.message,
         raw=entry.message,
         attributes={**attributes, "boot_id": entry.boot_id},
-        sim_texts=(user,),
         is_self=self_activity,
     )
 
@@ -317,7 +322,12 @@ def parse_sshd(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
                 },
             )
         ]
-    # kind == "not_allowed": an existing account refused by AllowUsers/DenyUsers etc.
+    # kind == "not_allowed": an existing account (e.g. root) refused by AllowUsers/DenyUsers.
+    # sshd then treats the login as an invalid user, so the failures that follow are
+    # auth.ssh.preauth_closed / max_auth_exceeded with invalid_user=true. The line itself has
+    # no port and no catalog type of its own: it stays notable context, but its peer address
+    # goes where correlation looks for it (network.src_ip).
+    src_ip = _ip_or_none(groups.get("ip"))
     return [
         notable_event(
             entry,
@@ -327,7 +337,8 @@ def parse_sshd(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
             trust=trust,
             actor_name=user,
             outcome=Outcome.DENIED,
-            attributes={"src_ip": _ip_or_none(groups.get("ip")), "reason": groups.get("reason")},
+            attributes={"reason": groups.get("reason"), "invalid_user": True},
+            network=Network(src_ip=src_ip, protocol="tcp", direction="inbound") if src_ip else None,
         )
     ]
 
@@ -374,25 +385,33 @@ def parse_pam_failure(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEv
                 "euid": fields.get("euid") or None,
                 "boot_id": entry.boot_id,
             },
-            sim_texts=(user,),
             is_self=is_self(entry, ctx),
         )
     ]
 
 
 def _split_sudo(rest: str) -> tuple[str | None, dict[str, str], str | None]:
-    """Split ``reason ; KEY=value ; ... ; COMMAND=cmd`` (COMMAND may contain ' ; ')."""
+    """Split ``[reason ; ]KEY=value ; ... ; [ENV=vars ]COMMAND=cmd`` into its parts.
+
+    COMMAND is always the last field and its value may itself contain `` ; `` (shell
+    arguments), so the command starts at the first ``COMMAND=`` that sits on a field
+    boundary: after `` ; `` or, when environment variables were passed, after ``ENV=...``
+    and a single space.
+    """
     command = None
     head = rest
-    marker = rest.find("COMMAND=")
-    if marker >= 0 and (marker == 0 or rest[max(0, marker - 3) : marker] == " ; "):
-        command = rest[marker + len("COMMAND=") :]
-        head = rest[:marker].rstrip(" ;")
+    marker = rest.find(" ; COMMAND=")
+    if marker >= 0:
+        command, head = rest[marker + len(" ; COMMAND=") :], rest[:marker]
+    elif rest.startswith("COMMAND="):
+        command, head = rest[len("COMMAND=") :], ""
     reason = None
     fields: dict[str, str] = {}
     for part in [p.strip() for p in head.split(" ; ") if p.strip()]:
         key, sep, value = part.partition("=")
         if sep and key in _SUDO_KEYS:
+            if key == "ENV" and command is None and " COMMAND=" in value:
+                value, _, command = value.partition(" COMMAND=")
             fields[key] = value
         elif reason is None and not sep:
             reason = part
@@ -415,15 +434,22 @@ def parse_sudo(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
     if trust is Trust.MISMATCH:
         return [forged_identity_event(entry, ctx, "sudo")]
     user = match.group("user")
-    safe_cmd, _ = redact_clean(command, 2048)  # raw (full line) carries the redaction count
-    executable = safe_cmd.split(" ", 1)[0] if safe_cmd else None
+    first = command.split(maxsplit=1)[0] if command and command.strip() else ""
+    executable = clean(first) if first.startswith("/") else None
     failure = reason is not None
+    password_failure = failure and any(h in (reason or "").lower() for h in _SUDO_PASSWORD_FAILURE)
+    attempts = _SUDO_ATTEMPTS.match(reason.strip()) if reason else None
     attrs: dict[str, Any] = {
         "run_as": fields.get("USER"),
         "run_as_group": fields.get("GROUP"),
         "tty": fields.get("TTY"),
         "cwd": fields.get("PWD") or fields.get("CWD"),
         "reason": reason,
+        "failure_kind": ("authentication" if password_failure else "policy") if failure else None,
+        # sudo logs one record per invocation with the number of wrong passwords.
+        "failed_attempts": int(attempts.group("count")) if attempts else None,
+        # ENV= values can carry secrets: record only that variables were passed.
+        "env_specified": True if "ENV" in fields else None,
         "boot_id": entry.boot_id,
     }
     if trust is not Trust.VERIFIED:
@@ -438,23 +464,23 @@ def parse_sudo(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]:
             event_time=entry.time,
             parser=PARSER_SUDO,
             action="sudo",
-            outcome=Outcome.DENIED if failure else Outcome.SUCCESS,
+            outcome=(Outcome.FAILURE if password_failure else Outcome.DENIED)
+            if failure
+            else Outcome.SUCCESS,
             severity_hint=severity_from_priority(entry.priority),
             actor=Actor(type=ActorType.USER, name=clean(user)),
             process=ProcessInfo(
                 pid=entry.pid,
                 name=clean(executable.rsplit("/", 1)[-1]) if executable else None,
                 executable=executable,
-                command_line=safe_cmd,
                 user=clean(fields.get("USER")),
             ),
             message=(
                 f"sudo: {user} {'denied' if failure else 'ran'} "
-                f"{safe_cmd or ''} as {fields.get('USER', '?')}"
+                f"{executable or 'command'} as {fields.get('USER', '?')}"
             ).strip(),
-            raw=msg,
+            raw_sha256=sha256_hex(msg),
             attributes=attrs,
-            sim_texts=(command,),
             is_self=is_self(entry, ctx),
         )
     ]

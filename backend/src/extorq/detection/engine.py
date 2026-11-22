@@ -31,7 +31,8 @@ import socket
 import time
 import uuid
 from collections import defaultdict, deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -55,8 +56,9 @@ from extorq.detection.alerts import (
     parse_rows,
     with_service_ids,
 )
-from extorq.detection.clients import DbClient
+from extorq.detection.clients import DbClient, QueryRows, RuleQueryClient
 from extorq.detection.registry import LoadedRule
+from extorq.detection.service_identity import assets_related
 from extorq.detection.store import DetectionStore, rule_to_row
 
 log = get_logger(__name__)
@@ -70,6 +72,7 @@ ContextHook = Callable[[LoadedRule, list[str]], tuple[int, int]]
 class EngineConfig:
     ingest_delay_seconds: int = 10
     max_rows_per_rule: int = 1000
+    max_contexts_per_run: int = 100
     max_episode_seconds: int = 3600
     rule_run_backlog: int = 1000
     #: Late-data catch-up: evaluate events ingested since the rule's last successful run
@@ -105,7 +108,7 @@ class DetectionEngine:
         self,
         rules: Sequence[LoadedRule],
         *,
-        rules_client: DbClient,
+        rules_client: RuleQueryClient,
         read_client: DbClient,
         write_client: DbClient,
         config: EngineConfig | None = None,
@@ -122,6 +125,7 @@ class DetectionEngine:
         self.stats = EngineStats()
         self._next_due: dict[str, datetime] = {}
         self._last_success: dict[str, datetime] = {}
+        self._pending_windows: dict[str, tuple[datetime, datetime]] = {}
         self._backlog: deque[RuleRun] = deque()
 
     # ── registration ─────────────────────────────────────────────────
@@ -224,14 +228,17 @@ class DetectionEngine:
     def evaluate(self, rule: LoadedRule, now: datetime) -> RuleRun:
         started_at = utc_now()
         t0 = time.monotonic()
-        window_start, window_end = self.window_for(rule, now)
+        pending = self._pending_windows.get(rule.rule_id)
+        window_start, window_end = pending if pending is not None else self.window_for(rule, now)
         status = RuleRunStatus.SUCCEEDED
         error: str | None = None
         rows_matched = created = updated = 0
         missing: list[str] = []
         try:
             required = rule.required_source_types
-            caught_up = self._catchup_start(rule, required, window_start, now)
+            caught_up = (
+                self._catchup_start(rule, required, window_start, now) if pending is None else None
+            )
             if caught_up is not None:
                 log.info(
                     "late_data_catchup",
@@ -242,36 +249,30 @@ class DetectionEngine:
                 window_start = caught_up
             present = self.store.present_source_types(required, window_start, window_end)
             missing = [s for s in required if s not in present]
-            result = self.rules_client.select(
-                rule.query_text, rule.query_parameters(window_start, window_end)
-            )
-            rows_matched = len(result.rows)
-            rows, problems = parse_rows(rule, result)
-            notes: list[str] = []
-            if problems:
-                notes.append(f"rejected {len(problems)} malformed rows ({problems[0]})")
-                log.warning(
-                    "rule_rows_rejected",
-                    rule_id=rule.rule_id,
-                    count=len(problems),
-                    first=problems[0],
-                )
-            if len(rows) > self.config.max_rows_per_rule:
-                limit = self.config.max_rows_per_rule
-                notes.append(f"row limit {limit} exceeded ({len(rows)} rows); rest skipped")
-                rows = rows[: self.config.max_rows_per_rule]
-            created, updated, touched = self._apply(rule, rows, window_start, window_end, now)
-            if notes:
-                error = "; ".join(notes)[:2000]
+            touched: set[str] = set()
+            with closing(self._result_batches(rule, window_start, window_end)) as batches:
+                for result in batches:
+                    rows_matched += len(result.rows)
+                    rows, problems = parse_rows(rule, result)
+                    if problems:
+                        raise RowError(f"rejected {len(problems)} malformed rows ({problems[0]})")
+                    new, changed, alert_ids = self._apply(rule, rows, window_start, window_end, now)
+                    created += new
+                    updated += changed
+                    for aid in alert_ids:
+                        if len(touched) >= self.config.max_contexts_per_run:
+                            break
+                        touched.add(aid)
             if touched:
-                self._run_context_hook(rule, touched)
-        except RowError as exc:
-            status, error = RuleRunStatus.FAILED, sanitize_error(exc)
+                self._run_context_hook(rule, sorted(touched))
         except Exception as exc:  # noqa: BLE001 - one failing rule must never stop the others
             status, error = RuleRunStatus.FAILED, sanitize_error(exc)
         duration_ms = int((time.monotonic() - t0) * 1000)
         if status is RuleRunStatus.SUCCEEDED:
-            self._last_success[rule.rule_id] = now
+            self._pending_windows.pop(rule.rule_id, None)
+            self._last_success[rule.rule_id] = window_end + timedelta(
+                seconds=self.config.ingest_delay_seconds
+            )
         self.stats.rule_runs_total += 1
         if status is RuleRunStatus.FAILED:
             self.stats.rule_failures_total += 1
@@ -304,6 +305,34 @@ class DetectionEngine:
             duration_ms=duration_ms,
             error=error,
             missing_sources=missing[:16],
+        )
+
+    def _result_batches(
+        self, rule: LoadedRule, start: datetime, end: datetime
+    ) -> Generator[QueryRows, None, None]:
+        """Use one untruncated stream on overflow so each result sees the full window."""
+        limit = self.config.max_rows_per_rule
+        parameters = rule.query_parameters(start, end)
+        body = f"SELECT * FROM (\n{rule.query_text}\n)"  # noqa: S608 - validated read-only rule
+        result = self.rules_client.select(
+            body + " LIMIT {_extorq_result_limit:UInt64}",
+            {**parameters, "_extorq_result_limit": limit + 1},
+        )
+        if len(result.rows) <= limit:
+            yield result
+            return
+        self._pending_windows[rule.rule_id] = (start, end)
+        log.info("rule_result_streaming", rule_id=rule.rule_id, batch_size=limit)
+        # Preserve group and event order across writes, including bucket continuation.
+        ordering = (
+            "bucket_start"
+            if rule.metadata.dedup.strategy is DedupStrategy.WINDOW_BUCKET
+            else "signature"
+        )
+        yield from self.rules_client.select_batches(
+            body + " ORDER BY group_key, first_seen, " + ordering,
+            parameters,
+            limit,
         )
 
     def _catchup_start(
@@ -346,6 +375,7 @@ class DetectionEngine:
     ) -> tuple[int, int, list[str]]:
         if not rows:
             return 0, 0, []
+        evidence_times = self._verify_evidence(rule, rows, window_start, window_end)
         bucketed = rule.metadata.dedup.strategy is DedupStrategy.WINDOW_BUCKET
         identities = {id(row): alert_identity(rule, row) for row in rows}
         since = window_start - timedelta(seconds=self.config.max_episode_seconds)
@@ -357,7 +387,7 @@ class DetectionEngine:
         )
         evidence = self.store.load_evidence(existing.keys() | set(identities.values()))
         states: dict[str, DetectionAlert] = dict(existing)
-        stored: dict[str, dict[str, str]] = defaultdict(
+        stored: dict[str, dict[str, datetime]] = defaultdict(
             dict, {k: dict(v) for k, v in evidence.items()}
         )
         by_group: dict[str, list[DetectionAlert]] = defaultdict(list)
@@ -400,9 +430,12 @@ class DetectionEngine:
             group_alerts.append(decision.alert)
             by_group[row.group_key] = group_alerts
             for ev in decision.new_evidence:
-                stored[aid][ev.event_id] = ev.role.value
+                stored[aid][ev.event_id] = ev.added_at
             pending_alerts[aid] = decision.alert
-            pending_evidence.extend(decision.new_evidence)
+            pending_evidence.extend(
+                ev.model_copy(update={"event_time": evidence_times[ev.event_id]})
+                for ev in decision.new_evidence
+            )
             if decision.created or aid in created_ids:
                 created_ids.add(aid)
             else:
@@ -420,6 +453,35 @@ class DetectionEngine:
             self.stats.alerts_created_total += len(created_ids)
             self.stats.alerts_updated_total += len(updated_ids - created_ids)
         return len(created_ids), len(updated_ids - created_ids), sorted(pending_alerts)
+
+    def _verify_evidence(
+        self, rule: LoadedRule, rows: list[RuleRow], start: datetime, end: datetime
+    ) -> dict[str, datetime]:
+        # Match DateTime64 parameter precision at the half-open query boundaries.
+        start = start.replace(microsecond=start.microsecond // 1000 * 1000)
+        end = end.replace(microsecond=end.microsecond // 1000 * 1000)
+        declared = {
+            (requirement.source_type.value, event_type)
+            for requirement in rule.metadata.requires
+            for event_type in requirement.event_types
+        }
+        records = self.store.evidence_events(eid for row in rows for eid in row.evidence_event_ids)
+        for row in rows:
+            if not start <= row.first_seen <= row.last_seen < end:
+                raise RowError("rule result is outside the event window")
+            for eid in row.evidence_event_ids:
+                record = records.get(eid)
+                if record is None:
+                    raise RowError("rule evidence is missing or ambiguous")
+                asset, event_time, source, event_type = record
+                same_asset = asset == row.asset_id or (
+                    asset.startswith("k8s:") and assets_related(asset, row.asset_id)
+                )
+                if not same_asset or not start <= event_time < end:
+                    raise RowError("rule evidence is outside the authorized asset or event window")
+                if (source, event_type) not in declared:
+                    raise RowError("rule evidence source or event type is absent from its metadata")
+        return {eid: event_time for eid, (_, event_time, _, _) in records.items()}
 
     def _attach_services(
         self, rule: LoadedRule, alerts: dict[str, DetectionAlert]

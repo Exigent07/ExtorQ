@@ -1,7 +1,7 @@
 {
   "uid": "extorq-collector-health",
   "title": "ExtorQ - Collector & Pipeline Health",
-  "description": "Collector freshness (stale = now - last success > 3 x interval), ingestion lag, spool/queue depth, rule failures and the ingestion security boundary.",
+  "description": "Is telemetry arriving? Collector freshness (stale = now - last success > 3 x interval), collector and ingestion lag, spool backlog, detection rule execution and the ingestion security boundary (quarantine, rejected producers).",
   "tags": [
     "extorq"
   ],
@@ -54,7 +54,7 @@
       "id": 2,
       "type": "table",
       "title": "Collectors: last success and staleness",
-      "description": "Current state from v_collector_latest (latest report per collector, not time-filtered). STALE: no success for more than 3 x the collector interval.",
+      "description": "Current state, not time-filtered: the latest health report of every collector. Source: v_collector_latest (collector SDK and OpenTelemetry delivery reports). STALE: no successful collection for more than 3 x its interval. SDK collectors report records buffered in their outbox. The OpenTelemetry panel reports its queue separately in exporter requests.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -76,7 +76,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT collector_id, collector_type, asset_id, status,\n       multiIf(last_success_at IS NULL, 'never succeeded',\n               interval_seconds = 0, 'no interval reported',\n               dateDiff('second', last_success_at, now()) > 3 * interval_seconds, 'STALE',\n               'fresh') AS freshness,\n       last_success_at,\n       dateDiff('second', last_success_at, now()) AS seconds_since_success,\n       interval_seconds, lag_seconds, records_buffered, events_collected,\n       last_reported_at, last_error\nFROM extorq.v_collector_latest\nORDER BY asset_id, collector_id\nLIMIT 500"
+          "rawSql": "SELECT c.collector_id AS collector_id, c.collector_type AS collector_type,\n       if(ifNull(n.n_name, '') = '', c.asset_id, n.n_name) AS asset, c.status AS status,\n       multiIf(c.last_success_at IS NULL, 'never succeeded',\n               c.interval_seconds = 0, 'no interval reported',\n               dateDiff('second', c.last_success_at, now()) > 3 * c.interval_seconds, 'STALE',\n               'fresh') AS freshness,\n       c.last_success_at AS last_success_at,\n       dateDiff('second', c.last_success_at, now()) AS seconds_since_success,\n       c.interval_seconds AS interval_seconds, c.lag_seconds AS lag_seconds,\n       if(c.collector_type = 'k8s_otel', NULL, c.records_buffered) AS records_buffered,\n       c.events_collected AS events_collected,\n       c.last_reported_at AS last_reported_at, c.last_error AS last_error,\n       c.asset_id AS asset_id\nFROM extorq.v_collector_latest AS c\nLEFT JOIN (SELECT asset_id AS n_asset_id, name AS n_name FROM extorq.v_assets) AS n ON n.n_asset_id = c.asset_id\nORDER BY asset, collector_id\nLIMIT 500"
         }
       ],
       "fieldConfig": {
@@ -89,7 +89,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -100,10 +100,124 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "ok": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "degraded": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "freshness"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "fresh": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "STALE": {
+                        "color": "red",
+                        "index": 1
+                      },
+                      "never succeeded": {
+                        "color": "red",
+                        "index": 2
+                      },
+                      "no interval reported": {
+                        "color": "orange",
+                        "index": 3
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "seconds_since_success"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "interval_seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lag_seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -121,9 +235,122 @@
     },
     {
       "id": 3,
+      "type": "table",
+      "title": "Kubernetes OpenTelemetry delivery by node and source",
+      "description": "Current reported delivery for each node and source. Source: v_collector_latest (OpenTelemetry reporter). A report older than three intervals is unavailable. Queue and exporter counts are shared on the node and must not be summed across sources. Record counters are cumulative since the Collector started. Blank values indicate unavailable measurements.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT if(ifNull(n.n_name, '') = '', c.asset_id, n.n_name) AS node, c.source_types AS sources,\n       multiIf(dateDiff('second', c.last_reported_at, now()) > 3 * c.interval_seconds,\n               'unavailable',\n               JSONExtractString(c.details, 'delivery_state') IN\n                   ('delivering', 'running_not_delivering', 'degraded', 'backlogged',\n                    'dropping_records', 'unavailable'),\n               JSONExtractString(c.details, 'delivery_state'), 'unknown') AS delivery_state,\n       JSONExtract(c.details, 'queue_requests', 'Nullable(UInt64)') AS queue_requests,\n       JSONExtract(c.details, 'queue_capacity_requests', 'Nullable(UInt64)') AS queue_capacity,\n       JSONExtract(c.details, 'accepted_records', 'Nullable(UInt64)') AS accepted_records,\n       JSONExtract(c.details, 'sent_records', 'Nullable(UInt64)') AS exporter_sent_records,\n       JSONExtract(c.details, 'send_failed_records', 'Nullable(UInt64)') AS exporter_send_failures,\n       JSONExtract(c.details, 'enqueue_failed_records', 'Nullable(UInt64)')\n           AS exporter_enqueue_failures,\n       c.last_success_at AS last_delivery, c.last_reported_at AS last_report, c.asset_id AS asset_id\nFROM extorq.v_collector_latest AS c\nLEFT JOIN (SELECT asset_id AS n_asset_id, name AS n_name FROM extorq.v_assets) AS n ON n.n_asset_id = c.asset_id\nWHERE c.collector_type = 'k8s_otel'\nORDER BY node, sources\nLIMIT 500"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true,
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "delivery_state"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "delivering": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "running_not_delivering": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "degraded": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "backlogged": {
+                        "color": "orange",
+                        "index": 3
+                      },
+                      "dropping_records": {
+                        "color": "red",
+                        "index": 4
+                      },
+                      "unavailable": {
+                        "color": "red",
+                        "index": 5
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 4,
       "type": "timeseries",
       "title": "Collector lag",
-      "description": "Lag reported by each collector (seconds behind its source).",
+      "description": "How far each collector is behind its source (seconds), as it reports it. Source: extorq.collector_health. Dashed lines: 5 min (attention) and 15 min (detections run on late data). Collectors that do not report lag are absent.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -132,7 +359,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 10
+        "y": 18
       },
       "targets": [
         {
@@ -160,10 +387,19 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 900
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -173,6 +409,9 @@
             "stacking": {
               "mode": "none",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
             }
           }
         },
@@ -183,7 +422,8 @@
           "displayMode": "table",
           "placement": "right",
           "calcs": [
-            "sum"
+            "max",
+            "lastNotNull"
           ]
         },
         "tooltip": {
@@ -193,10 +433,10 @@
       }
     },
     {
-      "id": 4,
+      "id": 5,
       "type": "timeseries",
       "title": "Collector buffered records",
-      "description": "Records waiting in each collector's outbox (gateway unreachable or slow).",
+      "description": "Records waiting in each SDK collector's durable outbox (gateway unreachable or slow). Source: extorq.collector_health. A growing line means delivery is falling behind. Dashed lines: 100 and 1000 records. OpenTelemetry queue requests appear separately.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -205,7 +445,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 10
+        "y": 18
       },
       "targets": [
         {
@@ -218,7 +458,7 @@
           "format": 0,
           "queryType": "timeseries",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT $__timeInterval(reported_at) AS time, collector_id,\n       max(records_buffered) AS max_records_buffered\nFROM extorq.collector_health\nWHERE $__timeFilter(reported_at)\nGROUP BY time, collector_id\nORDER BY time, collector_id"
+          "rawSql": "SELECT $__timeInterval(reported_at) AS time, collector_id,\n       max(records_buffered) AS max_records_buffered\nFROM extorq.collector_health\nWHERE $__timeFilter(reported_at) AND collector_type != 'k8s_otel'\nGROUP BY time, collector_id\nORDER BY time, collector_id"
         }
       ],
       "fieldConfig": {
@@ -233,10 +473,19 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -246,6 +495,9 @@
             "stacking": {
               "mode": "none",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
             }
           }
         },
@@ -256,7 +508,8 @@
           "displayMode": "table",
           "placement": "right",
           "calcs": [
-            "sum"
+            "max",
+            "lastNotNull"
           ]
         },
         "tooltip": {
@@ -266,7 +519,7 @@
       }
     },
     {
-      "id": 5,
+      "id": 6,
       "type": "row",
       "title": "Ingestion and pipeline",
       "collapsed": false,
@@ -274,15 +527,15 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 18
+        "y": 26
       },
       "panels": []
     },
     {
-      "id": 6,
+      "id": 7,
       "type": "timeseries",
-      "title": "Ingestion lag p95 (event_time to ingestion)",
-      "description": "95th percentile of (first ingestion - event_time) per source, one sample per distinct event. Includes collector polling delay.",
+      "title": "Ingestion lag p95 (event time to ingestion)",
+      "description": "95th percentile of (first ingestion - event_time) per telemetry source, one sample per distinct event. Source: extorq.events. Includes collector polling intervals and source clock skew. Dashed lines: 2 min and 10 min.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -291,7 +544,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 27
       },
       "targets": [
         {
@@ -319,10 +572,19 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 120
+              },
+              {
+                "color": "red",
+                "value": 600
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -332,6 +594,9 @@
             "stacking": {
               "mode": "none",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
             }
           }
         },
@@ -342,7 +607,8 @@
           "displayMode": "table",
           "placement": "right",
           "calcs": [
-            "sum"
+            "max",
+            "mean"
           ]
         },
         "tooltip": {
@@ -352,10 +618,10 @@
       }
     },
     {
-      "id": 7,
+      "id": 8,
       "type": "timeseries",
       "title": "Pipeline queue depth",
-      "description": "Spool/queue depth reported by gateway and writer instances.",
+      "description": "Records waiting in each pipeline component (the gateway and writer share one SQLite spool). Source: extorq.pipeline_health. A depth that keeps growing means the writer cannot keep up or ClickHouse refuses writes. Dashed lines: 1000 and 10000.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -364,7 +630,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 27
       },
       "targets": [
         {
@@ -392,10 +658,19 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 10000
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -405,6 +680,9 @@
             "stacking": {
               "mode": "none",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
             }
           }
         },
@@ -415,7 +693,8 @@
           "displayMode": "table",
           "placement": "right",
           "calcs": [
-            "sum"
+            "max",
+            "lastNotNull"
           ]
         },
         "tooltip": {
@@ -425,10 +704,10 @@
       }
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "timeseries",
       "title": "Oldest queued record age",
-      "description": "Age of the oldest record still waiting in the spool.",
+      "description": "Age of the oldest record still waiting in the spool. Source: extorq.pipeline_health. The writer normally drains the spool within seconds. Dashed lines: 1 min and 5 min.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -437,7 +716,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 27
+        "y": 35
       },
       "targets": [
         {
@@ -465,10 +744,19 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 300
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -478,6 +766,9 @@
             "stacking": {
               "mode": "none",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
             }
           }
         },
@@ -488,7 +779,8 @@
           "displayMode": "table",
           "placement": "right",
           "calcs": [
-            "sum"
+            "max",
+            "lastNotNull"
           ]
         },
         "tooltip": {
@@ -498,10 +790,10 @@
       }
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "table",
       "title": "Pipeline components (latest report)",
-      "description": "Current state from v_pipeline_latest (not time-filtered). Counters are totals since the instance started; an old report_age means the instance stopped reporting (e.g. replaced by a newer container).",
+      "description": "Current state, not time-filtered: the latest report of each gateway, writer, detector and ai-worker instance. Source: v_pipeline_latest. Counters are totals since the instance started; an old report_age means the instance stopped reporting (for example replaced by a newer container).",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -510,7 +802,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 43
       },
       "targets": [
         {
@@ -536,7 +828,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -547,10 +839,60 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "ok": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "degraded": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "report_age_seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -561,7 +903,7 @@
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "row",
       "title": "Detection rules",
       "collapsed": false,
@@ -569,15 +911,15 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 51
       },
       "panels": []
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "table",
       "title": "Rules: latest run",
-      "description": "Current state from v_rule_latest_run (not time-filtered). missing_sources lists telemetry requirements without data in the last window (coverage signal).",
+      "description": "Current state, not time-filtered: the latest run of every detection rule. Sources: v_rule_latest_run (written by the detector) and detection_rules (titles). missing_sources lists required telemetry with no data in the last window: the rule is blind there, which is a coverage signal, not a failure.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -586,7 +928,7 @@
         "h": 8,
         "w": 14,
         "x": 0,
-        "y": 44
+        "y": 52
       },
       "targets": [
         {
@@ -599,7 +941,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT rule_id, rule_version, last_run_at, last_status, runs_24h, failures_24h,\n       last_duration_ms, missing_sources, last_error\nFROM extorq.v_rule_latest_run\nORDER BY rule_id\nLIMIT 200"
+          "rawSql": "SELECT r.rule_id AS rule_id, ifNull(d.d_title, '') AS title, r.rule_version AS rule_version,\n       r.last_run_at AS last_run_at, r.last_status AS last_status, r.runs_24h AS runs_24h,\n       r.failures_24h AS failures_24h, r.last_duration_ms AS last_duration_ms,\n       arrayStringConcat(r.missing_sources, ', ') AS missing_sources, r.last_error AS last_error\nFROM extorq.v_rule_latest_run AS r\nLEFT JOIN\n(\n    SELECT rule_id AS d_rule_id, argMax(title, loaded_at) AS d_title\n    FROM extorq.detection_rules\n    GROUP BY d_rule_id\n) AS d ON d.d_rule_id = r.rule_id\nORDER BY rule_id\nLIMIT 200"
         }
       ],
       "fieldConfig": {
@@ -612,7 +954,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -623,10 +965,60 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last_status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "succeeded": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 1
+                      },
+                      "skipped": {
+                        "color": "orange",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last_duration_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -637,10 +1029,10 @@
       }
     },
     {
-      "id": 12,
+      "id": 13,
       "type": "timeseries",
       "title": "Rule run failures",
-      "description": "Distinct failed rule runs per interval.",
+      "description": "Distinct failed rule runs per interval and rule. Source: extorq.rule_runs (detector). Any bar is worth a look: the sanitised error is in Rules: latest run.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -649,7 +1041,7 @@
         "h": 8,
         "w": 10,
         "x": 14,
-        "y": 44
+        "y": 52
       },
       "targets": [
         {
@@ -675,12 +1067,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -690,6 +1083,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -710,7 +1106,7 @@
       }
     },
     {
-      "id": 13,
+      "id": 14,
       "type": "row",
       "title": "Ingestion security boundary",
       "collapsed": false,
@@ -718,15 +1114,15 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 60
       },
       "panels": []
     },
     {
-      "id": 14,
+      "id": 15,
       "type": "timeseries",
       "title": "Quarantined records by producer",
-      "description": "Records rejected by validation (malformed, unknown event type, out-of-range time, NaN). The payload excerpt is not readable by Grafana.",
+      "description": "Records the gateway rejected after authentication (malformed, unknown event type, out-of-range time, NaN). Source: extorq.ingest_quarantine. The payload excerpt is not readable by Grafana.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -735,7 +1131,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 53
+        "y": 61
       },
       "targets": [
         {
@@ -761,12 +1157,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -776,6 +1173,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -796,10 +1196,10 @@
       }
     },
     {
-      "id": 15,
+      "id": 16,
       "type": "table",
       "title": "Quarantine reasons",
-      "description": "Why records were quarantined (reason text is produced by the gateway).",
+      "description": "Why records were quarantined in the range, per producer and record kind. Source: extorq.ingest_quarantine (reason text is written by the gateway).",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -808,7 +1208,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 53
+        "y": 61
       },
       "targets": [
         {
@@ -834,7 +1234,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -845,7 +1245,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -859,10 +1260,10 @@
       }
     },
     {
-      "id": 16,
+      "id": 17,
       "type": "timeseries",
-      "title": "Ingest authentication/authorization decisions",
-      "description": "Unauthenticated / denied / forged telemetry attempts recorded by the gateway.",
+      "title": "Ingest authentication and authorization decisions",
+      "description": "Requests the gateway refused or audited (bad token, producer not allowed for a kind, source or asset). Source: extorq.ingest_audit. Unexpected spikes mean forged or misconfigured telemetry producers.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -871,7 +1272,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 53
+        "y": 61
       },
       "targets": [
         {
@@ -897,12 +1298,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -912,6 +1314,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -932,7 +1337,7 @@
       }
     },
     {
-      "id": 17,
+      "id": 18,
       "type": "row",
       "title": "Service telemetry",
       "collapsed": false,
@@ -940,15 +1345,15 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 61
+        "y": 69
       },
       "panels": []
     },
     {
-      "id": 18,
+      "id": 19,
       "type": "table",
       "title": "Monitored services: telemetry freshness",
-      "description": "Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source. Events are those attributed to the service by its adapter.",
+      "description": "Services with an implemented adapter: when discovery last refreshed them and their newest attributed event in the range. Sources: v_services and extorq.events (events the adapter attributed to the service). A quiet service is not necessarily broken. Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -957,7 +1362,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 62
+        "y": 70
       },
       "targets": [
         {
@@ -970,7 +1375,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT s.asset_id AS asset_id, s.name AS service, s.service_kind AS kind,\n       s.adapter_id AS adapter, multiIf(s.adapter_support = 'none', 'unsupported', s.adapter_support = 'planned', 'planned', s.monitoring_status = 'unmonitored', 'unmonitored', s.monitoring_status = 'degraded', 'degraded', s.last_seen < now() - INTERVAL 1 HOUR, 'degraded (stale record)', 'monitored') AS coverage,\n       s.last_seen AS discovery_refreshed, e.last_event_time AS last_attributed_event,\n       ifNull(e.events, 0) AS events_in_range\nFROM extorq.v_services AS s\nLEFT JOIN\n(\n    SELECT assumeNotNull(service_id) AS sid, max(event_time) AS last_event_time,\n           uniqExact(event_id) AS events\n    FROM extorq.events\n    WHERE $__timeFilter(event_time) AND service_id IS NOT NULL\n    GROUP BY sid\n) AS e ON e.sid = s.service_id\nWHERE s.present = 1 AND s.adapter_support = 'implemented'\nORDER BY s.asset_id, s.name\nLIMIT 500"
+          "rawSql": "SELECT if(ifNull(n.n_name, '') = '', s.asset_id, n.n_name) AS asset, s.name AS service, s.service_kind AS kind,\n       s.adapter_id AS adapter, multiIf(s.adapter_support = 'none', 'unsupported', s.adapter_support = 'planned', 'planned', s.monitoring_status = 'unmonitored', 'unmonitored', s.monitoring_status = 'degraded', 'degraded', s.last_seen < now() - INTERVAL 1 HOUR, 'degraded (stale record)', 'monitored') AS coverage,\n       s.last_seen AS discovery_refreshed, e.last_event_time AS last_attributed_event,\n       ifNull(e.events, 0) AS events_in_range, s.asset_id AS asset_id\nFROM extorq.v_services AS s\nLEFT JOIN\n(\n    SELECT assumeNotNull(service_id) AS sid, max(event_time) AS last_event_time,\n           uniqExact(event_id) AS events\n    FROM extorq.events\n    WHERE $__timeFilter(event_time) AND service_id IS NOT NULL\n    GROUP BY sid\n) AS e ON e.sid = s.service_id\nLEFT JOIN (SELECT asset_id AS n_asset_id, name AS n_name FROM extorq.v_assets) AS n ON n.n_asset_id = s.asset_id\nWHERE s.present = 1 AND s.adapter_support = 'implemented'\nORDER BY asset, service\nLIMIT 500"
         }
       ],
       "fieldConfig": {
@@ -983,7 +1388,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -994,10 +1399,56 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "coverage"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "monitored": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "degraded": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "degraded (stale record)": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "unmonitored": {
+                        "color": "orange",
+                        "index": 3
+                      },
+                      "planned": {
+                        "color": "blue",
+                        "index": 4
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,

@@ -225,7 +225,7 @@ def test_findings_and_events_are_consistent(
 def test_alert_drilldown_when_alerts_exist(client: tuple[TestClient, dict[str, str]]) -> None:
     alerts = _get(client, "/api/v1/alerts", limit=20)
     if not alerts["items"]:
-        pytest.skip("no alerts in the live store yet (detector/scenarios pending)")
+        pytest.skip("no alerts in the live store yet (detector or detection tests pending)")
     for alert in alerts["items"][:10]:
         detail = _get(client, f"/api/v1/alerts/{alert['alert_id']}")
         resolved = {e["event_id"] for e in detail["evidence"]}

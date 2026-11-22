@@ -1,5 +1,5 @@
 """Ingest gateway (PLAN §5.1): auth, authorization, limits, validation, quarantine,
-time sanity, redaction, dedup, replay, backpressure, OTLP endpoint, schema 1.1.
+time sanity, redaction, dedup, replay, backpressure, OTLP endpoint, contract schema 2.0.
 
 Runs the real FastAPI app in-process (TestClient) on a temporary SQLite spool with
 an in-memory producer registry. All records are SYNTHETIC.
@@ -11,9 +11,11 @@ import gzip
 import hashlib
 import json
 import re
+import sqlite3
 import uuid
 import zlib
 from collections.abc import Iterator
+from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -35,8 +37,11 @@ from extorq.contracts.common import utc_now
 from extorq.contracts.event import SecurityEvent
 from extorq.ingest import processing
 from extorq.ingest.app import create_app
-from extorq.ingest.registry import ProducerEntry, ProducerRegistry
-from extorq.pipeline.spool import Spool
+from extorq.ingest.event_identity import identify_event
+from extorq.ingest.registry import ProducerEntry, ProducerRegistry, RegistryError
+from extorq.pipeline.spool import NewRecord, Spool
+from extorq.pipeline.writer import decode_row
+from extorq.storage.seed_event_identities import seed
 
 TOKENS = {
     "linux-ssh-lab-vm-01": "synthetic-linux-token-0123456789abcdef",
@@ -74,13 +79,20 @@ def entries() -> list[ProducerEntry]:
 
 
 class Harness:
-    def __init__(self, tmp_path: Path, normalizer: Any = None, **settings: Any) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        normalizer: Any = None,
+        *,
+        producers: list[ProducerEntry] | None = None,
+        **settings: Any,
+    ) -> None:
         self.settings = Settings(home=tmp_path, **settings)
         self.spool = Spool(tmp_path / "spool.db")
         self.app = create_app(
             self.settings,
             spool=self.spool,
-            registry=ProducerRegistry.from_entries(entries()),
+            registry=ProducerRegistry.from_entries(producers or entries()),
             normalizer_loader=lambda: normalizer,
             background_tasks=False,
         )
@@ -125,7 +137,7 @@ def batch(
     batch_id: str | None = None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "1.1",
+        "schema_version": "2.0",
         "batch_id": batch_id or uuid.uuid4().hex,
         "producer_id": producer,
         "sent_at": utc_now().isoformat(),
@@ -145,14 +157,15 @@ def test_healthz_needs_no_auth_and_reveals_nothing(gw: Harness) -> None:
     assert response.status_code == 200 and response.json() == {"status": "ok"}
 
 
-def test_status_requires_auth_and_reports_schema_1_1(gw: Harness) -> None:
+def test_status_requires_auth_and_reports_schema_2_0(gw: Harness) -> None:
     assert gw.client.get("/v1/status").status_code == 401
     response = gw.client.get(
         "/v1/status", headers={"Authorization": f"Bearer {TOKENS['linux-ssh-lab-vm-01']}"}
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["schema_version"] == "1.1" and body["accepted_schema_versions"] == ["1.0", "1.1"]
+    assert body["schema_version"] == "2.0" and body["accepted_schema_versions"] == ["2.0"]
+    assert body["legacy_wire_versions_upgraded"] == ["1.0", "1.1"]
     audits = gw.rows("ingest_audit")
     assert audits and audits[0]["decision"] == "unauthenticated"
     assert audits[0]["reason"] == "missing_bearer_token"
@@ -224,9 +237,21 @@ def test_envelope_errors(gw: Harness) -> None:
     assert gw.post({"batch_id": "x"}).status_code == 422
     too_many = batch([fresh_event(str(i)) for i in range(1001)])
     assert gw.post(too_many).status_code == 413
-    v2 = batch([fresh_event("v")])
-    v2["schema_version"] = "2.0"
-    assert gw.post(v2).status_code == 422
+    for version in ("3.0", "2.1", "0.9"):  # unknown versions are never guessed at
+        envelope = batch([fresh_event(f"v{version}")])
+        envelope["schema_version"] = version
+        assert gw.post(envelope).status_code == 422
+
+
+def test_legacy_1x_envelope_is_upgraded_not_rejected(gw: Harness) -> None:
+    """A collector started before the 2.0 rollout stamps its envelope 1.x (contracts/compat.py).
+
+    Rejecting with 422 stalled every such collector (the SDK keeps envelope 4xx buffered).
+    """
+    for version in ("1.1", "1.0"):
+        envelope = batch([fresh_event(f"legacy-envelope-{version}")])
+        envelope["schema_version"] = version
+        assert gw.post(envelope).status_code == 202
 
 
 @pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
@@ -240,12 +265,35 @@ def test_non_json_float_tokens_are_rejected(gw: Harness, token: str) -> None:
     assert gw.rows("event") == []
 
 
-def test_schema_1_0_batches_are_still_accepted(gw: Harness) -> None:
-    rec = fresh_event("old")
-    rec["data"]["schema_version"] = "1.0"
-    body = batch([rec])
-    body["schema_version"] = "1.0"
-    assert gw.post(body).json()["accepted"] == 1
+def test_legacy_1x_records_are_upgraded_but_still_strictly_validated(gw: Harness) -> None:
+    """Queued 1.x evidence must not be lost (its source cursor already advanced), yet the
+    upgrade is only a label change: unknown fields and retired kinds still quarantine."""
+    old = fresh_event("old")
+    old["data"]["schema_version"] = "1.1"
+    old["data"]["simulation"] = {"run_id": "synth0001"}  # retired in 2.0: dropped on upgrade
+    smuggled = fresh_event("smuggled")
+    smuggled["data"]["schema_version"] = "1.1"
+    smuggled["data"]["unexpected_field"] = "must still be rejected"
+    retired = record(
+        "simulation_run",
+        {"run_id": "synth0001", "scenario_id": "VM-001", "asset_id": LINUX_ASSET},
+    )
+    response = gw.post(batch([old, smuggled, retired, fresh_event("current")]))
+    assert response.status_code == 202
+    body = response.json()
+    assert body["accepted"] == 2 and body["rejected"] == 2
+    reasons = {q["index"]: q["reason"] for q in body["quarantined"]}
+    assert reasons[1].startswith("invalid_record:") and "unexpected_field" in reasons[1]
+    assert reasons[2].startswith("invalid_record:")
+    stored = [json.loads(r["payload"]) if "payload" in r else r for r in gw.rows("event")]
+    assert len(stored) == 2
+    assert all("simulation" not in (e["data"] if "data" in e else e) for e in stored), (
+        "the retired field must be gone from what is persisted"
+    )
+    status = gw.client.get(
+        "/v1/status", headers={"Authorization": f"Bearer {TOKENS['linux-ssh-lab-vm-01']}"}
+    ).json()
+    assert status["counters"]["legacy_records_upgraded_total"] == 2
 
 
 # ── authorization ─────────────────────────────────────────────────────
@@ -277,21 +325,21 @@ def test_claimed_producer_must_match_token(gw: Harness) -> None:
     assert audit["reason"] == "producer_id_mismatch"
 
 
+def test_registry_rejects_shared_producer_credentials() -> None:
+    first, second = entries()
+    second = second.model_copy(update={"token_sha256": first.token_sha256})
+    with pytest.raises(RegistryError, match="credential shared by multiple producers"):
+        ProducerRegistry.from_entries([first, second])
+
+
 def test_source_type_and_kind_authorization(gw: Harness) -> None:
-    sim = record(
-        "simulation_run",
-        {
-            "run_id": "synth0001",
-            "scenario_id": "VM-001",
-            "asset_id": LINUX_ASSET,
-            "status": "started",
-            "started_at": utc_now().isoformat(),
-            "operator": "synthetic",
-            "description": "SYNTHETIC",
-        },
+    # The OTel producer may only send events: an inventory record is a kind it lacks.
+    inventory = record("inventory_item", {**inventory_data(), "asset_id": "k8s:extorq-lab"})
+    response = gw.post(
+        batch([inventory], producer="k8s-otel-extorq-lab"), producer="k8s-otel-extorq-lab"
     )
-    response = gw.post(batch([sim]))
-    assert response.status_code == 403 and "kind_not_allowed" in response.json()["denied"][0]
+    assert response.status_code == 403
+    assert "kind_not_allowed:inventory_item" in response.json()["denied"][0]
     otel = fresh_event("k8s", asset_id="k8s:extorq-lab", asset_type="kubernetes_cluster")
     response = gw.post(
         batch([otel], producer="k8s-otel-extorq-lab"), producer="k8s-otel-extorq-lab"
@@ -342,7 +390,10 @@ def test_events_older_than_the_events_retention_are_quarantined(gw: Harness) -> 
     (q,) = gw.rows("quarantine")
     assert q["reason"] == notice["reason"] and q["record_kind"] == "event"
     (stored,) = gw.rows("event")
-    assert stored["data"]["event_id"] == inside["data"]["event_id"]
+    assert (
+        stored["data"]["event_id"]
+        == identify_event("linux-ssh-lab-vm-01", SecurityEvent.model_validate(inside["data"])).key
+    )
 
 
 def test_retention_is_configurable_and_reported_in_status(tmp_path: Path) -> None:
@@ -446,7 +497,7 @@ def test_duplicate_events_and_batch_replay(gw: Harness) -> None:
     assert r1["accepted"] == 1 and not r1["replayed"]
     replay = gw.post(first).json()
     assert replay == {**r1, "replayed": True}
-    again = gw.post(batch([fresh_event("dup")])).json()
+    again = gw.post(batch(first["records"])).json()
     assert again["accepted"] == 0 and again["duplicates"] == 1
     assert len(gw.rows("event")) == 1
     conflict = dict(first)
@@ -454,17 +505,155 @@ def test_duplicate_events_and_batch_replay(gw: Harness) -> None:
     assert gw.post(conflict).status_code == 409
 
 
+def test_event_conflict_is_durable_and_other_producers_cannot_claim_identity(
+    tmp_path: Path,
+) -> None:
+    producer = "linux-ssh-lab-vm-01"
+    other = "linux-ssh-secondary"
+    other_token = "synthetic-only-other-producer-token"
+    producers = entries()
+    producers.append(
+        producers[0].model_copy(
+            update={
+                "producer_id": other,
+                "token_sha256": hashlib.sha256(other_token.encode()).hexdigest(),
+            }
+        )
+    )
+    first = fresh_event("same-reference")
+    first_batch = batch([first])
+    original_id = first["data"]["event_id"]
+    first_spool = Harness(tmp_path, producers=producers)
+    with first_spool.client:
+        assert first_spool.post(first_batch).json()["accepted"] == 1
+        # Flush the queue to mimic a writer acknowledgement. The receipt remains.
+        for ready in first_spool.spool.fetch_ready(limit=100):
+            if ready.kind == "event":
+                _, row = decode_row(ready)
+                assert row["event_id"] == ready.record_key != original_id
+                assert row["producer_id"] == producer
+                first_spool.spool.delete([ready.seq])
+    first_spool.spool.close()
+
+    restarted = Harness(tmp_path, producers=producers)
+    try:
+        with restarted.client:
+            assert restarted.post(first_batch).json()["replayed"]
+            replay = deepcopy(first)
+            replay["data"]["event_id"] = "1" * 32
+            replay["data"]["observed_time"] = utc_now().isoformat()
+            replay["data"]["source"]["collector_version"] = "2.1.0"
+            assert restarted.post(batch([replay])).json()["duplicates"] == 1
+
+            changed = deepcopy(first)
+            changed["data"]["message"] = "synthetic conflicting evidence"
+            distinct = fresh_event("different-reference")
+            distinct["data"]["event_id"] = original_id
+            conflict_batch = batch([changed, distinct])
+            result = restarted.post(conflict_batch).json()
+            assert (result["accepted"], result["duplicates"], result["rejected"]) == (1, 0, 1)
+            assert restarted.post(conflict_batch).json() == {**result, "replayed": True}
+            assert result["quarantined"][0]["index"] == 0
+            assert result["quarantined"][0]["reason"].startswith("event_identity_conflict:")
+            (quarantine,) = restarted.rows("quarantine")
+            assert quarantine["producer_id"] == producer
+            assert "synthetic conflicting evidence" not in quarantine["payload_excerpt"]
+            assert restarted.spool.counters()["event_identity_conflicts_total"] == 1
+            assert (
+                restarted.post(
+                    batch([first], producer=other), producer=other, token=other_token
+                ).json()["accepted"]
+                == 1
+            )
+            assert len({r["data"]["event_id"] for r in restarted.rows("event")}) == 2
+    finally:
+        restarted.spool.close()
+
+
+def test_batch_overflow_rolls_back_records_and_identity_receipts(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, spool_max_records=2)
+    try:
+        with harness.client:
+            first, second, third = (fresh_event(name) for name in ("one", "two", "three"))
+            assert harness.post(batch([first])).json()["accepted"] == 1
+            rejected = batch([second, third])
+            assert harness.post(rejected).status_code == 503
+            assert harness.spool.lookup_batch(rejected["producer_id"], rejected["batch_id"]) is None
+            assert harness.spool.depth(max_age_seconds=0) == 1
+            assert harness.spool.table_counts()["event_identities"] == 1
+            assert harness.post(batch([second])).json()["accepted"] == 1
+    finally:
+        harness.spool.close()
+
+
+def test_v1_spool_upgrade_retains_legacy_identity_and_seeds_written_events(tmp_path: Path) -> None:
+    producer = "linux-ssh-lab-vm-01"
+    old = fresh_event("old-queued-event")
+    stored_id = old["data"]["event_id"]
+    old["data"]["schema_version"] = "1.1"
+    old["data"]["scenario_id"] = None
+    path = tmp_path / "spool.db"
+    spool = Spool(path)
+    spool.append(
+        [NewRecord("event", stored_id, json.dumps(old))],
+        producer_id=producer,
+        batch_id="old-batch",
+        ingested_at=utc_now().isoformat(),
+    )
+    spool.close()
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE event_identities")
+        conn.execute("PRAGMA user_version = 1")
+
+    migrated = Harness(tmp_path)
+    try:
+        assert migrated.spool.pragma("user_version") == 2
+        (queued,) = migrated.spool.fetch_ready(limit=100)
+        _, row = decode_row(queued)
+        assert row["event_id"] == stored_id
+        assert row["schema_version"] == "2.0"
+        old["data"].pop("schema_version")
+        old["data"].pop("scenario_id")
+
+        stored = fresh_event("stored-in-clickhouse")
+        stored_data = stored["data"]
+        legacy = {**stored_data, "schema_version": "1.0", "simulation_run_id": None}
+        counts = dict.fromkeys(("accepted", "duplicate", "conflict", "unmappable", "expired"), 0)
+        seed(
+            migrated.spool,
+            [
+                (producer, stored_data["event_id"], json.dumps(legacy)),
+                (producer, stored_id, json.dumps({**legacy, "scenario_id": "legacy-controlled"})),
+            ],
+            timedelta(days=91),
+            counts,
+        )
+        assert counts == {
+            "accepted": 1,
+            "duplicate": 0,
+            "conflict": 0,
+            "unmappable": 1,
+            "expired": 0,
+        }
+        with migrated.client:
+            result = migrated.post(batch([old, stored])).json()
+            assert (result["accepted"], result["duplicates"], result["rejected"]) == (0, 2, 0)
+        assert migrated.spool.table_counts()["event_identities"] == 2
+    finally:
+        migrated.spool.close()
+
+
 def test_unexpected_per_record_exception_quarantines_only_that_record(
     gw: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    real = processing.record_identity
+    real = processing.identify_event
 
-    def flaky(rec: Any) -> str:
-        if isinstance(rec.data, SecurityEvent) and rec.data.message == "boom":
+    def flaky(producer_id: str, event: SecurityEvent) -> Any:
+        if event.message == "boom":
             raise ValueError("synthetic identity failure")
-        return real(rec)
+        return real(producer_id, event)
 
-    monkeypatch.setattr(processing, "record_identity", flaky)
+    monkeypatch.setattr(processing, "identify_event", flaky)
     boom = fresh_event("boom")
     boom["data"]["message"] = "boom"
     body = gw.post(batch([fresh_event("fine"), boom])).json()

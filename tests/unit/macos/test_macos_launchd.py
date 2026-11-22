@@ -115,11 +115,12 @@ def test_scan_diff_created_modified_deleted_and_allowlist(
     assert first.items[str(agents / "com.example.thirdparty.redis.plist")].allowlisted is True
     assert first.items[str(agents / "com.example.thirdparty.php.plist")].allowlisted is False
 
-    new = agents / "com.extorq.sim.abcd1234.plist"
+    # The MAC-001 detection-test artefact: a real plist, never loaded.
+    new = agents / "com.extorq.test.abcd1234.plist"
     new.write_bytes(
         plistlib.dumps(
             {
-                "Label": "com.extorq.sim.abcd1234",
+                "Label": "com.extorq.test.abcd1234",
                 "ProgramArguments": ["/usr/bin/true"],
                 "RunAtLoad": False,
             }
@@ -133,14 +134,16 @@ def test_scan_diff_created_modified_deleted_and_allowlist(
     assert [(c.kind, os.path.basename(c.path)) for c in changes] == [  # sorted by path
         ("deleted", "com.example.thirdparty.php.plist"),
         ("modified", "com.example.thirdparty.redis.plist"),
-        ("created", "com.extorq.sim.abcd1234.plist"),
+        ("created", "com.extorq.test.abcd1234.plist"),
     ]
     events = [change_to_event(c, src, observed_at=OBSERVED, snapshot="s1") for c in changes]
     deleted, modified, created = events
     assert created.event_type == "persistence.launchd.item_created"
     assert created.attributes["scope"] == "user"
     assert created.attributes["run_at_load"] is False
-    assert created.simulation is not None and created.simulation.run_id == "abcd1234"
+    assert created.attributes["program"] == "/usr/bin/true"
+    assert created.attributes["program_arguments"] == ["/usr/bin/true"]
+    assert created.labels == {}  # a detection-test artefact is ordinary telemetry
     assert deleted.event_type == "persistence.launchd.item_deleted"
     assert deleted.attributes["label"] == "com.example.thirdparty.php"
     assert modified.attributes["allowlisted"] is True  # flagged, never suppressed
@@ -230,3 +233,64 @@ def test_launchctl_missing_service_and_garbage() -> None:
     assert NOT_FOUND_EXIT == 113
     broken = parse_domain_print("nonsense", "system")
     assert not broken.ok and broken.jobs == {}
+
+
+def test_detection_test_shapes_mac001_and_mac002(tmp_path: Path, src: SourceContext) -> None:
+    """The matrix artefacts: MAC-001 (/usr/bin/true) and MAC-002 (shell running a /tmp path)."""
+    agents = tmp_path / "LaunchAgents"
+    agents.mkdir()
+    location = Location(agents, "user", "agent")
+    first = scan_locations([location], LabelAllowlist())
+    plain = agents / "com.extorq.test.plain.plist"
+    plain.write_bytes(
+        plistlib.dumps({"Label": "com.extorq.test.plain", "ProgramArguments": ["/usr/bin/true"]})
+    )
+    shell = agents / "com.extorq.test.shell.plist"
+    shell.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": "com.extorq.test.shell",
+                "ProgramArguments": ["/bin/sh", "-c", "/tmp/extorq-test-abcd"],
+                "RunAtLoad": True,
+            }
+        )
+    )
+    dropped = tmp_path / "bin" / "agent"
+    dropped.parent.mkdir()
+    dropped.write_text("#!/bin/sh\n")
+    writable = agents / "com.extorq.test.writable.plist"
+    writable.write_bytes(
+        plistlib.dumps({"Label": "com.extorq.test.writable", "Program": str(dropped)})
+    )
+    second = scan_locations([location], LabelAllowlist())
+    changes = diff({p: i.summary() for p, i in first.items.items()}, second.items)
+    events = {
+        os.path.basename(c.path): change_to_event(c, src, observed_at=OBSERVED, snapshot="s")
+        for c in changes
+    }
+    mac001 = events["com.extorq.test.plain.plist"].attributes
+    assert mac001["program"] == "/usr/bin/true" and mac001["program_exists"] is True
+    assert mac001["program_user_writable"] is False  # sealed system volume
+    assert "run_at_load" not in mac001  # absent key stays unknown
+    mac002 = events["com.extorq.test.shell.plist"].attributes
+    assert mac002["program"] == "/bin/sh" and mac002["run_at_load"] is True
+    assert mac002["program_arguments"] == ["/bin/sh", "-c", "/tmp/extorq-test-abcd"]
+    assert mac002["program_arguments_count"] == 3
+    assert mac002["scope"] == "user" and mac002["allowlisted"] is False
+    user_owned = events["com.extorq.test.writable.plist"].attributes
+    assert user_owned["program_user_writable"] is True  # a file the user can swap
+
+
+def test_program_arguments_keep_only_the_first_entries(tmp_path: Path) -> None:
+    agents = tmp_path / "LaunchAgents"
+    agents.mkdir()
+    many = agents / "com.example.many.plist"
+    many.write_bytes(
+        plistlib.dumps(
+            {"Label": "com.example.many", "ProgramArguments": [f"a{i}" for i in range(40)]}
+        )
+    )
+    item = scan_locations([Location(agents, "user", "agent")], LabelAllowlist()).items[str(many)]
+    attrs = item.attributes()
+    assert len(attrs["program_arguments"]) == 16 and attrs["program_arguments_count"] == 40
+    assert "program_exists" not in attrs  # relative program: launchd resolves it, not us

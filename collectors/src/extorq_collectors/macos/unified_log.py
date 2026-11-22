@@ -43,7 +43,6 @@ from extorq_collectors.macos.common import (
     SourceContext,
     clean_text,
     make_event,
-    simulation_tag,
 )
 
 LOG_BINARY = "/usr/bin/log"
@@ -355,18 +354,33 @@ _MESSAGE_TYPE_SEVERITY = {
     "Debug": Severity.INFO,
 }
 
-# sudo (syslog format): "<user> : [<reason> ; ]TTY=<tty> ; PWD=<cwd> ; USER=<runas> ; COMMAND=<cmd>"
-_SUDO_FAILURE_HINTS = (
+# sudo records (sudoers(5) "EVENT LOGGING", sudo 1.9.17p2 as installed on macOS 27):
+#   accepted: "<user> : TTY=<tty> ; [CHROOT=..] ; PWD=<cwd> ; USER=<runas> ; [GROUP=..] ;
+#              [TSID=..] ; [ENV=<vars> ]COMMAND=<cmd>"
+#   denied:   "<user> : <reason> ; TTY=<tty> ; PWD=<cwd> ; USER=<runas> ; COMMAND=<cmd>"
+# Note ENV is followed by a single space, not " ; ", before COMMAND. Reasons documented there:
+# "user NOT in sudoers", "user NOT authorized on host", "command not allowed",
+# "<N> incorrect password attempt(s)", "a password is required" (sudo -n). `sudo -v` logs
+# COMMAND=validate and `sudo -l` COMMAND=list. Two kinds of failure are kept apart because
+# rules weigh them differently: a wrong password is an authentication FAILURE (MAC-004
+# counts attempts), a policy refusal is an authorization DENIAL.
+SUDO_TRUSTED_PATHS: frozenset[str] = frozenset({"/usr/bin/sudo"})
+_SUDO_PASSWORD_FAILURE_HINTS = (
     "incorrect password",
     "password is required",
-    "not in sudoers",
-    "command not allowed",
-    "not allowed to execute",
     "authentication failure",
-    "not authorized",
-    "a terminal is required",
     "conversation failed",
 )
+_SUDO_POLICY_DENIAL_HINTS = (
+    "not in sudoers",
+    "not authorized on host",
+    "command not allowed",
+    "not allowed to execute",
+    "not allowed to set the following environment variables",
+    "a terminal is required",
+)
+_SUDO_ATTEMPTS = re.compile(r"^(?P<count>\d{1,4}) incorrect password attempts?$")
+_SUDO_FIELD_KEYS = frozenset({"TTY", "CHROOT", "PWD", "USER", "GROUP", "TSID", "ENV", "COMMAND"})
 
 # OpenSSH authentication messages (auth.c auth_log(), sshd-session/monitor). The formats are
 # the same as on Linux (extorq_collectors.linux.auth): user names are attacker-controlled and
@@ -469,34 +483,86 @@ def _ip_or_none(value: str | None) -> str | None:
         return None
 
 
+def _split_sudo_fields(rest: str) -> tuple[dict[str, str], list[str]]:
+    """Split ``[reason ; ]KEY=value ; ... ; [ENV=vars ]COMMAND=cmd`` into fields and reasons.
+
+    COMMAND is always the last field and its value may itself contain `` ; `` (shell
+    arguments), so everything after the first ``COMMAND=`` at a field boundary is the
+    command. ENV, when present, is separated from COMMAND by a single space.
+    """
+    fields: dict[str, str] = {}
+    reasons: list[str] = []
+    command_at = rest.find(" ; COMMAND=")
+    if command_at >= 0:
+        fields["COMMAND"] = rest[command_at + len(" ; COMMAND=") :]
+        rest = rest[:command_at]
+    elif rest.startswith("COMMAND="):
+        fields["COMMAND"], rest = rest[len("COMMAND=") :], ""
+    for part in rest.split(" ; "):
+        key, eq, value = part.partition("=")
+        if eq and key in _SUDO_FIELD_KEYS:
+            if key == "ENV" and " COMMAND=" in value and "COMMAND" not in fields:
+                value, _, fields["COMMAND"] = value.partition(" COMMAND=")
+            fields[key] = value
+        elif part.strip():
+            reasons.append(part.strip())
+    return fields, reasons
+
+
 def _classify_sudo(record: LogRecord) -> Classified:
+    """sudo records -> ``auth.sudo.command`` / ``auth.sudo.failure`` (documented formats).
+
+    Only records written by ``/usr/bin/sudo`` (sealed system volume; unified logging records
+    the kernel-attested image path) are evidence. Any other process merely *named* sudo is
+    reported as ``system.log.notable`` with ``source_verified=false`` and nothing taken from
+    its message, so a local user cannot fabricate sudo failures (or hide real ones) by
+    logging lines from a copied binary.
+    """
+    if record.process_path not in SUDO_TRUSTED_PATHS:
+        return _unverified_sender(record, "sudo", "sudo_unverified_sender")
     message = record.event_message
     user, sep, rest = message.partition(" : ")
     if not sep:
+        # PAM modules run inside sudo and log their own diagnostics: context only.
         return Classified("system.log.notable", "sudo", action="sudo_message")
-    fields: dict[str, str] = {}
-    reasons: list[str] = []
-    for part in rest.split(" ; "):
-        key, eq, value = part.partition("=")
-        if eq and key.isupper() and key.isalpha():
-            fields[key] = value
-        else:
-            reasons.append(part.strip())
-    reason = "; ".join(r for r in reasons if r) or None
+    fields, reasons = _split_sudo_fields(rest)
+    reason = "; ".join(reasons) or None
     actor = Actor(type=ActorType.USER, name=user.strip() or None)
     attrs: dict[str, Any] = {
+        "auth_service": "sudo",
         "run_as": fields.get("USER"),
         "run_as_group": fields.get("GROUP"),
         "tty": fields.get("TTY"),
         "cwd": fields.get("PWD"),
+        # ENV= values can carry secrets: record only that variables were passed.
+        "env_specified": True if "ENV" in fields else None,
     }
-    if reason and any(hint in reason.lower() for hint in _SUDO_FAILURE_HINTS):
-        attrs["reason"] = reason
+    lowered = (reason or "").lower()
+    if reason and any(hint in lowered for hint in _SUDO_PASSWORD_FAILURE_HINTS):
+        attempts = _SUDO_ATTEMPTS.match(reason.strip())
+        attrs.update(
+            reason=reason,
+            failure_kind="authentication",
+            # sudo logs ONE record per invocation with the number of wrong passwords; rules
+            # sum this value (unknown stays unknown: "a password is required" has no count).
+            failed_attempts=int(attempts.group("count")) if attempts else None,
+        )
+        return Classified(
+            "auth.sudo.failure",
+            "sudo",
+            action="sudo_auth_failed",
+            outcome=Outcome.FAILURE,
+            actor=actor,
+            command_line=fields.get("COMMAND"),
+            attributes=attrs,
+        )
+    if reason and any(hint in lowered for hint in _SUDO_POLICY_DENIAL_HINTS):
+        attrs.update(reason=reason, failure_kind="policy")
         return Classified(
             "auth.sudo.failure",
             "sudo",
             action="sudo_denied",
-            outcome=Outcome.FAILURE,
+            outcome=Outcome.DENIED,
             actor=actor,
             command_line=fields.get("COMMAND"),
             attributes=attrs,
@@ -902,7 +968,7 @@ _RAW_FIELDS = (
 )
 
 
-def _raw_excerpt(record: LogRecord) -> str | None:
+def _raw_excerpt(record: LogRecord, *, include_message: bool = True) -> str | None:
     if not record.raw_line:
         return None
     try:
@@ -911,7 +977,13 @@ def _raw_excerpt(record: LogRecord) -> str | None:
         return None
     if not isinstance(obj, dict):
         return None
-    return canonical_json({key: obj.get(key) for key in _RAW_FIELDS if key in obj})
+    return canonical_json(
+        {
+            key: obj[key]
+            for key in _RAW_FIELDS
+            if key in obj and (include_message or key != "eventMessage")
+        }
+    )
 
 
 def to_event(
@@ -944,13 +1016,19 @@ def to_event(
         if resolved:
             actor = actor.model_copy(update={"name": resolved})
             attrs["actor_name_source"] = "dscl_generated_uid"
-    command_line, cmd_redactions = clean_text(classified.command_line, 2048)
+    sudo = classified.producer == "sudo"
+    if sudo and classified.command_line:
+        parts = classified.command_line.split(maxsplit=1)
+        first = parts[0] if parts else ""
+        if first.startswith("/"):
+            attrs["command_executable"], _ = clean_text(first, 1024)
+        elif first == "validate":
+            attrs["command_operation"] = "validate"
     executable = classified.executable_override or record.process_path
     process = ProcessInfo(
         pid=record.process_id if classified.executable_override is None else None,
         name=os.path.basename(executable) if executable else None,
         executable=executable,
-        command_line=command_line,
         uid=record.user_id if record.user_id is not None and record.user_id >= 0 else None,
     )
     severity = classified.severity_hint or _MESSAGE_TYPE_SEVERITY.get(record.message_type or "")
@@ -964,8 +1042,8 @@ def to_event(
         observed_time=observed_time,
         parser=PARSER,
         raw_record=record.raw_line or None,
-        message=record.event_message,
-        raw=_raw_excerpt(record),
+        message=classified.action if sudo else record.event_message,
+        raw=_raw_excerpt(record, include_message=not sudo),
         action=classified.action,
         outcome=classified.outcome,
         severity_hint=severity,
@@ -973,8 +1051,6 @@ def to_event(
         network=classified.network,
         process=process,
         attributes=attrs,
-        simulation=simulation_tag(record.event_message, classified.command_line),
-        redaction_count=cmd_redactions,
     )
 
 

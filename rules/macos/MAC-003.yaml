@@ -1,0 +1,93 @@
+rule_id: MAC-003
+version: 1.0.0
+title: TCP listener exposed on all interfaces by a non-allowlisted process
+description: >-
+  A process on a macOS host started listening for TCP connections on all interfaces (0.0.0.0
+  or ::), so anything on every network the Mac joins can connect to it: a bind shell, a
+  debugging server, a development tool started with --host 0.0.0.0. Loopback listeners and
+  UDP sockets are out of scope (lsof reports every bound UDP client socket as a listener).
+  Software that is supposed to listen on all interfaces is allowlisted by exact executable
+  path; the defaults are Apple daemons in SIP-protected system locations. Confidence: high
+  when lsof attributed the socket to an executable; medium when the owner is unknown (never
+  allowlisted).
+severity: medium
+status: stable
+mitre_techniques: [T1571, T1205]
+asset_types: [macos_host]
+requires:
+  - source_type: macos.inventory
+    event_types: [network.listener.opened]
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 3600
+group_by: [asset_id, port, executable]
+params:
+  any_addresses: ["0.0.0.0", "::"]
+  # Exact executable paths allowed to listen on all interfaces. Defaults: Apple daemons in
+  # SIP-protected locations (Continuity / Handoff, AirPlay Receiver, file sharing, launchd
+  # socket activation for Remote Login and Screen Sharing, whose state the posture scan
+  # reports). Add third-party paths only after review; /Applications is writable by admins.
+  allowlist_executables:
+    - /usr/libexec/rapportd
+    - /usr/libexec/sharingd
+    - /System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter
+    - /sbin/launchd
+false_positives:
+  - >-
+    Apple services that listen on all interfaces by design (AirPlay Receiver on 5000/7000,
+    Continuity). Handling: allowlisted by exact executable path in SIP-protected locations,
+    where no other binary can take that path while System Integrity Protection is enabled
+    (SIP status is reported by the posture collector). Never by process name, which any
+    binary can claim.
+  - >-
+    Developers starting a local server bound to 0.0.0.0 (npm run dev --host, python -m
+    http.server). Handling: alerted by design: the server is reachable from the network.
+    Repeated restarts of one tool on one port merge into one alert per hour; long-lived
+    reviewed tools can be allowlisted by exact path.
+  - >-
+    Third-party apps with LAN discovery or sync (Spotify, Dropbox, AnyDesk). Handling: exact
+    executable path in allowlist_executables after review.
+blind_spots:
+  - >-
+    UDP services (excluded as noise), listeners that exist for less than one scan interval
+    (60 s), and sockets lsof cannot attribute (still alerted, medium).
+  - >-
+    A malicious use of an allowlisted daemon (for example a socket-activated launchd job owned
+    by /sbin/launchd): MAC-001/MAC-002 cover the launch item that requests the socket.
+  - Exposure through the macOS application firewall settings is not evaluated here.
+references:
+  - https://attack.mitre.org/techniques/T1571/
+  - https://support.apple.com/guide/mac-help/change-firewall-settings-on-mac-mh11783/mac
+query: MAC-003.sql
+summary_template: >-
+  {process} ({executable}) listens on TCP port {port} on all interfaces ({bind_addresses}) on
+  {asset_id}; owner known: {owner_known}
+tests:
+  - name: matrix-accept-and-close-listener-on-all-interfaces
+    description: >-
+      Matrix positive: a minimal accept-and-close TCP listener on 0.0.0.0 at a high port,
+      opened and closed again three scans later (one alert; the close is not evidence).
+    fixture: tests/MAC-003/positive_matrix_any_listener.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {port: "47123"}
+    features:
+      bind_addresses: ["0.0.0.0"]
+      owner_known: true
+  - name: owner-unknown-listener
+    description: An IPv6 any-address listener that lsof could not attribute (medium).
+    fixture: tests/MAC-003/positive_owner_unknown.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+  - name: matrix-control-loopback-listener
+    description: >-
+      Matrix negative control: the same listener bound to 127.0.0.1, plus allowlisted Apple
+      daemons on all interfaces and UDP client sockets on 0.0.0.0.
+    fixture: tests/MAC-003/negative_matrix_loopback_and_allowlisted.jsonl
+    expect: no_alert

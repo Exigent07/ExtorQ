@@ -278,9 +278,9 @@ class GitHubClient:
     ) -> PageResult:
         """Collect items across ``Link: rel="next"`` pages.
 
-        ``etag`` applies to the first page only; a 304 there means the whole listing is
-        unchanged. ``stop(item)`` returning True ends pagination after the current page
-        (e.g. when a checkpoint item was reached).
+        ``etag`` applies to the first page only. Pass a validator only when that page
+        represents the entire result or the API guarantees a collection-wide validator.
+        ``stop(item)`` returning True ends pagination after the current page.
         """
         items: list[Any] = []
         first = self.get(path, params=params, etag=etag)
@@ -495,6 +495,10 @@ class GitHubClient:
             response_etag = response.headers.get("etag")
             links = parse_link_header(response.headers.get("link"))
             if status == 304:
+                if not etag:
+                    raise GitHubResponseError(
+                        status, endpoint, "unexpected 304 without a validator"
+                    )
                 self.not_modified_count += 1
                 return ApiResponse(304, None, response_etag or etag, True, links)
             if 200 <= status < 300:

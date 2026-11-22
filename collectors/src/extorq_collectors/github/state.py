@@ -55,8 +55,12 @@ class RepoState:
     branch_info: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: branch name -> normalised protection/ruleset snapshot.
     protection: dict[str, dict[str, Any]] = field(default_factory=dict)
-    #: workflow run id -> "<attempt>:<status>:<conclusion>|<created_at>" last emitted.
+    #: Workflow run id -> "<attempt>:<status>:<conclusion>|<updated_at>|<created_at>".
     runs_seen: dict[str, str] = field(default_factory=dict)
+    #: Last emitted run signatures for open runs, including runs older than the list window.
+    runs_open: dict[str, str] = field(default_factory=dict)
+    #: Last run ID inspected via the bounded late-transition queue.
+    runs_open_after: int = 0
     #: ``created_at`` of the oldest run still open at the last listing (None: none open).
     runs_cursor: str | None = None
     #: When workflow runs were last listed successfully (gap detection).
@@ -77,9 +81,9 @@ class RepoState:
     commit_retries: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def remember_etag(self, key: str, etag: str | None) -> None:
+        self.etags.pop(key, None)
         if not etag:
             return
-        self.etags.pop(key, None)
         self.etags[key] = etag[:256]
         while len(self.etags) > MAX_ETAGS:
             self.etags.pop(next(iter(self.etags)))
@@ -130,6 +134,18 @@ class RepoState:
         state.branch_heads = {str(k): str(v) for k, v in state.branch_heads.items()}
         state.etags = {str(k): str(v) for k, v in state.etags.items()}
         state.runs_seen = {str(k): str(v) for k, v in state.runs_seen.items()}
+        # Version 1 checkpoints written before the open-run map already carry run state.
+        open_runs = state.runs_open if "runs_open" in data else state.runs_seen
+        state.runs_open = {
+            key: value
+            for key, value in open_runs.items()
+            if re.fullmatch(r"[1-9][0-9]{0,18}", key)
+            and isinstance(value, str)
+            and len(value) <= 128
+            and value.partition(":")[2].partition(":")[0] != "completed"
+        }
+        if not isinstance(state.runs_open_after, int):
+            state.runs_open_after = 0
         state.inventory_workflows = [str(v) for v in state.inventory_workflows][:MAX_INVENTORY_KEYS]
         state.inventory_branches = [str(v) for v in state.inventory_branches][:MAX_INVENTORY_KEYS]
         retries: dict[str, dict[str, Any]] = {}

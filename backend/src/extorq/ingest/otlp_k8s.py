@@ -1,6 +1,7 @@
 """OTLP/HTTP JSON logs from the extorq-lab OTel Collector -> SecurityEvents.
 
-Owner: B2. Imported lazily by A's gateway endpoint ``POST /v1/otlp/v1/logs``::
+Owner: B2 (Kubernetes telemetry). Imported lazily by A's gateway endpoint
+``POST /v1/otlp/v1/logs``::
 
     events, failures = normalize_otlp_logs(payload, producer_id=..., received_at=...)
 
@@ -21,7 +22,13 @@ that the collector sets (docs/telemetry/kubernetes.md):
   only ever audited at stage ResponseStarted by the API server's
   failed-authentication filter, so ``ResponseStarted`` + 401 is converted too.
   Request/response bodies are never forwarded: ``attributes.request_summary``
-  carries a bounded summary of security-relevant fields only.
+  carries a bounded summary of security-relevant fields only. Besides the request
+  summary, every audit event states the request scope (``attributes.request_scope``:
+  ``cluster`` / ``namespace`` / ``object``), the Pod Security level that admission
+  evaluated (``attributes.pod_security_enforce_level``), and, for ``pods/exec`` and
+  ``pods/attach``, the target container and a redacted, bounded command summary
+  (``attributes.exec_command``) taken from the request URI. stdin content is never
+  part of an audit event and is therefore never seen.
 * ``container``: a CRI container log line (parsed by the collector's container
   operator). lab-portal JSON lines (schema ``lab-portal.log.v1``, owned by B1)
   from the lab-portal workload become ``app.auth.*`` / ``app.authz.denied`` /
@@ -41,6 +48,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
+import shlex
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
@@ -66,7 +74,6 @@ from extorq.contracts.event import (
     Provenance,
     Resource,
     SecurityEvent,
-    SimulationTag,
     SourceInfo,
 )
 from extorq.contracts.identity import (
@@ -79,7 +86,9 @@ from extorq.contracts.identity import (
 from extorq.contracts.service import InstanceKind, ServiceKind, ServiceRef
 
 #: 1.1.0: container.id + image, ServiceRef to the workload service (schema 1.1).
-PARSER_VERSION = "1.1.0"
+#: 2.0.0: schema 2.0 (no simulation marker); request_scope, Pod Security enforce level,
+#: exec/attach target container and redacted command summary.
+PARSER_VERSION = "2.0.1"
 AUDIT_PARSER = "otlp-k8s-audit"
 CONTAINER_PARSER = "otlp-k8s-container"
 LAB_PORTAL_PARSER = "otlp-k8s-lab-portal"
@@ -95,9 +104,7 @@ LAB_PORTAL_ADAPTER = "webapp-json"
 #: Workload kind used for pods without a workload controller (bare and static pods).
 POD_WORKLOAD_KIND = "Pod"
 
-#: (namespace, container) pairs whose stdout is parsed as lab-portal.log.v1.
-#: Restricting by workload prevents any other pod from forging application
-#: security events by printing look-alike JSON.
+#: (namespace, deployment) pairs whose matching container can emit lab-portal.log.v1.
 LAB_PORTAL_WORKLOADS: frozenset[tuple[str, str]] = frozenset({("extorq-apps", "lab-portal")})
 
 MAX_LOG_RECORDS = 5000
@@ -110,7 +117,6 @@ SUMMARY_LIMIT = 2000
 NAME_LIMIT = 256
 
 _STAGES_CONVERTED = frozenset({"ResponseComplete", "Panic"})
-_SIM_RE = re.compile(r"extorq-sim-([a-z0-9]{8,32})(?![a-z0-9])")
 _AUDIT_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 _KLOG_RE = re.compile(r"^([IWEF])\d{4} \d{2}:\d{2}:\d{2}")
 _LEVEL_JSON_RE = re.compile(r'"(?:level|severity|lvl)"\s*:\s*"([A-Za-z]{1,10})"')
@@ -184,7 +190,7 @@ _STATIC_POD_UID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 def valid_k8s_name(value: Any) -> str | None:
     """A DNS-1123 name as Kubernetes validates it, else None (never 'repaired')."""
-    if isinstance(value, str) and len(value) <= 253 and _K8S_NAME_RE.match(value):
+    if isinstance(value, str) and len(value) <= 253 and _K8S_NAME_RE.fullmatch(value):
         return value
     return None
 
@@ -503,24 +509,6 @@ def _valid_ip(value: Any) -> str | None:
         return str(ipaddress.ip_address(value.strip()))
     except ValueError:
         return None
-
-
-def simulation_tag(*candidates: Any) -> SimulationTag | None:
-    """SimulationTag when any candidate (str or list of str) carries ``extorq-sim-<run_id>``."""
-    return _simulation_tag(*candidates)
-
-
-def _simulation_tag(*candidates: Any) -> SimulationTag | None:
-    for candidate in candidates:
-        if isinstance(candidate, str):
-            match = _SIM_RE.search(candidate)
-            if match:
-                return SimulationTag(run_id=match.group(1))
-        elif isinstance(candidate, list):
-            tag = _simulation_tag(*candidate)
-            if tag:
-                return tag
-    return None
 
 
 def _validation_reason(exc: ValidationError) -> str:
@@ -1010,10 +998,130 @@ def _outcome_for_code(code: int | None) -> Outcome:
     return Outcome.FAILURE
 
 
-def _audit_raw(event: dict[str, Any], red: _Redactor) -> str | None:
-    """Evidence excerpt: the audit event minus bodies and authenticator extras."""
+#: Pod subresources that stream into a running container. Their options (container,
+#: command, stdin, tty) travel in the request URI query; the audit event never contains
+#: the streamed data itself (stdin, stdout, stderr), so ExtorQ never sees it.
+STREAM_SUBRESOURCES = frozenset({"exec", "attach"})
+#: Bounds of the exec command summary: argv elements kept, rendered characters kept.
+EXEC_MAX_ARGS = 32
+EXEC_COMMAND_LIMIT = 512
+#: More query fields than this is not a request kubectl or client-go would send.
+_MAX_QUERY_FIELDS = 256
+_TRUE_VALUES = frozenset({"1", "t", "T", "TRUE", "true", "True"})
+_PSA_LEVELS = frozenset({"privileged", "baseline", "restricted"})
+_PSA_VERSION_RE = re.compile(r"^(?:latest|v1\.\d{1,3})$")
+
+
+def request_scope(namespace: str | None, name: str | None) -> str:
+    """How much of the cluster a resource request addresses.
+
+    ``object``: one named object; ``namespace``: every object of the resource in one
+    namespace; ``cluster``: no namespace in ``objectRef``, i.e. all namespaces for a
+    namespaced resource (``kubectl get secrets -A``) or a cluster-scoped resource.
+    """
+    if name:
+        return "object"
+    if namespace:
+        return "namespace"
+    return "cluster"
+
+
+def pod_security_level(policy: str | None) -> tuple[str | None, str | None]:
+    """``(level, version)`` of a Pod Security ``<level>:<version>`` value, else Nones.
+
+    The PodSecurity admission plugin annotates every request it evaluates with the
+    policy it enforced (``pod-security.kubernetes.io/enforce-policy``): the namespace's
+    ``enforce`` label, or the cluster default (``privileged:latest`` in kind) when the
+    namespace has none. Anything that is not a known level is reported as unknown.
+    """
+    if not policy:
+        return None, None
+    level, _, version = policy.partition(":")
+    level = level.strip().lower()
+    if level not in _PSA_LEVELS:
+        return None, None
+    version = version.strip()
+    return level, (version if _PSA_VERSION_RE.match(version) else None)
+
+
+def _query_params(request_uri: str | None) -> dict[str, list[str]] | None:
+    """Decoded query parameters of an audit ``requestURI``; None when unparseable.
+
+    Parsed in full (the audit body is already bounded) so a command argument is never
+    cut in the middle of a credential, which would defeat redaction.
+    """
+    if not request_uri:
+        return {}
+    try:
+        return parse_qs(
+            urlsplit(request_uri).query, keep_blank_values=True, max_num_fields=_MAX_QUERY_FIELDS
+        )
+    except ValueError:
+        return None
+
+
+def _first(params: Mapping[str, list[str]], key: str) -> str | None:
+    """Single-valued option as the API server reads it (first occurrence)."""
+    values = params.get(key)
+    return values[0] if values else None
+
+
+def _stream_options(params: Mapping[str, list[str]], red: _Redactor) -> dict[str, Any]:
+    """Attributes of a ``pods/exec`` or ``pods/attach`` request (from its URI query).
+
+    ``exec_command`` renders argv shell-style for reading only (never executed),
+    redacted BEFORE it is truncated so a credential passed as an argument never
+    survives in part. ``stdin``/``tty`` default to false when absent, as in
+    PodExecOptions/PodAttachOptions.
+    """
+    argv = params.get("command") or []
+    attributes: dict[str, Any] = {
+        "exec_stdin": _first(params, "stdin") in _TRUE_VALUES,
+        "exec_tty": _first(params, "tty") in _TRUE_VALUES,
+    }
+    if argv:
+        kept = argv[:EXEC_MAX_ARGS]
+        rendered = red.text(shlex.join(kept), EXEC_COMMAND_LIMIT)
+        attributes["exec_command"] = rendered
+        attributes["exec_argc"] = len(argv)
+        if len(argv) > len(kept) or (rendered or "").endswith(TRUNCATION_MARKER):
+            attributes["exec_command_truncated"] = True
+    return attributes
+
+
+def _portforward_ports(params: Mapping[str, list[str]]) -> list[int]:
+    ports: list[int] = []
+    for value in (params.get("ports") or [])[:16]:
+        for part in value.split(",")[:16]:
+            if part.strip().isdigit() and 0 < int(part) <= 65535 and len(ports) < 16:
+                ports.append(int(part))
+    return ports
+
+
+def _uri_for_raw(request_uri: str, subresource: str | None) -> str:
+    """``requestURI`` for the evidence excerpt, without exec/attach ``command`` values.
+
+    Each argv element is its own URL-encoded ``command=`` parameter, so redaction
+    patterns that span arguments (``--password <value>``) cannot match there; the
+    redacted rendering is kept in ``attributes.exec_command`` instead.
+    """
+    if subresource not in STREAM_SUBRESOURCES or "command=" not in request_uri:
+        return request_uri
+    split = urlsplit(request_uri)
+    kept = [part for part in split.query.split("&") if part.split("=", 1)[0] != "command"]
+    return split.path + ("?" + "&".join(kept) if kept else "")
+
+
+def _audit_raw(event: dict[str, Any], red: _Redactor, subresource: str | None = None) -> str | None:
+    """Evidence excerpt: the audit event minus bodies, exec commands and authenticator extras."""
     reduced = {k: v for k, v in event.items() if k not in ("requestObject", "responseObject")}
     omitted: list[str] = [k for k in ("requestObject", "responseObject") if k in event]
+    request_uri = reduced.get("requestURI")
+    if isinstance(request_uri, str):
+        stripped = _uri_for_raw(request_uri, subresource)
+        if stripped != request_uri:
+            reduced["requestURI"] = stripped
+            omitted.append("requestURI.command")
     user = dict(_as_dict(event.get("user")))
     if "extra" in user:
         user["extra"] = sorted(_as_dict(user["extra"]).keys())
@@ -1080,12 +1188,12 @@ def _normalize_audit(
         api_group = _name(object_ref.get("apiGroup"), 128) or ""
 
     request_uri = event.get("requestURI") if isinstance(event.get("requestURI"), str) else None
-    uri_path = None
-    dry_run = False
-    if request_uri:
-        split = urlsplit(request_uri[:4096])
-        uri_path = _name(split.path, 2048)
-        dry_run = "All" in parse_qs(split.query).get("dryRun", [])
+    uri_path = _name(urlsplit(request_uri[:4096]).path, 2048) if request_uri else None
+    params = _query_params(request_uri)
+    dry_run = "All" in (params or {}).get("dryRun", [])
+    # Pods whose containers a request streams into (exec/attach) or forwards ports of.
+    stream_target = resource_name == "pods" and subresource in STREAM_SUBRESOURCES
+    portforward = resource_name == "pods" and subresource == "portforward"
 
     received = _parse_rfc3339(event.get("requestReceivedTimestamp"))
     stage_ts = _parse_rfc3339(event.get("stageTimestamp"))
@@ -1116,7 +1224,23 @@ def _normalize_audit(
         "api_version": _name(object_ref.get("apiVersion"), 64),
         "stage_timestamp": stage_ts.isoformat().replace("+00:00", "Z") if stage_ts else None,
         "response_reason": _name(response.get("reason"), 64),
+        "request_scope": request_scope(namespace, object_name) if resource_name else None,
     }
+    if resource_name in _RBAC_RESOURCES and code is not None and 200 <= code < 300:
+        response_object = _as_dict(event.get("responseObject"))
+        if response_object.get("kind") != "Status":
+            response_meta = _as_dict(response_object.get("metadata"))
+            attributes["object_uid"] = _name(response_meta.get("uid"), 128)
+            attributes["resource_version"] = _name(response_meta.get("resourceVersion"), 64)
+    target_container: str | None = None
+    if stream_target:
+        if params is None:
+            attributes["exec_options_unparseable"] = True
+        else:
+            target_container = _name(_first(params, "container"), 253)
+            attributes.update(_stream_options(params, red))
+    elif portforward and params:
+        attributes["portforward_ports"] = _portforward_ports(params)
     summary_truncated = False
     if summary:
         text, summary_truncated = _bound_summary(summary)
@@ -1150,6 +1274,13 @@ def _normalize_audit(
     ):
         if key in annotations:
             attributes[attr] = red.text(annotations[key], ATTR_STR_LIMIT)
+    # The level PodSecurity admission actually enforced for this request (namespace label
+    # or cluster default); unset when the plugin did not evaluate the request.
+    psa_level, psa_version = pod_security_level(
+        annotations.get("pod-security.kubernetes.io/enforce-policy")
+    )
+    attributes["pod_security_enforce_level"] = psa_level
+    attributes["pod_security_enforce_version"] = psa_version
     attributes["denied_by"] = _denied_by(code, annotations, psa_violation)
     if dry_run:
         attributes["dry_run"] = True
@@ -1176,16 +1307,20 @@ def _normalize_audit(
     user_agent = red.text(event.get("userAgent"), 2048)
     target = "/".join(p for p in (resource_name, subresource) if p) or (uri_path or "-")
     obj = "/".join(p for p in (namespace, object_name) if p)
+    stream_detail = ""
+    if stream_target and (target_container or attributes.get("exec_command")):
+        # exec_command is already redacted; the message is redacted again as a whole.
+        stream_detail = (
+            f" [container {target_container or '?'}"
+            f"{': ' + str(attributes['exec_command']) if attributes.get('exec_command') else ''}]"
+        )
     message = red.text(
         f"{username or 'unauthenticated'} {verb or '?'} {target}"
         f"{' ' + obj if obj else ''} -> {code if code is not None else '?'}"
-        f"{' (dry-run)' if dry_run else ''}",
+        f"{' (dry-run)' if dry_run else ''}{stream_detail}",
         MESSAGE_LIMIT,
     )
-    raw = _audit_raw(event, red)
-
-    subjects = summary.get("subjects") if summary else None
-    simulation = _simulation_tag(object_name, username, impersonated_user, subjects)
+    raw = _audit_raw(event, red, subresource)
 
     return SecurityEvent(
         event_id=event_id(SourceType.K8S_AUDIT.value, ASSET_ID, f"{audit_id}:{stage}"),
@@ -1210,6 +1345,11 @@ def _normalize_audit(
         kubernetes=KubernetesInfo(
             cluster=CLUSTER_NAME,
             namespace=namespace,
+            # exec/attach/portforward: the TARGET pod and container named by the request
+            # (never the emitter: audit events are written by kube-apiserver).
+            pod_name=object_name if (stream_target or portforward) else None,
+            container_name=target_container,
+            node_name=valid_k8s_name(resource.get("k8s.node.name")),
             service_account=service_account,
             verb=verb,
             api_group=api_group,
@@ -1239,7 +1379,6 @@ def _normalize_audit(
             truncated=summary_truncated or red.truncated,
             redaction_count=red.count,
         ),
-        simulation=simulation,
     )
 
 
@@ -1441,12 +1580,17 @@ def _normalize_container(
         "container_image": _container_image(resource),
         "static_pod": True if static_pod else None,
     }
-    simulation = _simulation_tag(pod_name, workload_name)
     observed = _ns_to_datetime(observed_ns) if observed_ns else None
     cri_time = _ns_to_datetime(time_ns)
 
     lab = None
-    if (namespace, container) in LAB_PORTAL_WORKLOADS and stream == "stdout":
+    if (
+        (namespace, workload_name) in LAB_PORTAL_WORKLOADS
+        and workload_kind == "Deployment"
+        and container == "lab-portal"
+        and pod_uid is not None
+        and stream == "stdout"
+    ):
         lab = _parse_lab_portal(body)
     if lab is not None:
         return _lab_portal_event(
@@ -1461,7 +1605,6 @@ def _normalize_container(
             cri_time,
             observed,
             red,
-            simulation,
             _container_service_ref(kubernetes, LAB_PORTAL_ADAPTER),
         )
 
@@ -1492,7 +1635,6 @@ def _normalize_container(
             truncated=red.truncated or body_cut,
             redaction_count=red.count,
         ),
-        simulation=simulation,
     )
 
 
@@ -1508,7 +1650,6 @@ def _lab_portal_event(
     cri_time: datetime,
     observed: datetime | None,
     red: _Redactor,
-    simulation: SimulationTag | None,
     service: ServiceRef | None,
 ) -> SecurityEvent:
     app_event = str(data["event"])
@@ -1595,7 +1736,6 @@ def _lab_portal_event(
             truncated=red.truncated,
             redaction_count=red.count,
         ),
-        simulation=simulation or _simulation_tag(user),
     )
 
 
@@ -1609,6 +1749,7 @@ __all__ = [
     "LAB_PORTAL_WORKLOADS",
     "PARSER_VERSION",
     "POD_WORKLOAD_KIND",
+    "STREAM_SUBRESOURCES",
     "NormalizationResult",
     "OtlpPayloadError",
     "apiserver_service_ref",
@@ -1622,9 +1763,10 @@ __all__ = [
     "normalize_otlp_logs",
     "normalize_otlp_logs_detailed",
     "pod_instance_id",
+    "pod_security_level",
+    "request_scope",
     "risk_flags_for_summary",
     "service_display_name",
-    "simulation_tag",
     "summarize_k8s_object",
     "summarize_pod_spec",
     "summarize_rbac_object",

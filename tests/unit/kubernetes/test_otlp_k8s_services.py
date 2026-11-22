@@ -1,4 +1,4 @@
-"""Service-hierarchy enrichment of OTLP records (contract schema 1.1).
+"""Service-hierarchy enrichment of OTLP records (contract schema 2.0).
 
 Fixture ``otlp/enriched_sample.json`` is a REAL capture from the extorq-lab
 collector with container.id / image extraction enabled (provenance:
@@ -64,14 +64,14 @@ def by_pod(events: list[SecurityEvent], prefix: str) -> list[SecurityEvent]:
     ]
 
 
-def test_every_record_becomes_a_catalog_valid_1_1_event(events: list[SecurityEvent]) -> None:
+def test_every_record_becomes_a_catalog_valid_2_0_event(events: list[SecurityEvent]) -> None:
     detailed = normalize_otlp_logs_detailed(enriched(), producer_id=PRODUCER, received_at=RECEIVED)
     # 30 log records: 29 events + 1 audit record at a stage that is not converted.
     assert len(events) == 29
     assert detailed.skipped == 1 and detailed.failures == []
     assert set(detailed.skipped_reasons) <= {"audit_stage_ResponseStarted"}
     for ev in events:
-        assert ev.schema_version == "1.1"
+        assert ev.schema_version == "2.0"
         assert (
             validate_event_semantics(ev.event_type, ev.category.value, ev.source.source_type.value)
             is None
@@ -293,8 +293,8 @@ def test_names_and_assets() -> None:
     assert apiserver_service_ref("../etc") is None
 
 
-def test_parser_version_bumped() -> None:
-    assert otlp_k8s.PARSER_VERSION == "1.1.0"
+def test_events_record_the_current_parser_version(events: list[SecurityEvent]) -> None:
+    assert {event.provenance.parser_version for event in events} == {otlp_k8s.PARSER_VERSION}
 
 
 def test_request_summaries_survive_gateway_secret_redaction() -> None:

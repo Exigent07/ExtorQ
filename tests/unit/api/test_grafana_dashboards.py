@@ -28,14 +28,15 @@ EXPECTED = {
     "extorq-linux": "ExtorQ - Linux Investigation",
     "extorq-kubernetes": "ExtorQ - Kubernetes Investigation",
     "extorq-github": "ExtorQ - GitHub Investigation",
+    "extorq-macos": "ExtorQ - macOS Investigation",
 }
-#: Objects extorq_grafana may read (0002 + 0004 grants). analyst_actions,
-#: investigation_contexts and context_relationships are deliberately absent.
+#: Objects extorq_grafana may read (0002 + 0004 grants; 0008 dropped simulation_runs).
+#: analyst_actions, investigation_contexts and context_relationships are deliberately absent.
 GRANTED = {
     "events", "assets", "inventory_items", "scan_runs", "finding_observations",
     "detection_rules", "rule_runs", "alerts", "alert_evidence", "analyst_state",
     "ai_assessments", "collector_health", "pipeline_health", "ingest_audit",
-    "ingest_quarantine", "simulation_runs", "services", "service_instances",
+    "ingest_quarantine", "services", "service_instances",
     "v_assets", "v_alerts", "v_analyst_state", "v_inventory_current", "v_collector_latest",
     "v_pipeline_latest", "v_rule_latest_run", "v_findings_current", "v_services",
     "v_service_instances_current",
@@ -48,6 +49,11 @@ TIME_BOUNDED = {
 AGGREGATE_ALIAS = re.compile(
     r"\b(?:max|min|sum|avg|any|uniqExact|count)\((\w+)\)\s+AS\s+(\w+)", re.IGNORECASE
 )
+#: Storage removed by migration 0008 (contract schema 2.0): a query naming it fails.
+DROPPED = re.compile(r"\b(simulation_run_ids?|scenario_id|simulation_runs)\b")
+#: Product decisions of 2026-11-22: no simulation category, no Gemini, no "lab" labels.
+#: A standalone "lab" only: resource names such as lab-portal or extorq-lab are real names.
+REMOVED_WORDING = re.compile(r"simulat|gemini|(?<![\w-])lab(?![\w-])", re.IGNORECASE)
 
 
 def _load_generator() -> ModuleType:
@@ -144,6 +150,19 @@ def test_panel_sql_rules(uid: str, panel: dict[str, Any]) -> None:
         assert target["queryType"] == "table"
 
 
+def test_otel_health_keeps_queue_requests_separate_from_records() -> None:
+    panels = {p["title"]: p for uid, p in PANELS if uid == "extorq-collector-health"}
+    delivery = panels["Kubernetes OpenTelemetry delivery by node and source"]
+    sql = delivery["targets"][0]["rawSql"]
+    assert "c.source_types AS sources" in sql
+    assert "last_reported_at, now()) > 3 * c.interval_seconds" in sql
+    assert "'queue_requests', 'Nullable(UInt64)'" in sql
+    assert "'queue_capacity_requests', 'Nullable(UInt64)'" in sql
+    assert "'dropping_records', 'unavailable'" in sql
+    buffered_sql = panels["Collector buffered records"]["targets"][0]["rawSql"]
+    assert "collector_type != 'k8s_otel'" in buffered_sql
+
+
 def test_service_coverage_panels_exist() -> None:
     titles = {p["title"] for _, p in PANELS}
     assert {
@@ -151,10 +170,66 @@ def test_service_coverage_panels_exist() -> None:
         "Services by asset, kind and coverage",
         "Monitored services: telemetry freshness",
         "Services",
+        "macOS services",
         "Workloads and Kubernetes Services",
         "Pods and containers",
         "Kubernetes nodes",
     } <= titles
+
+
+def test_dashboards_never_name_dropped_storage_or_removed_concepts() -> None:
+    """Schema 2.0: no simulation columns/table in SQL; no simulation, Gemini or "lab" wording
+    in titles and descriptions (resource names such as lab-portal stay allowed)."""
+    for dashboard in _dashboards():
+        assert not REMOVED_WORDING.search(dashboard["title"] + " " + dashboard["description"])
+        for panel in dashboard["panels"]:
+            text = f"{panel['title']} {panel.get('description', '')}"
+            assert not REMOVED_WORDING.search(text), (dashboard["uid"], panel["title"])
+            for target in panel.get("targets", []):
+                assert not DROPPED.search(target["rawSql"]), (dashboard["uid"], panel["title"])
+
+
+@pytest.mark.parametrize(("uid", "panel"), PANELS, ids=[f"{u}:{p['title']}" for u, p in PANELS])
+def test_panel_description_states_its_source(uid: str, panel: dict[str, Any]) -> None:
+    """Every panel says where its data comes from (table/view and telemetry source)."""
+    description = panel["description"]
+    assert re.search(r"\bSources?: ", description), (uid, panel["title"])
+    assert len(description) >= 60, "say what the panel shows, not just its source"
+
+
+def test_units_and_colours_carry_meaning() -> None:
+    """Durations have a time unit, lag/backlog charts draw thresholds, and volume stats are
+    neutral (no colour claims good or bad for a plain count)."""
+    for uid, panel in PANELS:
+        defaults = panel["fieldConfig"]["defaults"]
+        overrides = {
+            o["matcher"]["options"]: {p["id"]: p["value"] for p in o["properties"]}
+            for o in panel["fieldConfig"]["overrides"]
+        }
+        sql = panel["targets"][0]["rawSql"]
+        for column in re.findall(r"\bAS (\w*(?:_seconds|_ms))\b", sql):
+            unit = overrides.get(column, {}).get("unit", defaults["unit"])
+            assert unit in ("s", "ms"), (uid, panel["title"], column)
+        if panel["type"] == "timeseries" and re.search(r"lag|age|depth|buffered", panel["title"]):
+            assert defaults["custom"]["thresholdsStyle"]["mode"] == "dashed", panel["title"]
+            assert len(defaults["thresholds"]["steps"]) == 3, panel["title"]
+        if panel["type"] == "stat" and panel["title"] in ("Events", "Assets reporting events"):
+            assert defaults["thresholds"]["steps"] == [{"color": "text", "value": None}]
+
+
+def test_cross_asset_tables_show_asset_names() -> None:
+    """Tables over several asset classes show the inventory name next to the id."""
+    for title in (
+        "Recent alerts",
+        "Events by asset and source",
+        "Open findings by asset and scanner (current)",
+        "Services by asset, kind and coverage",
+        "Collectors: last success and staleness",
+        "Monitored services: telemetry freshness",
+    ):
+        panel = next(p for _, p in PANELS if p["title"] == title)
+        sql = panel["targets"][0]["rawSql"]
+        assert "extorq.v_assets" in sql and " AS asset," in sql, title
 
 
 def test_datasource_provisioning_uses_the_least_privileged_identity() -> None:

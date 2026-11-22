@@ -175,7 +175,8 @@ def test_synthetic_auth_producers_are_labelled_and_classified(src: SourceContext
     assert sudo.event_type == "auth.sudo.command"
     assert sudo.actor is not None and sudo.actor.name == "testuser"
     assert sudo.attributes["run_as"] == "root"
-    assert sudo.process is not None and sudo.process.command_line == "/usr/bin/true"
+    assert sudo.process is not None and sudo.process.command_line is None
+    assert sudo.attributes["command_executable"] == "/usr/bin/true"
     denied = [e for e in evs if e.event_type == "auth.sudo.failure"]
     assert {e.attributes["reason"] for e in denied} == {
         "3 incorrect password attempts",
@@ -204,6 +205,7 @@ def test_every_event_satisfies_the_catalog(src: SourceContext) -> None:
         "opendirectoryd_auth_failed.ndjson",
         "synthetic_auth_producers.ndjson",
         "synthetic_sshd_auth.ndjson",
+        "synthetic_sudo_documented.ndjson",
         "xprotect_behavior_forwarded.ndjson",
         "xprotect_remediator.ndjson",
         "xprotect_remediator_badsig.ndjson",
@@ -302,10 +304,13 @@ def test_sshd_record_from_an_unverified_binary_is_never_auth_evidence(
     assert forged.network is None and forged.actor is None  # nothing taken from its message
 
 
-def test_sshd_simulation_marker_in_the_user_name_tags_the_event(src: SourceContext) -> None:
-    tagged = _sshd_events(src)[12]
-    assert tagged.event_type == "auth.ssh.login_failed"
-    assert tagged.simulation is not None and tagged.simulation.run_id == "abcd1234ef"
+def test_detection_test_artefact_names_get_no_special_treatment(src: SourceContext) -> None:
+    """Schema 2.0: a detection test is real activity; its artefact name is ordinary data."""
+    event = _sshd_events(src)[12]
+    assert event.event_type == "auth.ssh.login_failed"
+    assert event.actor is not None and event.actor.name == "extorq-test-abcd1234ef"
+    assert event.labels == {}
+    assert "simulation" not in event.model_dump()
 
 
 def test_sshd_producer_predicate_covers_openssh_10_binaries() -> None:
@@ -390,3 +395,57 @@ def test_dedup_state_round_trip_and_bad_input() -> None:
     assert DedupState.from_json(state.to_json()) == state
     assert DedupState.from_json("not json") == DedupState()
     assert DedupState.from_json('{"end": true, "seen": [1, "x"]}') == DedupState(None, ["x"])
+
+
+# ── sudo (MAC-004 inputs). No sudo record exists in the reference host's 30-day log archive,
+# so these are documented sudoers(5) 1.9.17p2 formats in a labelled SYNTHETIC fixture. ──
+
+
+def _sudo_events(src: SourceContext) -> list:
+    raw = fixture_bytes("unified_log/synthetic_sudo_documented.ndjson")
+    for line in raw.splitlines():
+        assert "SYNTHETIC" in json.loads(line)["extorqSynthetic"]
+    return events("synthetic_sudo_documented.ndjson", src)
+
+
+def test_sudo_wrong_password_records_carry_the_attempt_count(src: SourceContext) -> None:
+    one, three, required = _sudo_events(src)[:3]
+    for event in (one, three, required):
+        assert event.event_type == "auth.sudo.failure"
+        assert event.outcome is Outcome.FAILURE and event.action == "sudo_auth_failed"
+        assert event.actor is not None and event.actor.name == "testuser"
+        assert event.attributes["failure_kind"] == "authentication"
+        assert event.attributes["run_as"] == "root" and event.attributes["tty"] == "ttys004"
+    assert one.attributes["failed_attempts"] == 1  # the MAC-004 negative control shape
+    assert three.attributes["failed_attempts"] == 3  # the MAC-004 positive shape
+    assert one.attributes["reason"] == "1 incorrect password attempt"
+    assert one.process is not None and one.process.command_line is None
+    assert one.attributes["command_operation"] == "validate"
+    assert "failed_attempts" not in required.attributes  # unknown stays unknown
+
+
+def test_sudo_env_field_does_not_swallow_the_command(src: SourceContext) -> None:
+    accepted = _sudo_events(src)[3]
+    assert accepted.event_type == "auth.sudo.command" and accepted.outcome is Outcome.SUCCESS
+    assert accepted.process is not None and accepted.process.command_line is None
+    assert accepted.attributes["command_executable"] == "/usr/bin/id"
+    assert accepted.attributes["env_specified"] is True
+    assert "LANG" not in json.dumps(accepted.attributes)  # variable values are never kept
+
+
+def test_sudo_policy_denial_discards_command_arguments(src: SourceContext) -> None:
+    denied = _sudo_events(src)[4]
+    assert denied.event_type == "auth.sudo.failure" and denied.outcome is Outcome.DENIED
+    assert denied.attributes["failure_kind"] == "policy"
+    assert denied.attributes["reason"] == "command not allowed"
+    assert denied.process is not None
+    assert denied.process.command_line is None
+    assert denied.attributes["command_executable"] == "/bin/sh"
+    assert "COMMAND=" not in denied.model_dump_json()
+
+
+def test_sudo_record_from_an_unverified_binary_is_never_evidence(src: SourceContext) -> None:
+    forged = _sudo_events(src)[5]
+    assert forged.event_type == "system.log.notable"
+    assert forged.attributes["source_verified"] is False
+    assert forged.actor is None and "failed_attempts" not in forged.attributes

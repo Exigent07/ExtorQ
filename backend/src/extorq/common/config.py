@@ -8,8 +8,8 @@ Rules:
   ``<ENV_NAME>_FILE`` pointing to a file whose stripped content is the value, so
   compose secrets (``/run/secrets/...``) never have to be placed in environment
   variables. Setting both ``X`` and ``X_FILE`` is an error.
-* ``.env`` files are never read by this module (compose passes AI keys as file
-  secrets; see PLAN §4.5).
+* ``.env`` files are never read by this module (compose passes the Jev API key to
+  the ai-worker as a file secret; see PLAN §4.5).
 * Startup checks report the *names* of missing settings, never values.
 
 Other components can subclass :class:`ExtorQBaseSettings` with their own fields
@@ -31,6 +31,8 @@ from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 ENV_PREFIX = "EXTORQ_"
+#: The deployed events TTL in 0001_core_tables.sql. Keep the gateway default aligned.
+EVENT_RETENTION_DAYS = 90
 
 #: ClickHouse service roles (PLAN §5) mapped to their ClickHouse user names (PLAN §4.4).
 CLICKHOUSE_USERS: dict[str, str] = {
@@ -128,7 +130,6 @@ class ExtorQBaseSettings(BaseSettings):
 class Settings(ExtorQBaseSettings):
     """Platform settings shared by the gateway, writer, migrations and collectors."""
 
-    environment: str = "lab"
     log_level: str = "INFO"
     #: Instance name reported in PipelineHealth (defaults to the container hostname).
     instance_name: str = Field(default_factory=socket.gethostname)
@@ -160,7 +161,7 @@ class Settings(ExtorQBaseSettings):
     #: Events older than this are quarantined as ``older_than_retention`` (PLAN §11): it must
     #: equal the ``events`` TTL (``0001_core_tables.sql``: ``event_time + INTERVAL 90 DAY``),
     #: otherwise the gateway would answer 202 for rows ClickHouse expires right away.
-    event_retention_days: int = Field(default=90, ge=1, le=3650)
+    event_retention_days: int = Field(default=EVENT_RETENTION_DAYS, ge=1, le=3650)
     #: Maximum authenticated-request audit rows per minute for 401s (anti-flood).
     unauthenticated_audit_per_minute: int = 60
 
@@ -194,11 +195,10 @@ class Settings(ExtorQBaseSettings):
     analyst_password: SecretStr | None = None
     viewer_password: SecretStr | None = None
     grafana_admin_password: SecretStr | None = None
+    #: Jev (TypeSafe) API key for AI triage, the only AI provider (schema 2.0). Read by
+    #: ``extorq.ai.settings``; compose mounts it into the ai-worker only.
     jev_api_key: SecretStr | None = Field(
         default=None, validation_alias=AliasChoices("EXTORQ_JEV_API_KEY", "JEV_API_KEY")
-    )
-    gemini_api_key: SecretStr | None = Field(
-        default=None, validation_alias=AliasChoices("EXTORQ_GEMINI_API_KEY", "GEMINI_API_KEY")
     )
 
     def resolve(self, path: Path) -> Path:

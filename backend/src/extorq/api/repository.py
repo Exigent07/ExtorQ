@@ -97,7 +97,6 @@ class AlertFilters:
     severities: tuple[str, ...] = ()
     statuses: tuple[str, ...] = ()
     open_only: bool = False
-    simulation_run_id: str = ""
     #: Alerts whose ``service_ids`` contain this service id.
     service_id: str = ""
     #: ``last_seen`` | ``first_seen`` | ``severity``
@@ -116,7 +115,6 @@ class EventFilters:
     outcome: str = ""
     actor: str = ""
     src_ip: str = ""
-    simulation_run_id: str = ""
     service_id: str = ""
     #: Only events of this asset or its descendants (set with ``service_id``: the service's
     #: owning asset, F-19). Empty = no restriction.
@@ -133,6 +131,7 @@ class FindingFilters:
     #: Findings whose LATEST observation is attributed to this service
     #: (``v_findings_current.service_id``; an older attribution does not count).
     service_id: str = ""
+    scope_asset: str = ""
 
 
 @dataclass(frozen=True)
@@ -186,7 +185,7 @@ class Repository(Protocol):
         self, asset_id: str, exclude_assets: Sequence[str] = ()
     ) -> tuple[list[Row], bool]: ...
 
-    # services (schema 1.1)
+    # services
     def list_services(self, filters: ServiceFilters, max_rows: int) -> list[Row]: ...
     def get_service(self, service_id: str) -> Row | None: ...
     def service_instances(
@@ -254,7 +253,7 @@ class Repository(Protocol):
 
 PING_SQL = "SELECT 1"
 
-# Every asset (lab scale: a handful). GET /assets filters and pages these rows in Python
+# Every asset (a deployment has a handful). GET /assets filters and pages these rows in Python
 # because the default excludes RETIRED assets, a state derived at request time from
 # collector health and observation times (``extorq.api.lifecycle``).
 ASSETS_ALL_SQL = """
@@ -342,6 +341,9 @@ SELECT finding_id, asset_id, scanner, scope_hash, check_id, category, severity, 
        service_id
 FROM extorq.v_findings_current
 WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
   AND (empty({severities:Array(String)}) OR has({severities:Array(String)}, severity))
   AND (empty({scanner:String}) OR scanner = {scanner:String})
   AND (empty({category:String}) OR category = {category:String})
@@ -360,6 +362,9 @@ FINDINGS_LC_COUNT_SQL = """
 SELECT count() AS total
 FROM extorq.v_findings_current
 WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
   AND (empty({severities:Array(String)}) OR has({severities:Array(String)}, severity))
   AND (empty({scanner:String}) OR scanner = {scanner:String})
   AND (empty({category:String}) OR category = {category:String})
@@ -406,6 +411,9 @@ SELECT
     argMax(tuple(service_id), observed_at).1 AS f_service_id
 FROM extorq.finding_observations
 WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
 GROUP BY finding_id
 HAVING (empty({severities:Array(String)}) OR has({severities:Array(String)}, f_severity))
    AND (empty({scanner:String}) OR f_scanner = {scanner:String})
@@ -429,6 +437,9 @@ FROM
            argMax(tuple(service_id), observed_at).1 AS f_service_id
     FROM extorq.finding_observations
     WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
+  AND (empty({scope_asset:String})
+       OR asset_id = {scope_asset:String}
+       OR startsWith(asset_id, concat({scope_asset:String}, '/')))
     GROUP BY finding_id
     HAVING (empty({severities:Array(String)}) OR has({severities:Array(String)}, f_severity))
        AND (empty({scanner:String}) OR f_scanner = {scanner:String})
@@ -530,8 +541,7 @@ SELECT
     a.asset_id AS asset_id, a.asset_type AS asset_type, a.summary AS summary,
     a.first_seen AS first_seen, a.last_seen AS last_seen, a.event_count AS event_count,
     a.entities AS entities, a.mitre_techniques AS mitre_techniques,
-    a.simulation_run_ids AS simulation_run_ids, a.created_at AS created_at,
-    a.updated_at AS updated_at,
+    a.created_at AS created_at, a.updated_at AS updated_at,
     if(ifNull(s.alert_id, '') = '', 'new', s.status) AS analyst_status,
     ifNull(s.alert_id, '') != '' AS analyst_state_recorded,
     s.assignee AS assignee,
@@ -549,7 +559,6 @@ WHERE a.last_seen >= {since:DateTime64(3, 'UTC')}
   AND (empty({statuses:Array(String)}) OR has({statuses:Array(String)}, analyst_status))
   AND ({open_only:UInt8} = 0 OR analyst_status NOT IN ('closed_true_positive', 'closed_benign',
                                                        'closed_false_positive'))
-  AND (empty({simulation_run_id:String}) OR has(a.simulation_run_ids, {simulation_run_id:String}))
   AND (empty({service_id:String}) OR has(a.service_ids, {service_id:String}))
 ORDER BY
     if({sort:String} = 'severity',
@@ -577,8 +586,6 @@ FROM
       AND (empty({asset_id:String}) OR a.asset_id = {asset_id:String})
       AND (empty({rule_id:String}) OR a.rule_id = {rule_id:String})
       AND (empty({severities:Array(String)}) OR has({severities:Array(String)}, a.severity))
-      AND (empty({simulation_run_id:String})
-           OR has(a.simulation_run_ids, {simulation_run_id:String}))
       AND (empty({service_id:String}) OR has(a.service_ids, {service_id:String}))
 )
 WHERE (empty({statuses:Array(String)}) OR has({statuses:Array(String)}, analyst_status))
@@ -590,8 +597,7 @@ ALERT_GET_SQL = """
 SELECT alert_id, schema_version, rule_id, rule_version, rule_title, severity, confidence,
        asset_id, asset_type, group_key, entities, summary, first_seen, last_seen, window_start,
        window_end, event_count, evidence_event_ids, evidence_truncated, features,
-       mitre_techniques, simulation_run_ids, created_at, updated_at, detector_version,
-       service_ids
+       mitre_techniques, created_at, updated_at, detector_version, service_ids
 FROM extorq.alerts FINAL
 WHERE alert_id = {alert_id:String}
 LIMIT 1
@@ -628,10 +634,19 @@ GROUP BY asset_id
 LIMIT 5000
 """
 
+# The detector writes associations before publishing the corresponding alert row.
 EVIDENCE_REFS_SQL = """
-SELECT event_id, role, added_at
-FROM extorq.alert_evidence FINAL
-WHERE alert_id = {alert_id:String}
+SELECT event_id, role, added_at, event_time
+FROM
+(
+    SELECT event_id, role, added_at, event_time
+    FROM extorq.alert_evidence
+    WHERE alert_id = {alert_id:String}
+      AND added_at <=
+          (SELECT max(updated_at) FROM extorq.v_alerts WHERE alert_id = {alert_id:String})
+    ORDER BY event_id, added_at DESC
+    LIMIT 1 BY event_id
+)
 ORDER BY role = 'trigger' DESC, added_at, event_id
 LIMIT {limit:UInt32}
 """
@@ -640,7 +655,10 @@ EVIDENCE_TOTAL_SQL = """
 SELECT uniqExact(event_id) AS total
 FROM
 (
-    SELECT event_id FROM extorq.alert_evidence WHERE alert_id = {alert_id:String}
+    SELECT event_id FROM extorq.alert_evidence
+    WHERE alert_id = {alert_id:String}
+      AND added_at <=
+          (SELECT max(updated_at) FROM extorq.v_alerts WHERE alert_id = {alert_id:String})
     UNION ALL
     SELECT arrayJoin({array_ids:Array(String)}) AS event_id
 )
@@ -655,7 +673,7 @@ SELECT event_id, event_type, category, asset_id, asset_type, source_type, collec
        k8s_pod_uid, k8s_container, k8s_container_id, k8s_verb, k8s_resource, k8s_object_name,
        k8s_response_code, k8s_user, k8s_audit_id, gh_repository, gh_commit_sha,
        gh_workflow_path, gh_workflow_run_id, gh_actor_login, service_id, service_name,
-       service_instance_id, adapter_id, simulation_run_id, scenario_id, message, attributes
+       service_instance_id, adapter_id, message, attributes
 FROM extorq.events
 WHERE event_id IN {event_ids:Array(String)}
 ORDER BY event_id, ingested_time DESC
@@ -672,7 +690,7 @@ SELECT event_id, event_type, category, asset_id, asset_type, source_type, collec
        k8s_pod_uid, k8s_container, k8s_container_id, k8s_verb, k8s_resource, k8s_object_name,
        k8s_response_code, k8s_user, k8s_audit_id, gh_repository, gh_commit_sha,
        gh_workflow_path, gh_workflow_run_id, gh_actor_login, service_id, service_name,
-       service_instance_id, adapter_id, simulation_run_id, scenario_id, message
+       service_instance_id, adapter_id, message
 FROM extorq.events
 WHERE event_time >= {since:DateTime64(3, 'UTC')}
   AND event_time < {until:DateTime64(3, 'UTC')}
@@ -687,7 +705,6 @@ WHERE event_time >= {since:DateTime64(3, 'UTC')}
        OR k8s_user = {actor:String}
        OR gh_actor_login = {actor:String})
   AND (empty({src_ip:String}) OR src_ip = {src_ip:String} OR has(k8s_source_ips, {src_ip:String}))
-  AND (empty({simulation_run_id:String}) OR simulation_run_id = {simulation_run_id:String})
   AND (empty({service_id:String}) OR service_id = {service_id:String})
   AND (empty({scope_asset:String})
        OR asset_id = {scope_asset:String}
@@ -706,9 +723,10 @@ LIMIT 1
 """
 
 ALERTS_CITING_EVENT_SQL = """
-SELECT DISTINCT alert_id
-FROM extorq.alert_evidence
-WHERE event_id = {event_id:String}
+SELECT DISTINCT ae.alert_id AS alert_id
+FROM extorq.alert_evidence AS ae
+INNER JOIN extorq.v_alerts AS a ON ae.alert_id = a.alert_id
+WHERE ae.event_id = {event_id:String} AND ae.added_at <= a.updated_at
 ORDER BY alert_id
 LIMIT {limit:UInt32}
 """
@@ -824,7 +842,7 @@ SERVICES_LIST_SQL = """
 SELECT service_id, asset_id, service_kind, service_key, name, category, product, version,
        discovered_via, adapter_id, adapter_support, monitoring_status, coverage_note,
        telemetry_sources, endpoints, config_refs, instance_count, last_telemetry_at,
-       first_seen, last_seen, present, observed_by
+       first_seen, last_seen, present, observed_by, attributes
 FROM extorq.v_services
 WHERE (empty({asset_id:String}) OR asset_id = {asset_id:String})
   AND (empty({service_kind:String}) OR service_kind = {service_kind:String})
@@ -878,7 +896,7 @@ SERVICES_BY_ID_SQL = """
 SELECT service_id, asset_id, service_kind, service_key, name, category, product, version,
        discovered_via, adapter_id, adapter_support, monitoring_status, coverage_note,
        telemetry_sources, endpoints, config_refs, instance_count, last_telemetry_at,
-       first_seen, last_seen, present, observed_by
+       first_seen, last_seen, present, observed_by, attributes
 FROM extorq.v_services
 WHERE has({service_ids:Array(String)}, service_id)
 ORDER BY asset_id, service_kind, name, service_id, last_seen DESC
@@ -1172,6 +1190,7 @@ class ClickHouseRepository:
             "scanner": filters.scanner,
             "category": filters.category,
             "service_id": filters.service_id,
+            "scope_asset": filters.scope_asset,
         }
         if self.findings_lifecycle_available():
             lc_params = {**params, "states": list(filters.states)}
@@ -1303,7 +1322,6 @@ class ClickHouseRepository:
             "severities": list(filters.severities),
             "statuses": list(filters.statuses),
             "open_only": 1 if filters.open_only else 0,
-            "simulation_run_id": filters.simulation_run_id,
             "service_id": filters.service_id,
         }
 
@@ -1366,7 +1384,6 @@ class ClickHouseRepository:
             "outcome": filters.outcome,
             "actor": filters.actor,
             "src_ip": filters.src_ip,
-            "simulation_run_id": filters.simulation_run_id,
             "service_id": filters.service_id,
             "scope_asset": filters.scope_asset,
             "limit": limit,

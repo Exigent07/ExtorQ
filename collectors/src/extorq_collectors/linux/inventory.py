@@ -1,4 +1,4 @@
-"""Inventory snapshots of the lab VM -> snapshot items, diff events and InventoryItems.
+"""Inventory snapshots of the Linux host -> snapshot items, diff events and InventoryItems.
 
 The dispatch boundary's ``inventory`` and ``packages`` documents are turned into flat,
 stable item maps per category. The SDK snapshot helper (``ctx.diff_snapshot``) diffs
@@ -19,10 +19,23 @@ packages               package.installed / package.removed / package.upgraded
 =====================  ==========================================================
 
 The first (baseline) snapshot of a category produces no events: a unit that existed
-before ExtorQ looked is not "created". Event identities follow the snapshot-diff
-convention ``<item key>:<change>:<content sha256>`` (identity.event_id), so a re-sent
-diff collapses to the same event. Item contents are flat scalars/lists so the same
-dict is both the diff input and the ``InventoryItem.attributes``.
+before ExtorQ looked is not "created". Removals carry the last known content hash as
+``previous_sha256`` (``sha256`` is absent: nothing exists any more), so a rule keyed on
+``sha256`` never mistakes a deletion for new content.
+
+Accounts: the dispatcher lists ``getpwall()``, which on Ubuntu (``passwd: files systemd``)
+also returns systemd *DynamicUser* identities while their service runs. Those are not
+local accounts: they appear and vanish with the service (``lab-portal`` restarting would
+otherwise read as an account deleted and created, a false VM-003 detection). An account is
+treated as dynamic only with evidence: its uid lies in systemd's dynamic range
+(61184-65519) AND a unit file with ``DynamicUser=yes`` names it (``User=`` or the unit
+name). Dynamic accounts stay in the inventory (``dynamic_user=true``) but produce no
+``account.user.*`` events; an ordinary ``useradd`` in that uid range still does.
+
+Event identities follow the snapshot-diff convention
+``<item key>:<change>:<content sha256>`` (identity.event_id), so a re-sent diff
+collapses to the same event. Item contents are flat scalars/lists so the same dict is
+both the diff input and the ``InventoryItem.attributes``.
 """
 
 from __future__ import annotations
@@ -46,8 +59,7 @@ from extorq.contracts import (
     SourceType,
 )
 from extorq.contracts.identity import canonical_json, sha256_hex
-from extorq.contracts.identity import service_id as make_service_id
-from extorq_collectors.linux.common import ParseContext, build_event, clean
+from extorq_collectors.linux.common import ParseContext, build_event, clean, unit_exec_paths
 from extorq_collectors.linux.discovery import (
     LOCAL_UNIT_DIRS,
     ListenerFact,
@@ -55,9 +67,12 @@ from extorq_collectors.linux.discovery import (
     is_host_cgroup,
     unit_from_cgroup,
 )
+from extorq_collectors.services.base import exposure_of
 
 PARSER_INVENTORY = "linux-inventory-diff"
 NOLOGIN_SHELLS = frozenset({"/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false"})
+#: systemd's uid range for DynamicUser= services (systemd.exec(5), "DynamicUser=").
+DYNAMIC_UID_RANGE = range(61184, 65520)
 
 Item = dict[str, Any]
 Items = dict[str, Item]
@@ -103,7 +118,7 @@ def unit_items(doc: Mapping[str, Any]) -> Items:
         directives: Mapping[str, Any] = (
             raw_directives if isinstance(raw_directives, Mapping) else {}
         )
-        exec_start = [_redacted(str(e)) for e in (unit.get("exec_start") or [])[:4]]
+        exec_start = unit_exec_paths(unit.get("exec_start"))
         item = _flat(
             {
                 "name": unit.get("name"),
@@ -176,17 +191,40 @@ def listener_items(doc: Mapping[str, Any]) -> Items:
     return items
 
 
+def dynamic_user_names(doc: Mapping[str, Any]) -> frozenset[str]:
+    """Account names declared by unit files with ``DynamicUser=yes`` (User= or unit stem)."""
+    names: set[str] = set()
+    for unit in doc.get("systemd_units") or []:
+        if not isinstance(unit, Mapping) or unit.get("role") != "unit":
+            continue
+        directives = unit.get("directives")
+        if not isinstance(directives, Mapping):
+            continue
+        dynamic = [str(v).lower() for v in directives.get("DynamicUser") or []]
+        if not dynamic or dynamic[-1] not in ("yes", "true", "1", "on"):
+            continue
+        user = (directives.get("User") or [None])[-1]
+        stem = str(unit.get("name") or "").removesuffix(".service")
+        names.add(str(user) if user else stem)
+    return frozenset(n for n in names if n)
+
+
 def user_items(doc: Mapping[str, Any]) -> Items:
     items: Items = {}
+    dynamic = dynamic_user_names(doc)
     for user in doc.get("users") or []:
         if isinstance(user, Mapping) and isinstance(user.get("name"), str):
+            uid = user.get("uid")
             items[user["name"]] = _flat(
                 {
-                    "uid": user.get("uid"),
+                    "uid": uid,
                     "gid": user.get("gid"),
                     "home": user.get("home"),
                     "shell": user.get("shell"),
                     "groups": sorted(user.get("groups") or []),
+                    "dynamic_user": True
+                    if isinstance(uid, int) and uid in DYNAMIC_UID_RANGE and user["name"] in dynamic
+                    else None,
                 }
             )
     return items
@@ -262,7 +300,7 @@ def process_items(doc: Mapping[str, Any]) -> Items:
                 "uid": proc.uid,
                 "user": proc.user,
                 "comm": proc.comm,
-                "args": _redacted(proc.args, 256),
+                "executable": _redacted(proc.executable, 1024) if proc.executable else None,
                 "cgroup": proc.cgroup,
                 "unit": proc.unit,
             }
@@ -351,13 +389,20 @@ def unit_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
     changes = [("created", diff.added), ("modified", diff.changed), ("deleted", diff.removed)]
     for change, items in changes:
         for path, item in sorted(items.items()):
+            item = _minimize_saved_unit(item)
             name = item.get("name") or path.rsplit("/", 1)[-1]
             unit_name = name if item.get("role") == "unit" else None
             previous = diff.previous.get(path, {}) if change == "modified" else {}
+            if change == "modified" and _minimize_saved_unit(previous) == item:
+                # Reformatting the inventory on upgrade is not a unit file change.
+                continue
             exec_start = (item.get("exec_start") or [None])[0]
             attrs = {
-                "sha256": item.get("sha256"),
-                "previous_sha256": previous.get("sha256") if previous else None,
+                # A deleted unit has no content any more: its last hash is the previous one.
+                "sha256": item.get("sha256") if change != "deleted" else None,
+                "previous_sha256": previous.get("sha256")
+                if previous
+                else (item.get("sha256") if change == "deleted" else None),
                 "exec_start": exec_start,
                 "vendor_unit": item.get("unit_dir") not in LOCAL_UNIT_DIRS,
                 "unit_dir": item.get("unit_dir"),
@@ -386,10 +431,17 @@ def unit_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
                     message=f"systemd unit {verb}: {path}"
                     + (f" (ExecStart={exec_start})" if exec_start and change != "deleted" else ""),
                     attributes=attrs,
-                    sim_texts=(path, name),
                 )
             )
     return events
+
+
+def _minimize_saved_unit(item: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(item)
+    executables = unit_exec_paths(result.pop("exec_start", None))
+    if executables:
+        result["exec_start"] = executables
+    return result
 
 
 def enablement_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
@@ -418,7 +470,6 @@ def enablement_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
                     "link_target": item.get("link_target"),
                     "subject_service_id": dctx.subject_service_id(unit),
                 },
-                sim_texts=(unit,),
             )
         )
     return events
@@ -453,6 +504,12 @@ def listener_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
                     message=f"listener {change}: {item.get('proto')} {address or '*'}:"
                     f"{item.get('port')}" + (f" ({unit})" if unit else " (owner unknown)"),
                     attributes={
+                        "bind_address": address,
+                        # Contract ServiceEndpoint vocabulary: any (all interfaces) | loopback
+                        # | private | unknown; identical on macOS.
+                        "exposure": exposure_of(address),
+                        "port": item.get("port"),
+                        "protocol": item.get("proto"),
                         "cgroup": item.get("cgroup"),
                         "unit": unit,
                         "socket_uid": item.get("socket_uid"),
@@ -467,9 +524,12 @@ def listener_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
 
 
 def user_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
+    """``account.user.created`` / ``account.user.deleted`` (systemd dynamic users excluded)."""
     events: list[SecurityEvent] = []
     for change, items in (("created", diff.added), ("deleted", diff.removed)):
         for name, item in sorted(items.items()):
+            if item.get("dynamic_user"):
+                continue  # a DynamicUser service started or stopped: not an account change
             shell = item.get("shell")
             events.append(
                 _event(
@@ -496,7 +556,6 @@ def user_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
                         "groups": item.get("groups"),
                         "interactive_shell": shell not in NOLOGIN_SHELLS if shell else None,
                     },
-                    sim_texts=(name,),
                 )
             )
     return events
@@ -524,13 +583,14 @@ def cron_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
                     message=f"cron configuration {change}: {path}",
                     attributes={
                         "change": change,
-                        "sha256": item.get("sha256"),
-                        "previous_sha256": previous.get("sha256") if previous else None,
+                        "sha256": item.get("sha256") if change != "removed" else None,
+                        "previous_sha256": previous.get("sha256")
+                        if previous
+                        else (item.get("sha256") if change == "removed" else None),
                         "readable": item.get("readable"),
                         "file_mode": item.get("mode"),
                         "owner_uid": item.get("owner_uid"),
                     },
-                    sim_texts=(path,),
                 )
             )
     return events
@@ -549,8 +609,10 @@ def file_events(
             previous = diff.previous.get(path, {}) if change == "modified" else {}
             attrs: dict[str, Any] = {
                 "change": change,
-                "sha256": item.get("sha256"),
-                "previous_sha256": previous.get("sha256") if previous else None,
+                "sha256": item.get("sha256") if change != "removed" else None,
+                "previous_sha256": previous.get("sha256")
+                if previous
+                else (item.get("sha256") if change == "removed" else None),
                 "readable": item.get("readable"),
                 "file_mode": item.get("mode"),
                 "previous_file_mode": previous.get("mode") if previous else None,
@@ -570,7 +632,6 @@ def file_events(
                     resource=Resource(type="file", name=clean(path.rsplit("/", 1)[-1]), path=path),
                     message=f"sensitive file {change}: {path}",
                     attributes=attrs,
-                    sim_texts=(path,),
                 )
             )
     return events
@@ -626,7 +687,6 @@ def package_events(diff: Any, dctx: DiffContext) -> list[SecurityEvent]:
                         "source_name": item.get("source_name"),
                         "dpkg_status": item.get("status"),
                     },
-                    sim_texts=(name,),
                 )
             )
     return events
@@ -666,7 +726,7 @@ def inventory_records(
                 asset_id=asset_id,
                 item_type=item_type,
                 item_key=item_key(category, key)[:2048],
-                attributes=item,
+                attributes=_minimize_saved_unit(item) if category == "units" else item,
                 snapshot_id=snapshot_id,
                 observed_at=observed_at,
                 present=False,
@@ -674,17 +734,3 @@ def inventory_records(
             )
         )
     return records
-
-
-def services_by_unit(
-    asset_id: str, units: list[str], names: Mapping[str, str], adapters: Mapping[str, str | None]
-) -> dict[str, ServiceRef]:
-    """ServiceRefs for discovered host services keyed by unit name."""
-    refs: dict[str, ServiceRef] = {}
-    for unit in units:
-        refs[unit] = ServiceRef(
-            service_id=make_service_id(asset_id, "host_service", unit),
-            name=names.get(unit, unit)[:256],
-            adapter_id=adapters.get(unit),
-        )
-    return refs

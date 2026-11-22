@@ -1,28 +1,28 @@
-"""Mapping of validated contract models to ClickHouse rows (0001 + 0004 column contract).
+"""Mapping of validated contract models to ClickHouse rows (contract schema 2.0).
 
 ``to_row(kind, model, producer_id=..., batch_id=..., ingested_at=...)`` returns a
-``dict`` whose keys are exactly the columns of ``TABLE_BY_KIND[kind]`` in
-``infra/clickhouse/migrations/0001_core_tables.sql`` plus the service-model
-columns added by ``0004_services.sql`` (contract schema 1.1). Values are Python objects
-accepted by clickhouse-connect's typed insert (aware UTC ``datetime`` for
-``DateTime64``, ``None`` for ``Nullable``, ``list`` for ``Array``, ``dict`` for
-``Map``). Rules:
+``dict`` whose keys are exactly the columns of ``TABLE_BY_KIND[kind]`` after every
+migration in ``infra/clickhouse/migrations/`` is applied (``0001`` core tables,
+``0004`` service model, ``0008`` removal of the simulation columns).
+``tests/unit/platform/test_platform_rows.py`` replays the DDL and fails on drift.
+Values are Python objects accepted by clickhouse-connect's typed insert (aware UTC
+``datetime`` for ``DateTime64``, ``None`` for ``Nullable``, ``list`` for ``Array``,
+``dict`` for ``Map``). Rules:
 
 * Unknown stays unknown: absent optional values become ``NULL``; nothing is
   substituted.
 * JSON-bearing columns hold :func:`extorq.contracts.identity.canonical_json`.
-* ``payload`` (events) is the canonical JSON of the whole validated model.
+* ``payload`` (events, alerts) is the canonical JSON of the whole validated model.
 * ``row_version`` formulas follow the DDL comments exactly.
 * Integer columns are range-checked against their ClickHouse type, and every
   string must be encodable as UTF-8, so a record that passes ``to_row`` at the
   gateway can always be inserted by the writer.
 
-Besides the nine ingest kinds, this module provides row builders for
+Besides the eight ingest record kinds, this module provides row builders for
 ``pipeline_health``, ``ingest_quarantine``, ``ingest_audit`` and ``alerts``
-(:func:`alert_to_row`, the full column contract including ``service_ids``; the
-detector owns alert writes).
+(:func:`alert_to_row`; the detector is the only writer of alerts).
 
-Schema 1.1 mapping (``0004_services.sql``):
+Service model mapping (``0004_services.sql``):
 
 * ``Service`` -> ``services`` (``endpoints`` = canonical JSON array of ServiceEndpoint);
 * ``ServiceInstance`` -> ``service_instances`` (field ``user`` -> column ``process_user``);
@@ -32,7 +32,10 @@ Schema 1.1 mapping (``0004_services.sql``):
 * ``PostureFinding.service_id`` -> ``finding_observations.service_id``;
 * ``DetectionAlert.service_ids`` -> ``alerts.service_ids``.
 
-1.0 records (no ``service``) map the new columns to NULL / empty arrays.
+Events without ``service`` map the service columns to NULL. Schema 2.0 has no
+simulation category: rows never carry ``simulation_run_id``, ``scenario_id`` or
+``simulation_run_ids``. Until migration 0008 drops those columns from an existing
+database, ClickHouse fills them with their defaults (NULL / empty array).
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from extorq.contracts.alert import DetectionAlert
+from extorq.contracts.alert import AlertEvidence, DetectionAlert
 from extorq.contracts.asset import Asset, InventoryItem
 from extorq.contracts.event import SecurityEvent
 from extorq.contracts.finding import PostureFinding
@@ -51,7 +54,6 @@ from extorq.contracts.identity import canonical_json
 from extorq.contracts.ingest import RecordKind
 from extorq.contracts.scan import ScanRun, ScanStatus
 from extorq.contracts.service import Service, ServiceInstance
-from extorq.contracts.simulation import SimulationRun, SimulationStatus
 
 #: Target table (in database ``extorq``) for every ingest record kind.
 TABLE_BY_KIND: dict[RecordKind, str] = {
@@ -61,7 +63,6 @@ TABLE_BY_KIND: dict[RecordKind, str] = {
     RecordKind.FINDING: "finding_observations",
     RecordKind.SCAN_RUN: "scan_runs",
     RecordKind.COLLECTOR_HEALTH: "collector_health",
-    RecordKind.SIMULATION_RUN: "simulation_runs",
     RecordKind.SERVICE: "services",
     RecordKind.SERVICE_INSTANCE: "service_instances",
 }
@@ -74,7 +75,6 @@ MODEL_BY_KIND: dict[RecordKind, type[BaseModel]] = {
     RecordKind.FINDING: PostureFinding,
     RecordKind.SCAN_RUN: ScanRun,
     RecordKind.COLLECTOR_HEALTH: CollectorHealth,
-    RecordKind.SIMULATION_RUN: SimulationRun,
     RecordKind.SERVICE: Service,
     RecordKind.SERVICE_INSTANCE: ServiceInstance,
 }
@@ -94,12 +94,6 @@ _SCAN_STATUS_RANK = {
     ScanStatus.PARTIAL: 1,
     ScanStatus.FAILED: 1,
     ScanStatus.SUCCEEDED: 1,
-}
-_SIM_STATUS_RANK = {
-    SimulationStatus.STARTED: 1,
-    SimulationStatus.COMPLETED: 2,
-    SimulationStatus.FAILED: 2,
-    SimulationStatus.CLEANED_UP: 3,
 }
 
 
@@ -157,12 +151,6 @@ def scan_run_row_version(scan: ScanRun) -> int:
     return epoch_ms(reference) * 10 + _SCAN_STATUS_RANK[scan.status]
 
 
-def simulation_run_row_version(run: SimulationRun) -> int:
-    """``status_rank * 10^13 + epoch_ms(coalesce(finished_at, started_at))`` (0001 DDL)."""
-    reference = run.finished_at or run.started_at
-    return _SIM_STATUS_RANK[run.status] * 10**13 + epoch_ms(reference)
-
-
 def _check_utf8(row: dict[str, Any]) -> None:
     """Reject strings that cannot be encoded (e.g. lone surrogates from JSON escapes)."""
     for column, value in row.items():
@@ -189,14 +177,9 @@ def _check_utf8(row: dict[str, Any]) -> None:
 def event_to_row(
     event: SecurityEvent, *, producer_id: str, batch_id: str, ingested_at: datetime
 ) -> dict[str, Any]:
+    """``SecurityEvent`` -> ``extorq.events`` (flattened nested objects + canonical payload)."""
     actor, resource, net = event.actor, event.resource, event.network
-    proc, http, k8s, gh, sim = (
-        event.process,
-        event.http,
-        event.kubernetes,
-        event.github,
-        event.simulation,
-    )
+    proc, http, k8s, gh = event.process, event.http, event.kubernetes, event.github
     prov, svc = event.provenance, event.service
     return {
         "event_id": event.event_id,
@@ -265,8 +248,6 @@ def event_to_row(
         "service_name": svc.name if svc else None,
         "service_instance_id": svc.instance_id if svc else None,
         "adapter_id": svc.adapter_id if svc else None,
-        "simulation_run_id": sim.run_id if sim else None,
-        "scenario_id": sim.scenario_id if sim else None,
         "message": event.message,
         "attributes": canonical_json(event.attributes),
         "labels": dict(event.labels),
@@ -283,6 +264,7 @@ def event_to_row(
 
 
 def asset_to_row(asset: Asset, *, producer_id: str, ingested_at: datetime) -> dict[str, Any]:
+    """``Asset`` -> ``extorq.assets`` (latest state per ``asset_id``: read ``v_assets``)."""
     return {
         "asset_id": asset.asset_id,
         "asset_type": _enum(asset.asset_type),
@@ -305,6 +287,7 @@ def asset_to_row(asset: Asset, *, producer_id: str, ingested_at: datetime) -> di
 def inventory_item_to_row(
     item: InventoryItem, *, producer_id: str, ingested_at: datetime
 ) -> dict[str, Any]:
+    """``InventoryItem`` -> ``extorq.inventory_items`` (``present`` 0 marks a tombstone)."""
     return {
         "asset_id": item.asset_id,
         "item_type": _enum(item.item_type),
@@ -322,6 +305,7 @@ def inventory_item_to_row(
 def finding_to_row(
     finding: PostureFinding, *, producer_id: str, ingested_at: datetime
 ) -> dict[str, Any]:
+    """``PostureFinding`` -> ``extorq.finding_observations`` (one row per scan observation)."""
     res, pkg, risk = finding.resource, finding.package, finding.accepted_risk
     return {
         "finding_id": finding.finding_id,
@@ -357,6 +341,7 @@ def finding_to_row(
 
 
 def scan_run_to_row(scan: ScanRun, *, producer_id: str, ingested_at: datetime) -> dict[str, Any]:
+    """``ScanRun`` -> ``extorq.scan_runs``; ``row_version`` lets a finished run replace RUNNING."""
     cov = scan.coverage
     return {
         "scan_run_id": scan.scan_run_id,
@@ -384,6 +369,7 @@ def scan_run_to_row(scan: ScanRun, *, producer_id: str, ingested_at: datetime) -
 def collector_health_to_row(
     health: CollectorHealth, *, producer_id: str, ingested_at: datetime
 ) -> dict[str, Any]:
+    """``CollectorHealth`` -> ``extorq.collector_health`` (append-only; ``v_collector_latest``)."""
     return {
         "collector_id": health.collector_id,
         "collector_type": health.collector_type,
@@ -401,26 +387,6 @@ def collector_health_to_row(
         "collector_version": health.collector_version,
         "interval_seconds": _uint(health.interval_seconds, 32, "interval_seconds"),
         "details": canonical_json(health.details),
-        "producer_id": producer_id,
-        "ingested_at": _req_time(ingested_at, "ingested_at"),
-    }
-
-
-def simulation_run_to_row(
-    run: SimulationRun, *, producer_id: str, ingested_at: datetime
-) -> dict[str, Any]:
-    return {
-        "run_id": run.run_id,
-        "scenario_id": run.scenario_id,
-        "asset_id": run.asset_id,
-        "status": _enum(run.status),
-        "started_at": _req_time(run.started_at, "started_at"),
-        "finished_at": _time(run.finished_at, "finished_at"),
-        "operator": run.operator,
-        "description": run.description,
-        "expected_rule_ids": list(run.expected_rule_ids),
-        "notes": list(run.notes),
-        "row_version": _uint(simulation_run_row_version(run), 64, "row_version"),
         "producer_id": producer_id,
         "ingested_at": _req_time(ingested_at, "ingested_at"),
     }
@@ -526,8 +492,6 @@ def to_row(
         row = scan_run_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
     elif isinstance(model, CollectorHealth):
         row = collector_health_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
-    elif isinstance(model, SimulationRun):
-        row = simulation_run_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
     elif isinstance(model, Service):
         row = service_to_row(model, producer_id=producer_id, ingested_at=ingested_at)
     elif isinstance(model, ServiceInstance):
@@ -542,6 +506,7 @@ def to_row(
 
 
 def pipeline_health_to_row(health: PipelineHealth) -> dict[str, Any]:
+    """``PipelineHealth`` of the gateway or writer -> ``extorq.pipeline_health``."""
     row = {
         "component": health.component,
         "instance": health.instance,
@@ -575,6 +540,7 @@ def quarantine_row(
     payload_excerpt: str,
     payload_sha256: str,
 ) -> dict[str, Any]:
+    """One quarantined record -> ``extorq.ingest_quarantine`` (excerpt already redacted)."""
     row = {
         "quarantine_id": quarantine_id,
         "received_at": _req_time(received_at, "received_at"),
@@ -601,6 +567,7 @@ def audit_row(
     reason: str,
     path: str,
 ) -> dict[str, Any]:
+    """One refused request (401/403) -> ``extorq.ingest_audit`` (never the request body)."""
     row = {
         "audit_id": audit_id,
         "occurred_at": _req_time(occurred_at, "occurred_at"),
@@ -616,7 +583,7 @@ def audit_row(
 
 
 def alert_to_row(alert: DetectionAlert) -> dict[str, Any]:
-    """``DetectionAlert`` -> ``extorq.alerts`` (0001 + ``service_ids`` from 0004).
+    """``DetectionAlert`` -> ``extorq.alerts`` (0001 + ``service_ids`` from 0004, schema 2.0).
 
     Shared helper for the detector (the only writer of alerts, PLAN §3 invariant 4):
     ``payload`` is the canonical JSON of the validated model; ``service_ids`` lists the
@@ -645,7 +612,6 @@ def alert_to_row(alert: DetectionAlert) -> dict[str, Any]:
         "evidence_truncated": 1 if alert.evidence_truncated else 0,
         "features": canonical_json(alert.features),
         "mitre_techniques": list(alert.mitre_techniques),
-        "simulation_run_ids": list(alert.simulation_run_ids),
         "created_at": _req_time(alert.created_at, "created_at"),
         "updated_at": _req_time(alert.updated_at, "updated_at"),
         "detector_version": alert.detector_version,
@@ -653,3 +619,14 @@ def alert_to_row(alert: DetectionAlert) -> dict[str, Any]:
     }
     _check_utf8(row)
     return row
+
+
+def alert_evidence_to_row(evidence: AlertEvidence) -> dict[str, Any]:
+    """``AlertEvidence`` -> ``extorq.alert_evidence`` with optional source event time."""
+    return {
+        "alert_id": evidence.alert_id,
+        "event_id": evidence.event_id,
+        "role": evidence.role.value,
+        "added_at": evidence.added_at,
+        "event_time": evidence.event_time,
+    }

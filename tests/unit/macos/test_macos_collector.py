@@ -23,6 +23,7 @@ from macos_helpers import (
 
 from extorq_collectors.macos import collector as collector_mod
 from extorq_collectors.macos import launchd as launchd_mod
+from extorq_collectors.macos import software as software_mod
 from extorq_collectors.macos.collector import (
     KV_SOURCES,
     UNIFIED_LOG_CHECKPOINT,
@@ -104,6 +105,9 @@ class Harness:
         self.daemons = copy_fixture_dir(
             "launchd/system_daemons", tmp_path / "Library/LaunchDaemons"
         )
+        # Application folder of the software source (never the real /Applications).
+        self.applications = tmp_path / "Applications"
+        self.applications.mkdir()
         apple = tmp_path / "apple/System/Library/LaunchDaemons"
         apple.mkdir(parents=True)
         for name in (
@@ -122,6 +126,7 @@ class Harness:
                 launchd_mod.Location(self.agents, "user", "agent"),
                 launchd_mod.Location(self.daemons, "system", "daemon"),
             ],
+            app_locations=[software_mod.AppLocation(self.applications, "system")],
             apple_definitions_root=tmp_path / "apple",
             system_count_dirs=(str(tmp_path / "none-a"), str(tmp_path / "none-b")),
             require_macos=False,
@@ -212,11 +217,11 @@ def test_first_cycle_is_a_baseline_with_complete_records(tmp_path: Path) -> None
 def test_persistence_changes_after_baseline(tmp_path: Path) -> None:
     h = Harness(tmp_path)
     h.cycle()
-    sim = h.agents / "com.extorq.sim.abcd1234ef.plist"
-    sim.write_bytes(
+    test_agent = h.agents / "com.extorq.test.abcd1234ef.plist"
+    test_agent.write_bytes(
         plistlib.dumps(
             {
-                "Label": "com.extorq.sim.abcd1234ef",
+                "Label": "com.extorq.test.abcd1234ef",
                 "ProgramArguments": ["/usr/bin/true"],
                 "RunAtLoad": False,
             }
@@ -231,12 +236,12 @@ def test_persistence_changes_after_baseline(tmp_path: Path) -> None:
         for kind, d in records
         if kind == "event" and d["event_type"].startswith("persistence.")
     }
-    created = events[("persistence.launchd.item_created", "com.extorq.sim.abcd1234ef.plist")]
+    created = events[("persistence.launchd.item_created", "com.extorq.test.abcd1234ef.plist")]
     assert (
         created["attributes"]["scope"] == "user" and created["attributes"]["run_at_load"] is False
     )
-    assert created["simulation"]["run_id"] == "abcd1234ef"
-    assert created["service"]["name"] == "com.extorq.sim.abcd1234ef"
+    assert "simulation" not in created and created["labels"] == {}
+    assert created["service"]["name"] == "com.extorq.test.abcd1234ef"
     modified = events[("persistence.launchd.item_modified", "com.example.thirdparty.redis.plist")]
     assert (
         modified["attributes"]["allowlisted"] is True and modified["attributes"]["previous_sha256"]
@@ -264,7 +269,7 @@ def test_failing_source_is_isolated_and_never_advances_its_snapshot(
     (h.agents / "com.example.thirdparty.mysql.plist").unlink()
 
     def broken(*_args: Any, **_kwargs: Any) -> Any:
-        raise RuntimeError("simulated failure after the diff was staged")
+        raise RuntimeError("injected failure after the diff was staged")
 
     monkeypatch.setattr(launchd_mod, "tombstone", broken)
     h.runner.add(PS_ARGV, failed(PS_ARGV, 1, b"ps: boom"))
@@ -282,7 +287,15 @@ def test_failing_source_is_isolated_and_never_advances_its_snapshot(
 def test_cycle_fails_only_when_every_due_source_failed(tmp_path: Path) -> None:
     only_log = {
         name: {"enabled": False}
-        for name in ("launchd", "inventory", "posture", "applications", "asset")
+        for name in (
+            "launchd",
+            "listeners",
+            "inventory",
+            "posture",
+            "applications",
+            "software",
+            "asset",
+        )
     }
     h = Harness(tmp_path, settings=only_log)
     h.runner.prefixes.clear()
@@ -396,3 +409,31 @@ def test_label_less_plist_events_reference_the_path_keyed_service(tmp_path: Path
     assert len(modified) == 1
     assert modified[0]["service"]["service_id"] == service_id(ASSET, "host_service", str(path))
     assert modified[0]["service"]["name"] == "com.example.thirdparty.labelless.plist"
+
+
+def test_listener_source_reports_new_and_closed_listeners(tmp_path: Path) -> None:
+    """The 60 s listeners source (MAC-003 input) diffs sockets independently of inventory."""
+    from test_macos_inventory import MAC003_LSOF
+
+    h = Harness(tmp_path)
+    h.cycle()
+    base = fixture_bytes("services/lsof_tcp_services.txt")
+    h.runner.add(LSOF_TCP_LISTEN_ARGV, ok(LSOF_TCP_LISTEN_ARGV, base + MAC003_LSOF.encode()))
+    records = h.cycle()
+    opened = {
+        d["resource"]["name"]: d
+        for kind, d in records
+        if kind == "event" and d["event_type"] == "network.listener.opened"
+    }
+    assert set(opened) == {"tcp:0.0.0.0:48765", "tcp:127.0.0.1:48766"}
+    wide = opened["tcp:0.0.0.0:48765"]["attributes"]
+    assert wide["exposure"] == "any" and wide["listener_method"] == "lsof"
+    assert opened["tcp:127.0.0.1:48766"]["attributes"]["exposure"] == "loopback"
+    h.runner.add(LSOF_TCP_LISTEN_ARGV, ok(LSOF_TCP_LISTEN_ARGV, base))
+    closed = [
+        d["resource"]["name"]
+        for kind, d in h.cycle()
+        if kind == "event" and d["event_type"] == "network.listener.closed"
+    ]
+    assert sorted(closed) == ["tcp:0.0.0.0:48765", "tcp:127.0.0.1:48766"]
+    assert any(s.startswith("listeners_last_run") for s in h.ctx.health_details)

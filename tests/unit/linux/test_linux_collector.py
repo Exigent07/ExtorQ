@@ -222,7 +222,7 @@ def test_vm002_cycle_produces_persistence_and_service_events(
     created = events_of(new, "persistence.systemd.unit_created")[0]
     assert created["service"]["adapter_id"] == "systemd"
     assert created["attributes"]["subject_service_id"] is not None
-    assert created["simulation"]["run_id"] == "0e49c82d82bc"
+    assert "simulation" not in created and created["labels"] == {}
     tombstones = [
         r["data"] for r in new if r["kind"] == "service_instance" and not r["data"]["present"]
     ]

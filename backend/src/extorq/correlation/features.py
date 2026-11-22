@@ -4,7 +4,7 @@ Computed only from the events in the context (evidence + related events that wer
 read), so every value is traceable to stored telemetry. Lists are sorted and bounded,
 strings sanitised; nothing is inferred beyond counting and ordering. Domains:
 
-* common:       relationship counts, source types, services, assets, simulation tag
+* common:       relationship counts, source types, services, assets
 * ssh:          distinct usernames/connections, success after failures, sudo after login
 * http:         4xx/5xx counts, distinct 4xx routes, probe-like routes, app auth failures
 * kubernetes:   Pod Security denials, cluster-admin grants, actors, other 403s
@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
+from datetime import datetime, timedelta
 from typing import Any
 
 from extorq.contracts.alert import DetectionAlert
 from extorq.contracts.context import Relationship, RelationshipType
+from extorq.correlation.config import DEFAULT_SHARED_NAT_IPS
 from extorq.correlation.records import EventRecord
 from extorq.detection import linux_audit
 from extorq.detection._compat import sanitize
@@ -83,35 +85,42 @@ def _common(
         "related_services": len(related_services),
         "cross_service_activity": bool(related_services),
         "related_assets": len(other_assets),
-        "simulation_tagged": bool(alert.simulation_run_ids)
-        or any(e.simulation_run_id for e in evidence),
+        # Fixed and explicit: correlation describes co-occurrence, never cause and effect.
         "causation_established": False,
     }
 
 
-def _ssh(evidence: Sequence[EventRecord], events: Sequence[EventRecord]) -> dict[str, Any]:
+def _ssh(
+    evidence: Sequence[EventRecord], events: Sequence[EventRecord], nat_ips: frozenset[str]
+) -> dict[str, Any]:
     failures = [e for e in evidence if e.event_type in SSH_FAILURE_TYPES]
     if not failures:
         return {}
-    first_failure = min(e.event_time for e in failures)
-    failure_ips = {e.src_ip for e in failures if e.src_ip}
+    latest_failure: dict[tuple[str, str], datetime] = {}
+    for event in sorted(failures, key=lambda e: e.event_time):
+        if event.src_ip and event.src_ip not in nat_ips:
+            latest_failure[(event.asset_id, event.src_ip)] = event.event_time
     successes = [
         e
         for e in events
         if e.event_type == "auth.ssh.login_succeeded"
-        and e.src_ip in failure_ips
-        and e.event_time >= first_failure
+        and e.src_ip is not None
+        and (last := latest_failure.get((e.asset_id, e.src_ip))) is not None
+        and e.event_time > last
     ]
     success_users = {e.actor_name for e in successes if e.actor_name}
-    first_success = min((e.event_time for e in successes), default=None)
-    sudo_after = [
-        e
+    first_success = {
+        (e.asset_id, e.actor_name): e.event_time
+        for e in sorted(successes, key=lambda e: e.event_time, reverse=True)
+        if e.actor_name
+    }
+    sudo_after = any(
+        e.event_type == "auth.sudo.command"
+        and e.actor_name is not None
+        and (first := first_success.get((e.asset_id, e.actor_name))) is not None
+        and e.event_time > first
         for e in events
-        if e.event_type == "auth.sudo.command"
-        and first_success is not None
-        and e.event_time >= first_success
-        and e.actor_name in success_users
-    ]
+    )
     return {
         "ssh_failure_events": len(failures),
         "ssh_distinct_usernames": len({e.actor_name for e in failures if e.actor_name}),
@@ -120,7 +129,7 @@ def _ssh(evidence: Sequence[EventRecord], events: Sequence[EventRecord]) -> dict
         ),
         "ssh_success_after_failures": bool(successes),
         "ssh_success_users": _sorted_bounded(success_users, 8, 64),
-        "sudo_after_login": bool(sudo_after),
+        "sudo_after_login": sudo_after,
     }
 
 
@@ -172,7 +181,7 @@ def _github(evidence: Sequence[EventRecord], events: Sequence[EventRecord]) -> d
     if not gh:
         return {}
     modified = [e for e in gh if e.event_type == "github.workflow.modified"]
-    shas = {e.gh_commit_sha for e in evidence if e.gh_commit_sha}
+    shas = {(e.asset_id, e.gh_commit_sha) for e in evidence if e.gh_commit_sha}
     scopes: set[str] = set()
     for e in modified:
         scopes.update(_str_list(e.attributes.get("added_write_scopes")))
@@ -182,10 +191,10 @@ def _github(evidence: Sequence[EventRecord], events: Sequence[EventRecord]) -> d
         "gh_write_all_added": any(e.attributes.get("write_all_added") is True for e in modified),
         "gh_workflow_runs_for_commit": len(
             {
-                e.gh_workflow_run_id
+                (e.asset_id, e.gh_workflow_run_id)
                 for e in gh
                 if e.event_type == "github.workflow_run.observed"
-                and e.gh_commit_sha in shas
+                and (e.asset_id, e.gh_commit_sha) in shas
                 and e.gh_workflow_run_id is not None
             }
         ),
@@ -196,23 +205,46 @@ def _github(evidence: Sequence[EventRecord], events: Sequence[EventRecord]) -> d
     }
 
 
-def _persistence(evidence: Sequence[EventRecord], events: Sequence[EventRecord]) -> dict[str, Any]:
+def _persistence(
+    evidence: Sequence[EventRecord], events: Sequence[EventRecord], corroboration_seconds: int
+) -> dict[str, Any]:
     changes = [e for e in events if e.event_type.startswith("persistence.")]
     if not changes:
         return {}
     units = {u for e in evidence if (u := e.unit_name())}
-    paths = {e.resource_path for e in changes if e.resource_path}
-    hits = [e for e in events if e.event_type == "file.audit.watch"]
+    paths = {(e.asset_id, e.resource_path) for e in evidence if e.resource_path}
+    changes_that_need_audit = {
+        "persistence.systemd.unit_created",
+        "persistence.systemd.unit_modified",
+    }
+    unit_changes = [
+        e
+        for e in evidence
+        if e.source_type == "linux.inventory" and e.event_type in changes_that_need_audit
+    ]
+    hits = [
+        e for e in events if e.source_type == "linux.auditd" and e.event_type == "file.audit.watch"
+    ]
+    bound = timedelta(seconds=corroboration_seconds)
     # Only successful create/modify syscalls on the changed paths corroborate a change;
     # removals of those paths (e.g. a cleanup's unlinkat) are counted as context only.
     writes = [
         e
         for e in hits
         if linux_audit.is_change(e.attributes, e.resource_path)
-        and linux_audit.written_path(e.attributes, e.resource_path) in paths
+        and e.attributes.get("audit_key") == "extorq_systemd"
+        and (written := linux_audit.written_path(e.attributes, e.resource_path)) is not None
+        and any(
+            e.asset_id == change.asset_id
+            and written == change.resource_path
+            and change.event_time - bound <= e.event_time <= change.event_time
+            for change in unit_changes
+        )
     ]
     removals = [
-        e for e in hits if e.resource_path in paths and linux_audit.is_removal(e.attributes)
+        e
+        for e in hits
+        if (e.asset_id, e.resource_path) in paths and linux_audit.is_removal(e.attributes)
     ]
     return {
         "persistence_changes": len(changes),
@@ -234,14 +266,17 @@ def compute_features(
     evidence: Sequence[EventRecord],
     related: Sequence[EventRecord],
     relationships: Sequence[Relationship],
+    *,
+    nat_ips: frozenset[str] = frozenset(DEFAULT_SHARED_NAT_IPS),
+    corroboration_seconds: int = 120,
 ) -> dict[str, Any]:
     """All feature groups merged into one bounded Attributes mapping."""
     events = [*evidence, *related]
     features: dict[str, Any] = {}
     features.update(_common(evidence, related, relationships, alert))
-    features.update(_ssh(evidence, events))
+    features.update(_ssh(evidence, events, nat_ips))
     features.update(_http(events))
     features.update(_kubernetes(events))
     features.update(_github(evidence, events))
-    features.update(_persistence(evidence, events))
+    features.update(_persistence(evidence, events, corroboration_seconds))
     return coerce_attributes(features)

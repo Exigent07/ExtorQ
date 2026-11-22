@@ -84,9 +84,7 @@ def test_viewer_cannot_mutate_and_nothing_is_written(
     state = client.post(
         f"/api/v1/alerts/{alert_id}/state", headers=viewer, json={"status": "acknowledged"}
     )
-    summary = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=viewer)
     assert state.status_code == 403
-    assert summary.status_code == 403
     assert state.json()["detail"] == "this action requires the analyst role"
     assert repo.writes == []
 

@@ -1,6 +1,7 @@
 # ExtorQ data flow: from collection to visualisation
 
-Owner: agent A. Describes the implemented path and its exact guarantees. Code:
+Owner: platform. Describes the implemented path and its exact guarantees (contract
+schema 2.0). Code:
 `collectors/src/extorq_collectors/sdk/`, `backend/src/extorq/ingest/`,
 `backend/src/extorq/pipeline/`, `backend/src/extorq/storage/`.
 
@@ -19,7 +20,10 @@ collector (SDK) --emit--> SQLite outbox --HTTPS+token, gzip--> ingest gateway
 
 Kubernetes container logs and API audit logs take the same gateway path through the
 OTel Collector DaemonSet (`POST /v1/otlp/v1/logs`, OTLP/HTTP JSON); its exporter
-retries with its own sending queue (B2, `docs/telemetry/kubernetes.md`).
+retries from a node-persistent sending queue. `POST /v1/otlp/v1/metrics` carries
+the Collector's allow-listed delivery counters over a separate exporter. The
+gateway records node and source health through the same durable spool. See
+[Kubernetes telemetry](telemetry/kubernetes.md#31-delivery-health).
 
 ## 1. Collection (collector SDK)
 
@@ -83,10 +87,13 @@ Order of checks (any failure before step 6 answers without storing records):
 4. **Backpressure**: spool depth >= `EXTORQ_SPOOL_MAX_RECORDS` (200 000) or free spool
    disk < 256 MiB -> **503 + `Retry-After: 30`** (checked before reading the body).
 5. **Envelope**: strict JSON (`NaN`/`Infinity` tokens -> 400), `IngestBatch` validation
-   -> 422; > 1000 records -> 413; `producer_id` must equal the token's producer -> 403.
+   -> 422 (including any `schema_version` other than `2.0`); > 1000 records -> 413;
+   `producer_id` must equal the token's producer -> 403.
 6. **Replay**: a known `(producer_id, batch_id)` with identical content returns the stored
    `IngestResult` with `replayed=true` (same content hash required, else 409).
-7. **Per record**, in order: size <= 64 KiB; contract validation; **authorization**
+7. **Per record**, in order: size <= 64 KiB; contract validation (a schema 1.x record
+   or a record of a kind schema 2.0 removed, such as `simulation_run`, is quarantined as
+   `invalid_record`); **authorization**
    (kind, asset pattern, source types; any unauthorized record -> **403 for the whole
    batch**, audited, nothing stored); catalog semantics; time sanity (`event_time`
    more than 1 day in the future -> `time: event_time_in_future`; `event_time` older
@@ -94,29 +101,57 @@ Order of checks (any failure before step 6 answers without storing records):
    ClickHouse's TTL would delete such a row right after a 202; other kinds' timestamps in
    the future -> quarantine); **secret redaction** of free-text fields (event
    `message`/`raw`/`process.command_line`/`http.user_agent`/`http.route`/attribute and
-   label strings; finding, scan, health, simulation and service free text) with the
+   label strings; finding, scan, health and service free text) with the
    count added to `provenance.redaction_count`; storage compatibility (`to_row`);
    identity. Redaction is JSON-safe: key-based rules only replace string values in
    structured text, never `true`/`false`/`null` or (after a quoted key) numbers and
    arrays, so a JSON document stored in an attribute (e.g. a Kubernetes
-   `request_summary` with `"automount_sa_token": false`) stays valid JSON. Service and instance ids must derive from the record's own fields
-   (`identity_mismatch` otherwise, so a producer cannot publish rows under another
-   asset's service id). A failure in any of these quarantines **only that record**; an unexpected
-   exception in one record (identity, serialisation) is also quarantined, never a 500.
+   `request_summary` with `"automount_sa_token": false`) stays valid JSON. Service and
+   instance ids must derive from the record's own fields (`identity_mismatch`
+   otherwise, so a producer cannot publish rows under another asset's service id). A
+   failure in any of these quarantines **only that record**; an unexpected exception in
+   one record (identity, serialisation) is also quarantined, never a 500.
    A `service_instance` without `asset_id` is quarantined (`asset_unattributable`).
-8. **Dedup** by `(kind, record_identity)` against keys remembered for 7 days.
+8. **Deduplication.** A security event receives a server-derived `accepted-event.v2`
+   identity scoped to its authenticated producer, asset, source and event type. The
+   gateway uses the stable native reference where available and otherwise the normalized
+   evidence fingerprint. A matching key and fingerprint is a replay. A matching key
+   with different evidence goes to quarantine as `event_identity_conflict`, with its
+   canonical ID and payload digest. Non-event records retain the existing seven-day
+   `(kind, record_identity)` index.
 9. **Commit**: accepted records, quarantine rows (sanitised, redacted excerpt <= 4 KiB +
-   SHA-256 of the original), dedup keys and the batch result go into the spool in **one
+   SHA-256 of the original), identity receipts and the batch result go into the spool in **one
    transaction**; only then the gateway answers **202**.
+
+The transaction enforces the queue-depth bound again after counting accepted and
+quarantined rows. If the batch would exceed the bound, the transaction rolls back
+and the gateway returns `503`. A later retry can submit the same batch.
+
+The event fingerprint includes normalized evidence, the source observation time
+(`event_time`), and raw evidence hashes when available. Collection time, reporter
+and parser software identifiers, transport metadata and redaction counters do not
+affect the digest. If a source cannot distinguish two byte-equivalent observations
+at the same event time, the fallback collapses them. The identity ledger lives in
+SQLite through the event retention horizon plus the configured future-time allowance.
+Seed historical receipts before resuming producers on an existing database. See
+[identity migration](deployment.md#event-identity-upgrade).
 
 Why 403 for the whole batch: a producer sending records outside its registration is
 misconfigured or compromised; accepting the rest would let it probe the boundary
 silently. The SDK bisects so legitimate records still arrive.
 
 `GET /healthz` (no auth, `{"status":"ok"}` only) and `GET /v1/status` (any producer
-token; spool depth, oldest age, dead letters, counters, schema versions and the
-acceptance window `limits.max_future_seconds` / `limits.event_retention_days`) support
-operations. Every 30 s the gateway writes `PipelineHealth(component="ingest")`.
+token; spool depth, oldest age, dead letters, counters, `schema_version` and
+`accepted_schema_versions` (`["2.0"]`) and the acceptance window
+`limits.max_future_seconds` / `limits.event_retention_days`) support operations. Every
+30 s the gateway writes `PipelineHealth(component="ingest")`.
+
+**Producer registry.** `var/secrets/producers.json` is rebuilt by `make bootstrap` from
+`scripts/bootstrap.py` `PRODUCERS` only, so a retired producer (`simulation-runner`,
+schema 2.0) is never authorized again even when its token file is left on disk
+(bootstrap reports such files by id). A registry written before schema 2.0 still loads:
+kinds the contracts no longer define are dropped and an entry left without kinds is
+skipped (fail closed, logged as `producer_registry_entries_adjusted`).
 
 The retention window is `EXTORQ_EVENT_RETENTION_DAYS` (default 90). It must equal the
 `events` TTL in `0001_core_tables.sql`; `tests/unit/platform/test_platform_gateway.py`
@@ -129,6 +164,13 @@ SQLite on the `spool` volume shared by gateway and writer: WAL journal,
 `synchronous=FULL` (the WAL is fsynced on every commit), `busy_timeout` 10 s, short
 transactions only (never held across network I/O). Tables: `records` (queue),
 `batches` (idempotency results), `dedup` (record keys), `dead_letter`, `counters`.
+
+`extorq spool status` prints the row count of each table; `extorq spool clear --yes`
+empties all of them in one transaction (only with gateway and writer stopped; used by
+`make reset-data`, see [data-model.md](data-model.md#61-clean-slate-make-reset-data-yes1)).
+After a contract upgrade the spool must be drained or cleared before the new writer
+runs: records spooled under an older schema can no longer be decoded and would be
+dead-lettered.
 
 ## 5. Writer (`extorq writer`, identity `extorq_ingest`)
 
@@ -164,7 +206,7 @@ transactions only (never held across network I/O). Tables: `records` (queue),
 | Record integrity under redaction | Redaction replaces secret string values only; JSON booleans, numbers and nulls are never rewritten, so structured attributes stay parseable. |
 | Partial collector failures | Visible as `degraded` (reasons in `last_error` and `details.degraded_reasons`), never reported as `ok`. |
 
-Verified (commands and results in `docs/team/status/A.md`):
+Verified (commands and results in `docs/team/status/A.md` and `docs/team/status/P.md`):
 `tests/failure/test_failure_durability.py` (ClickHouse stopped: 100/100 buffered events
 delivered after restart; gateway and writer restarted during an 800-record stream:
 800/800 delivered), `tests/integration/platform/test_platform_live.py` (round trip,
@@ -173,11 +215,12 @@ redaction on the deployed gateway), and the unit suites under `tests/unit/platfo
 
 ## 7. Downstream (owned by other teams)
 
-* **Detection** (C2): versioned SQL rules run by the detector as `extorq_rules_ro`,
+* **Detection**: versioned SQL rules run by the detector as `extorq_rules_ro`,
   alerts written as `extorq_detect` only; correlation builds InvestigationContexts.
-* **AI** (E): advisory `ai_assessments` only; disabled unless enabled by the operator.
-* **API** (D1) reads as `extorq_api_ro` and writes analyst state as `extorq_api_writer`;
-  the **console** (D2) talks only to the API; **Grafana** reads as `extorq_grafana`
+* **AI**: Jev triage in the ai-worker writes advisory `ai_assessments` only; disabled
+  unless the operator enables it (`make up-demo`). There is no other AI provider.
+* **API** reads as `extorq_api_ro` and writes analyst state as `extorq_api_writer`;
+  the **console** talks only to the API; **Grafana** reads as `extorq_grafana`
   (no `events.raw`/`payload`).
 
 ## 8. Observability of the pipeline
@@ -185,7 +228,12 @@ redaction on the deployed gateway), and the unit suites under `tests/unit/platfo
 `extorq.pipeline_health` / `v_pipeline_latest` (ingest, writer, detector, ai-worker),
 `extorq.collector_health` / `v_collector_latest`, `extorq.ingest_quarantine`,
 `extorq.ingest_audit`, `GET /v1/status`, `make collectors-status` (background runner +
-local outboxes, read-only) and `make demo-check` (read-only readiness report: services,
-endpoints, the five mandatory scenarios with evidence resolved to stored events, collector
-freshness, rule runs; works without the debug proxy by querying inside the `api`
-container).
+local outboxes, read-only) and `make demo-check`, a read-only readiness report: compose
+services and endpoints, telemetry per asset class (fresh state records for the macOS
+host, the Ubuntu VM, the Kubernetes cluster and the GitHub repository; fresh events where
+the sources never go quiet: Linux journald, Kubernetes audit), collector health and
+freshness, rule runs (every rule ran in the last 15 min, no failure in 24 h), quarantined
+records and refused requests (warnings), and the newest detection-test report per asset
+(`var/reports/detection-tests-*.json`: every positive test alerted, every negative
+control stayed silent, at least five distinct tests per asset). It works without the
+debug proxy by querying inside the `api` container.

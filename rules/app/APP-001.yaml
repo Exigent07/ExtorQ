@@ -1,14 +1,16 @@
 rule_id: APP-001
-version: 1.0.0
+version: 1.1.0
 title: Burst of failed web application logins
 description: >-
   An instrumented web application reports repeated failed logins: at least 5 for one user
   name within five minutes (password guessing against one account), or at least 5 from one
   source address across at least 3 user names (password spraying). Evidence is the
-  application's own structured authentication events (the lab portal on the Linux VM and
-  in Kubernetes), not inferred from HTTP status codes.
+  application's own structured authentication events (the web application on the Linux VM,
+  and the same application deployed in Kubernetes), never inferred from HTTP status codes.
+  Confidence: high when every source address is known and none is a shared NAT/gateway
+  address; medium otherwise (the attempts are real, their origin is not attributable).
 severity: medium
-status: experimental
+status: stable
 mitre_techniques: [T1110.001, T1110.003]
 asset_types: [linux_host, kubernetes_cluster]
 requires:
@@ -31,19 +33,26 @@ params:
   min_spray_users: 3
   shared_nat_ips: ["10.0.2.2", "172.18.0.1", "10.244.0.1", "127.0.0.1", "::1"]
 false_positives:
-  - A user who forgot a password and retries, or a client with stale saved credentials.
   - >-
-    Automated tests or monitoring that log in with a wrong or rotated credential.
+    A user who forgot a password and retries, or a client with stale saved credentials.
+    Handling: five failures for one user in five minutes is above ordinary retrying; a
+    single failure followed by a success never alerts.
   - >-
-    Behind a shared NAT/proxy address many users share one source (spraying variant,
-    confidence medium); in this lab every request from the Mac shares one address.
+    Automated tests or monitoring that log in with a wrong or rotated credential. Handling:
+    no user or address allowlist (both are attacker-supplied); the alert lists the user
+    names, sources and failure reasons so the automation is recognisable.
+  - >-
+    Behind a shared NAT/proxy address many users share one source (spraying variant).
+    Handling: confidence medium for configured shared addresses. Every request from the Mac
+    reaches the VM application from 10.0.2.2 and the cluster application from 10.244.0.1.
 blind_spots:
-  - Applications that do not emit structured authentication events (only the lab app does).
+  - Applications that do not emit structured authentication events.
   - >-
     Slow guessing below 5 attempts per 5 minutes per user, and spraying with fewer than 3
     user names per source.
-  - User names are attacker-supplied text; guessing with many distinct names from many
-    sources is only visible as HTTP-level activity.
+  - >-
+    User names are attacker-supplied text; guessing with many distinct names from many
+    sources is only visible as HTTP-level activity (HTTP-001 for probe paths).
 references:
   - https://attack.mitre.org/techniques/T1110/001/
   - https://attack.mitre.org/techniques/T1110/003/
@@ -52,20 +61,37 @@ summary_template: >-
   {failed_logins} failed logins ({variant}) to {app} on {asset_id}: users {users}; sources
   {src_ips}; reasons {reasons}; shared NAT source: {src_ip_shared_nat}
 tests:
-  - name: guessing-like-b1-scenario
-    description: Shape of B1's http_probe.sh, 5 failed logins for lab-admin via 10.0.2.2.
-    fixture: tests/APP-001/positive_guessing_nat_sim.jsonl
+  - name: matrix-vm-app-failed-logins
+    description: >-
+      Matrix positive (Linux): six failed POST /login for the demo account lab-admin on the
+      VM web application, from the QEMU gateway 10.0.2.2: guessing, medium.
+    fixture: tests/APP-001/positive_matrix_vm_guessing.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    entities: {variant: guessing, user: lab-admin}
+  - name: matrix-cluster-app-failed-logins
+    description: >-
+      Matrix positive (Kubernetes): six failed logins to the same application in the cluster
+      through the NodePort; the pod sees the kind gateway 10.244.0.1: guessing, medium.
+    fixture: tests/APP-001/positive_matrix_cluster_guessing.jsonl
     expect: alert
     alerts: 1
     confidence: medium
     entities: {variant: guessing, user: lab-admin}
   - name: spraying-from-external-source
-    description: Six user names tried from one documentation-range address in a Kubernetes app.
+    description: Six user names tried from one documentation-range address in the cluster app.
     fixture: tests/APP-001/positive_spraying_k8s.jsonl
     expect: alert
     alerts: 1
     confidence: high
     entities: {variant: spraying, src_ip: 203.0.113.80}
+  - name: matrix-control-one-failure-then-success
+    description: >-
+      Matrix negative control: one failed login from the Mac and one successful login made
+      inside the VM on the VM application, and a successful login on the cluster application.
+    fixture: tests/APP-001/negative_matrix_failure_then_success.jsonl
+    expect: no_alert
   - name: below-threshold-and-slow
     description: Four failures in one minute, and six failures spread over half an hour.
     fixture: tests/APP-001/negative_below_and_slow.jsonl

@@ -78,8 +78,8 @@ def test_policy_rejects_non_list_input() -> None:
 def test_run_command_success_and_output_bound() -> None:
     result = run_command(["/usr/bin/sw_vers"], timeout=10)
     assert result.ok and b"ProductVersion" in result.stdout
-    bounded = run_command(["/bin/ps", "-axww", "-o", "pid=,comm="], timeout=10, max_stdout=64)
-    assert bounded.stdout_truncated and not bounded.ok and len(bounded.stdout) <= 64
+    bounded = run_command(["/usr/bin/sw_vers"], timeout=10, max_stdout=16)
+    assert bounded.stdout_truncated and not bounded.ok and len(bounded.stdout) <= 16
     assert "output limit exceeded" in bounded.summary()
 
 

@@ -46,6 +46,19 @@
         <readonly_restricts_set_role>true</readonly_restricts_set_role>
     </access_control_improvements>
 
+    <!-- Native recovery archives are staged on the private ClickHouse volume. -->
+    <storage_configuration>
+        <disks>
+            <extorq_backups>
+                <type>local</type>
+                <path>/var/lib/clickhouse/extorq-backups/</path>
+            </extorq_backups>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>extorq_backups</allowed_disk>
+    </backups>
+
     <!-- Never phone home. -->
     <send_crash_reports>
         <enabled>false</enabled>

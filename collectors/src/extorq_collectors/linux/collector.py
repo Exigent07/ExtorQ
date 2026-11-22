@@ -1,4 +1,4 @@
-"""LinuxSSHCollector: agentless collection from the lab VM through the dispatch boundary.
+"""LinuxSSHCollector: agentless collection from a Linux host through the dispatch boundary.
 
 Configured in ``config/collectors/linux.yaml`` (no secrets there; the SSH key and the
 pinned known_hosts file are referenced by path). Every cycle, each step reads one

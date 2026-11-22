@@ -40,3 +40,12 @@ description = "Public OpenPGP v4 fingerprint in the official python image's GPG_
 targetRules = ["generic-api-key"]
 regexTarget = "line"
 regexes = ['''GPG_KEY=[0-9A-F]{40}(?:[^0-9A-Za-z]|$)''']
+
+[[allowlists]]
+description = "Rule-fixture generator: 'audit_id_key=\"<label>\"' names an audit-event identity label, not a credential (tests/rules/generate_fixtures.py)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)tests/rules/generate_fixtures\.py$''']
+regexTarget = "line"
+regexes = ['''audit_id_key="[a-z0-9-]+",\s*$''']
+

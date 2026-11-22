@@ -1,8 +1,9 @@
 """Builders for ExtorQ contract records from GitHub API data.
 
 All GitHub-sourced text (commit messages, branch names, workflow names, logins,
-alert titles) is attacker-controlled: it is stripped of control characters,
-bounded and passed through secret redaction before it enters a record. Unknown
+alert titles, file patches) is attacker-controlled: it is stripped of control
+characters, bounded and passed through the platform secret redactor
+(:func:`extorq.common.redaction.redact_text`) before it enters a record. Unknown
 values stay ``None``.
 """
 
@@ -26,7 +27,6 @@ from extorq.contracts import (
     Provenance,
     Resource,
     SecurityEvent,
-    SimulationTag,
     SourceInfo,
     SourceType,
 )
@@ -37,20 +37,18 @@ from extorq_collectors import __version__
 PARSER_ID = "github-api"
 COLLECTOR_VERSION = __version__
 
-_SIM_RE = re.compile(r"extorq-sim[- ]([a-z0-9]{8,32})(?![a-z0-9])")
 _OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 _LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$")
-#: The deliberately fake, secret-shaped lab string (docs/team/interface-changes/C1.md).
-#: It is not a credential, but it is redacted like one to exercise the redaction path.
-_LAB_FAKE_SECRET_RE = re.compile(r"\bEXTORQ_TEST_SECRET_[A-Z0-9]{24}\b")
 
 
 def redact(text: str) -> tuple[str, int]:
-    """Redact secret-shaped substrings (platform redactor + lab fake secret pattern)."""
-    text, count = redact_text(text)
-    text, extra = _LAB_FAKE_SECRET_RE.subn("[REDACTED:lab_fake_secret]", text)
-    return text, count + extra
+    """Redact credential-shaped substrings with the platform redactor.
+
+    The single entry point for GitHub text, so commit messages, workflow diffs and the
+    secret-exposure scanner (``secrets.py``) always apply the same patterns.
+    """
+    return redact_text(text)
 
 
 def clean_text(value: object, limit: int, *, single_line: bool = True) -> str:
@@ -73,16 +71,6 @@ def clean_redacted(value: object, limit: int, *, single_line: bool = True) -> tu
 def as_dict(value: object) -> dict[str, Any]:
     """``value`` when it is a JSON object, else an empty dict (API data is untrusted)."""
     return value if isinstance(value, dict) else {}
-
-
-def simulation_run_id(*texts: object) -> str | None:
-    """Return the run id of an ``extorq-sim-<run_id>`` / ``[extorq-sim <run_id>]`` marker."""
-    for text in texts:
-        if isinstance(text, str):
-            match = _SIM_RE.search(text[:20000])
-            if match:
-                return match.group(1)
-    return None
 
 
 def parse_time(value: object) -> datetime | None:
@@ -178,7 +166,6 @@ class EventBuilder:
         raw_source: str | bytes | None = None,
         truncated: bool = False,
         redactions: int = 0,
-        sim_run_id: str | None = None,
     ) -> SecurityEvent:
         spec = EVENT_CATALOG[event_type]
         return SecurityEvent(
@@ -211,7 +198,6 @@ class EventBuilder:
                 truncated=truncated,
                 redaction_count=redactions,
             ),
-            simulation=SimulationTag(run_id=sim_run_id) if sim_run_id else None,
         )
 
 

@@ -1,18 +1,17 @@
-"""Persistence of AI assessments (``extorq.ai_assessments``) and ai-worker health.
+"""Persistence of Jev assessments (``extorq.ai_assessments``) and ai-worker health.
 
-AI writes ONLY ``ai_assessments`` and ``pipeline_health`` (PLAN §3 invariant 4).
-All SQL uses ClickHouse server-side parameters (``{name:Type}``) and
-duplicate-safe aggregation (``uniqExact``, ``FINAL``).
+AI writes ONLY ``ai_assessments`` and ``pipeline_health`` (PLAN section 3, invariant 4).
+All SQL uses ClickHouse server-side parameters (``{name:Type}``) and duplicate-safe
+aggregation (``uniqExact``, ``FINAL``).
 
-Row format: flattened columns from :class:`AIAssessment` plus ``output``, the
-canonical JSON of ``{"requested_model", "triage", "summary", "validation"}``
-(``requested_model`` is the configured model id; ``model`` is the id the
-provider reported). Each provider attempt is one row with a unique
-``assessment_id`` (random nonce), so attempts are countable for budgets.
+Row format: flattened columns from :class:`AIAssessment` plus ``output``, the canonical
+JSON of ``{"requested_model", "triage"}`` (``requested_model`` is the configured model id;
+``model`` is the id the provider reported). Each provider attempt is one row with a
+unique ``assessment_id`` (random nonce), so attempts are countable for the daily cap.
 
-The client arguments are clickhouse-connect clients (``query``/``insert``):
-the API passes ``extorq_api_ro`` / ``extorq_api_writer`` clients, the
-ai-worker ``extorq_ai`` clients.
+The client arguments are clickhouse-connect clients (``query``/``insert``): the
+ai-worker passes ``extorq_ai`` clients, ``AIService`` (CLI) the ``extorq_api_ro`` /
+``extorq_api_writer`` clients.
 """
 
 from __future__ import annotations
@@ -26,15 +25,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from extorq.ai._compat import get_logger
-from extorq.contracts.ai import (
-    AIAssessment,
-    AIProvider,
-    AIStatus,
-    AITask,
-    InvestigationSummary,
-    JevTriageResult,
-    SummaryValidation,
-)
+from extorq.contracts.ai import AIAssessment, AIProvider, AIStatus, AITask, JevTriageResult
 from extorq.contracts.health import PipelineHealth
 from extorq.contracts.identity import canonical_json
 
@@ -44,7 +35,7 @@ DATABASE = "extorq"
 ASSESSMENTS_TABLE = "ai_assessments"
 HEALTH_TABLE = "pipeline_health"
 
-#: Statuses that represent an actual provider attempt (counted against budgets).
+#: Statuses that represent an actual provider attempt (counted against the daily cap).
 ATTEMPT_STATUSES: tuple[str, ...] = (
     AIStatus.OK.value,
     AIStatus.INSUFFICIENT_CONTEXT.value,
@@ -113,11 +104,10 @@ def _epoch_ms(value: datetime) -> int:
 
 
 def assessment_to_row(a: AIAssessment, *, requested_model: str | None = None) -> list[Any]:
+    """Row values in :data:`ASSESSMENT_COLUMNS` order."""
     output = {
         "requested_model": requested_model or a.model,
         "triage": a.triage.model_dump(mode="json") if a.triage else None,
-        "summary": a.summary.model_dump(mode="json") if a.summary else None,
-        "validation": a.validation.model_dump(mode="json") if a.validation else None,
     }
     return [
         a.assessment_id,
@@ -182,9 +172,9 @@ def row_to_assessment(row: Sequence[Any]) -> tuple[AIAssessment, str | None]:
         requested_by,
     ) = row
     output = json.loads(output_text) if output_text else {}
+    if not isinstance(output, dict):
+        raise ValueError("output is not a JSON object")
     triage = output.get("triage")
-    summary = output.get("summary")
-    validation = output.get("validation")
     assessment = AIAssessment(
         assessment_id=assessment_id,
         alert_id=alert_id,
@@ -196,8 +186,6 @@ def row_to_assessment(row: Sequence[Any]) -> tuple[AIAssessment, str | None]:
         prompt_version=prompt_version,
         status=AIStatus(status),
         triage=JevTriageResult.model_validate(triage) if triage else None,
-        summary=InvestigationSummary.model_validate(summary) if summary else None,
-        validation=SummaryValidation.model_validate(validation) if validation else None,
         latency_ms=latency_ms,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -211,6 +199,11 @@ def row_to_assessment(row: Sequence[Any]) -> tuple[AIAssessment, str | None]:
 
 
 def _rows_to_assessments(rows: Iterable[Sequence[Any]]) -> list[tuple[AIAssessment, str | None]]:
+    """Rebuild rows, skipping (and logging) any that no longer validate.
+
+    A row can be unreadable because it was written by an older ExtorQ version (for example
+    a provider or task that no longer exists): it is history, never an error for callers.
+    """
     out: list[tuple[AIAssessment, str | None]] = []
     for row in rows:
         try:
@@ -281,28 +274,10 @@ def count_attempts_since(read_client: Any, provider: AIProvider, since: datetime
     return int(rows[0][0]) if rows else 0
 
 
-def last_attempt_at(
-    read_client: Any, *, alert_id: str, provider: AIProvider, task: AITask
-) -> datetime | None:
-    result = read_client.query(
-        "SELECT max(created_at), count() FROM extorq.ai_assessments "
-        "WHERE alert_id = {alert_id:String} AND provider = {provider:String} "
-        "AND task = {task:String} AND has({statuses:Array(String)}, status)",
-        parameters={
-            "alert_id": alert_id,
-            "provider": provider.value,
-            "task": task.value,
-            "statuses": list(ATTEMPT_STATUSES),
-        },
-    )
-    rows = result.result_rows
-    if not rows or int(rows[0][1]) == 0:
-        return None
-    return _aware(rows[0][0])
-
-
 @dataclass(frozen=True)
 class PendingContext:
+    """One queue entry: the latest context of an alert that still needs a Jev triage."""
+
     alert_id: str
     context_id: str
     input_hash: str
@@ -398,6 +373,7 @@ def count_pending_triage(
     backoff_seconds: int,
     max_age_hours: int,
 ) -> int:
+    """Queue depth reported in the ai-worker's health row (same filter as the queue)."""
     result = read_client.query(
         "SELECT count() " + _PENDING_FROM,
         parameters=_pending_parameters(prompt_version, max_failed, backoff_seconds, max_age_hours),
@@ -407,6 +383,7 @@ def count_pending_triage(
 
 
 def save_pipeline_health(write_client: Any, h: PipelineHealth) -> None:
+    """Insert one ``pipeline_health`` row (component ``ai_worker``)."""
     row = [
         h.component,
         h.instance,

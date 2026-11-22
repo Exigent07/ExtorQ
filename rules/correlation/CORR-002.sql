@@ -1,4 +1,4 @@
--- CORR-002 v1.2.0: ordered multi-stage activity on one Linux host:
+-- CORR-002 v1.3.0: ordered multi-stage activity on one Linux host:
 --   stage 1  HTTP probing      >= {probe_min_requests} 4xx responses to one source, of which
 --                              >= {probe_min_routes} distinct probe-like routes, within
 --                              {probe_window_seconds} (sliding window, web-server access logs)
@@ -37,8 +37,7 @@ WITH
             asset_id,
             asset_type,
             assumeNotNull(src_ip) AS src,
-            substring(ifNull(http_route, ''), 1, 256) AS route,
-            simulation_run_id
+            substring(ifNull(http_route, ''), 1, 256) AS route
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -78,8 +77,7 @@ WITH
             asset_id,
             assumeNotNull(src_ip) AS src,
             src_port,
-            substring(ifNull(actor_name, ''), 1, 64) AS user_name,
-            simulation_run_id
+            substring(ifNull(actor_name, ''), 1, 64) AS user_name
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -119,8 +117,7 @@ WITH
             if(ifNull(resource_name, '') != '', assumeNotNull(resource_name),
                arrayLast(x -> x != '', splitByChar('/', ifNull(resource_path, '')))) AS unit,
             '' AS writer,
-            toUInt8(1) AS from_inventory,
-            simulation_run_id
+            toUInt8(1) AS from_inventory
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -145,8 +142,7 @@ WITH
                substring(arrayFirst(p -> startsWith(p, 'CREATE:/'),
                                     JSONExtract(attributes, 'paths', 'Array(String)')), 8))
                 AS written_path,
-            ifNull(process_executable, '') AS writer,
-            simulation_run_id
+            ifNull(process_executable, '') AS writer
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -165,8 +161,7 @@ WITH
             asset_id,
             arrayLast(x -> x != '', splitByChar('/', written_path)) AS unit,
             writer,
-            toUInt8(0) AS from_inventory,
-            simulation_run_id
+            toUInt8(0) AS from_inventory
         FROM audit_hits
         WHERE has({change_syscalls:Array(String)}, syscall)
           AND arrayExists(d -> startsWith(written_path, d), {unit_dirs:Array(String)})
@@ -235,8 +230,7 @@ WITH
             arrayMap(x -> x.2, groupArraySorted(150)(tuple(h.event_time, h.event_id))) AS ids,
             uniqExactIf(h.route, match(h.route, {probe_route_pattern:String})) AS n_routes,
             arraySort(groupUniqArrayIf(10)(h.route, match(h.route, {probe_route_pattern:String})))
-                AS routes,
-            groupUniqArray(16)(h.simulation_run_id) AS sims
+                AS routes
         FROM chains AS c
         INNER JOIN http AS h ON h.asset_id = c.asset_id
         WHERE has(c.probe_srcs, h.src)
@@ -251,8 +245,7 @@ WITH
             uniqExact(e.event_id) AS n,
             arrayMap(x -> x.2, groupArraySorted(150)(tuple(e.event_time, e.event_id))) AS ids,
             toUInt32(uniqExact(tuple(e.src, e.src_port))) AS connections,
-            arraySort(groupUniqArrayIf(10)(e.user_name, e.user_name != '')) AS users,
-            groupUniqArray(16)(e.simulation_run_id) AS sims
+            arraySort(groupUniqArrayIf(10)(e.user_name, e.user_name != '')) AS users
         FROM chains AS c
         INNER JOIN ssh AS e ON e.asset_id = c.asset_id
         WHERE has(c.ssh_srcs, e.src)
@@ -271,8 +264,7 @@ WITH
             arraySort(groupUniqArrayIf(10)(x.unit, x.unit != '' AND x.from_inventory = 1))
                 AS units_inventory,
             arraySort(groupUniqArray(8)(x.change_type)) AS change_types,
-            arraySort(groupUniqArrayIf(4)(x.writer, x.writer != '')) AS writers,
-            groupUniqArray(16)(x.simulation_run_id) AS sims
+            arraySort(groupUniqArrayIf(4)(x.writer, x.writer != '')) AS writers
         FROM chains AS c
         INNER JOIN persist AS x ON x.asset_id = c.asset_id
         WHERE x.event_time > c.ssh_t
@@ -343,12 +335,10 @@ SELECT
     c.bucket_start AS bucket_start,
     if(length(arrayFilter(ip -> NOT has({shared_nat_ips:Array(String)}, ip),
                           arrayIntersect(c.probe_srcs, c.ssh_srcs))) > 0,
-       'medium', 'low') AS confidence,
-    arraySort(arrayDistinct(arrayConcat(pe.sims, se.sims, xe.sims))) AS simulation_run_ids
+       'medium', 'low') AS confidence
 FROM chains AS c
 INNER JOIN probe_ev AS pe ON pe.asset_id = c.asset_id AND pe.bucket_start = c.bucket_start
 INNER JOIN ssh_ev AS se ON se.asset_id = c.asset_id AND se.bucket_start = c.bucket_start
 INNER JOIN persist_ev AS xe ON xe.asset_id = c.asset_id AND xe.bucket_start = c.bucket_start
 LEFT JOIN removal_ctx AS rc ON rc.asset_id = c.asset_id AND rc.bucket_start = c.bucket_start
 ORDER BY first_seen
-LIMIT 1000

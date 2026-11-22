@@ -55,13 +55,11 @@ dropped the evidence key fields of real contexts):
   uncertain; GH-001 `e7063925...` `priority_investigation`, not uncertain;
   K8S-002 `afc76864...` `priority_investigation`, uncertain; K8S-001
   `cfbff556...` and CORR-002 `b46da380...` `routine_review`, uncertain.
-* Gemini (`gemini-3.6-flash`, prompt `summary-v3`): the first summaries of real
-  lab alerts, GH-001 `e70639259d3044a6da955d9bc79e48cd` (22.9 s; 17 evidence
-  ids cited, 17 verified, 0 rejected, 0 statements without evidence) and
-  CORR-002 `b46da3805d1c6f17b6c1ed363b49a777` (25.9 s; 64 cited, 64 verified,
-  0 rejected). Earlier Gemini runs were on synthetic contexts only.
 
 ## 2. Pre-flight checklist
+
+The historical observations above describe earlier builds. Use
+[release verification](team/status/release-verification.md) for this revision's gates.
 
 Run from the repository root. Targets are in the `Makefile` (`make help`); A added
 `make up-demo` and `make collectors-start|stop|status` in build session 3
@@ -71,7 +69,7 @@ Run from the repository root. Targets are in the `Makefile` (`make help`); A add
 
 | # | Step | Command | Pass criterion |
 |---|---|---|---|
-| 1 | Decide on live AI (operator) | AI on: `make up-demo` (sets `EXTORQ_JEV_ENABLED=true` and `EXTORQ_GEMINI_ENABLED=true`: live, budgeted calls); AI off: `make up-full` | decision made; the keys stay in `.env` (never opened); `make up-full` switches AI off again |
+| 1 | Decide on Jev (operator) | Default: `make up-full`. Opt-in instructions: [deployment](deployment.md#2-bootstrap) | A live request requires an approved daily budget and the dedicated key file |
 | 2 | Platform stack incl. console and Grafana | `make up-demo` or `make up-full` (both wait up to 600 s for health) | `make ps`: clickhouse, ingest, writer, api, frontend, grafana healthy; detector and ai-worker running (all of them were up on 2026-11-22 02:01 IST) |
 | 3 | Ubuntu VM | `make vm-up`, then `make vm-status` | running; SSH 127.0.0.1:2222 and HTTP 127.0.0.1:8088 answer |
 | 4 | kind cluster | `make kind-up`, `make kind-status`, `infra/kind/kind.sh netcheck` | audit log active; `GET /healthz -> HTTP 200 (TLS verified with ExtorQ CA)` |
@@ -82,7 +80,7 @@ Run from the repository root. Targets are in the `Makefile` (`make help`); A add
 | 9 | Security evidence for minute 12:45 | `make test-security`; then `make up-debug`, `uv run pytest tests/security/test_security_clickhouse_rbac_live.py -m integration -q` | 296 passed, 32 deselected (2026-11-22 01:48 IST); live RBAC 32 passed (01:49 IST) |
 | 10 | Debug proxy off (F-01) | `docker compose --profile debug stop clickhouse-debug` | `make ps` shows no `clickhouse-debug`; `make demo-check` shows no proxy WARN |
 | 11 | Console smoke **(verify)** | `cd frontend && EXTORQ_SMOKE_ANALYST_PASSWORD_FILE=../var/secrets/analyst_password EXTORQ_SMOKE_VIEWER_PASSWORD_FILE=../var/secrets/viewer_password node scripts/smoke.mjs --base http://127.0.0.1:3000; cd ..` | 0 failed. On 2026-11-22 02:01 IST against the compose console: 98 passed, 5 failed; all 5 failing checks (Kubernetes node "workloads on node" view, detections rule and asset filters) were new in D2's in-progress script and the running image predated D2's latest changes: re-run after the final rebuild. Run it once only: it loads about 100 pages |
-| 12 | AI services **(verify, only if enabled)** | `docker compose logs --tail 20 ai-worker` and the console Health page | worker cycles `ok`; Jev and Gemini shown enabled. Enabling Jev triages every stored context younger than 72 h without a current Jev result (6 of 23 alerts had none on 2026-11-22: APP-001, HTTP-001, MAC-001), at most 10 per 30 s cycle, daily cap 300 |
+| 12 | Jev worker, if enabled | `docker compose logs --tail 20 ai-worker` and console Health | Confirm a current worker heartbeat and compare the configured cap with the approved budget |
 | 13 | Host hygiene | `stat -f '%Sp' .env` | `-rw-------`. It was `-rw-r--r--` on 2026-11-22 (F-09); `chmod 600 .env` is the operator's decision |
 | 14 | Browser tabs | console `http://127.0.0.1:3000` as `analyst`; Grafana `http://127.0.0.1:3001` as `admin` (`var/secrets/grafana_admin_password`) | tabs: console Overview, Detections, Health; Grafana dashboards Security Overview, Linux Investigation, Kubernetes Investigation, GitHub Investigation, Collector & Pipeline Health; Grafana Explore with data source "ExtorQ ClickHouse" |
 | 15 | Terminals | T1 Linux simulations, T2 Kubernetes simulations, T3 operations (collectors stop/start, curl checks); all in the repository root | large font, notifications off, commands of section 3 pre-typed |
@@ -92,10 +90,11 @@ Run from the repository root. Targets are in the `Makefile` (`make help`); A add
 * `make demo-check` once more: `DEMO READY`, no proxy WARN.
 * Console Health: the four host collectors fresh, detector rule runs within the
   last two minutes, no unexpected quarantine spike.
-* Do not run `make demo-check`, the smoke script or test suites while presenting:
-  the API's ClickHouse identity has a quota of 1200 queries per minute, and on
-  2026-11-22 ~02:01 IST it was exceeded (1374/1200) right after two consecutive
-  smoke runs, so the API answered 503 until the minute ended.
+* Schedule `make demo-check`, the smoke script and test suites outside the
+  presentation. Migration `0007_api_quota.sql` raises the API identity's limit
+  from 1,200 to 6,000 queries per minute. Check the effective quota on the
+  deployed database. On 2026-11-22 at about 02:01 IST two consecutive smoke
+  runs exceeded the earlier limit and the API answered 503 until the interval ended.
 * No-go handling: a stale collector means the runner is down
   (`make collectors-status`, then `make collectors-start`); a dead VM or cluster
   is not rebuilt in front of the audience (fallback table, section 4).
@@ -120,7 +119,7 @@ every simulation in the first minute.
 | 6:15-7:45 | K8S-001, K8S-002 | read T2's output | Investigations; Grafana Kubernetes Investigation | K8S-001 high confidence; K8S-002 high with audit + state |
 | 7:45-8:45 | GH-001 | T3: `make collectors-stop` (starts the outage for 11:30) | verified GH-001 alert; Grafana GitHub Investigation | alert from run `8dwz3wf6zji4` |
 | 8:45-10:00 | Correlation | | new CORR-002 Investigation (or `b46da380...`) | confidence low: NAT, not causation |
-| 10:00-11:30 | AI | optional "Generate overview" | Jev and Gemini panels | advisory only; ids verified |
+| 10:00-11:30 | Jev | Open an investigation with a stored assessment | Jev triage panel | Advisory output linked to deterministic context |
 | 11:30-12:45 | Failure handling | T3: `make collectors-start` at about 12:30 | console Health (stale), Grafana Collector & Pipeline Health | host collectors stale, Kubernetes logs still flowing, then fresh again |
 | 12:45-14:00 | Security boundaries | live denials (commands below) | `make ps`, curl 401, Grafana Explore denial, RBAC probe output | every denial observed |
 | 14:00-15:00 | Limitations and close | | `docs/known-limitations.md` | honest list |
@@ -163,7 +162,7 @@ then always deletes both and verifies they are gone.
   `ReplacingMergeTree`).
 * Versioned SQL rules run by the detector as a read-only identity; alerts are
   written only by the detector; every alert gets a hashed InvestigationContext.
-* AI is optional and advisory: Jev triage and Gemini summaries write only
+* AI is optional and advisory: Jev triage writes only
   `ai_assessments`.
 * Services: every host and node is broken into services and instances with
   explicit coverage; what ExtorQ cannot monitor is shown as unmonitored.
@@ -288,9 +287,7 @@ SELECT raw FROM extorq.events LIMIT 1;
 * Honest gaps visible in the GitHub collector's health (2026-11-21 20:02 UTC):
   branch protection, branch rules and rulesets answer `HTTP 403: Upgrade to
   GitHub Pro or make this repository public`; code scanning is not enabled and
-  secret scanning is disabled (`github-security-alerts` scan coverage); the token
-  source is the gh CLI with a warning that its scopes (`repo`, `workflow`) are far
-  broader than read-only.
+  secret scanning is disabled (`github-security-alerts` scan coverage); the checked-in collector requires its dedicated, read-only token.
 
 ### 8:45-10:00 Correlation: CORR-002 and NAT uncertainty
 
@@ -319,14 +316,6 @@ SELECT raw FROM extorq.events LIMIT 1;
   `alerts` and no SELECT on `events` (verified live).
 * If Jev is enabled, the new demo alerts get their own Jev assessment within a
   worker cycle (30 s) after their context is stored.
-* **Gemini overview** on the same two Investigations (stored, no new call):
-  GH-001 cites 17 evidence ids and CORR-002 64, every one verified against the
-  alert's evidence bundle, 0 rejected. Chips mark ids verified (jump to the
-  evidence row), verified but not shown on the page, or **unverified (possibly
-  invented)**. Only if AI is enabled and the operator wants a live call: press
-  **Generate overview** on a new demo alert (analyst role) and wait up to 90 s
-  (observed 22.9 s and 25.9 s on real alerts); one call per click, cooldown
-  120 s per alert, cap 50 per day.
 * If AI is off or the provider fails: the panels show the state honestly
   (disabled, rate limited, timeout); the deterministic context is the evidence.
 
@@ -400,8 +389,8 @@ API answered 401 without a session.
 From [known-limitations.md](known-limitations.md): QEMU NAT hides origins
 (`10.0.2.2`); agentless pull adds latency; no EDR or Endpoint Security telemetry
 on macOS; GitHub polling, free-plan gaps on the private repository and the broad
-gh CLI token; FTP, PostgreSQL, MySQL, DNS and Redis adapters are planned only;
-Gemini quota and latency; Jev evaluated on 27 synthetic cases only;
+live GitHub token provisioning; FTP, PostgreSQL, MySQL, DNS and Redis adapters are planned;
+Jev evaluated on 27 synthetic cases only;
 at-least-once delivery on one laptop. Close on the principle: deterministic
 evidence first, AI advisory, unknown stays unknown.
 
@@ -417,7 +406,7 @@ evidence first, AI advisory, unknown stays unknown.
 | Detections filters misbehave | open investigations by alert id (`/investigations/<alert_id>`, section 1); D2's smoke flagged the rule and asset filters on 2026-11-22 02:01 IST (new checks, image older than D2's latest changes) |
 | API answers 503 | the `extorq_api_ro` per-minute query quota is exhausted (seen once after two smoke runs): wait one minute; stop any test or smoke run |
 | GitHub collector failing | show GH-001 reference alert; `make collectors-status` and the health warning explain why |
-| AI disabled, rate limited or slow | say so; show the stored Jev and Gemini assessments of GH-001 `e7063925...` and CORR-002 `b46da380...`; the deterministic context is the evidence |
+| AI disabled, rate limited or slow | say so; show the stored Jev assessments of GH-001 `e7063925...` and CORR-002 `b46da380...`; the deterministic context is the evidence |
 | Stack component unhealthy | `make demo-check` names it; do not restart ClickHouse during the demo; tell the outage story from section 3 |
 
 ## 5. Cleanup (right after the demo)

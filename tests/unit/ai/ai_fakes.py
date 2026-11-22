@@ -1,4 +1,4 @@
-"""Shared fakes and builders for AI tests. No network: both SDKs are replaced by fakes.
+"""Shared fakes and builders for AI tests. No network: the TypeSafe SDK client is a fake.
 
 Every context used here is SYNTHETIC (``extorq.ai.synthetic`` / ``eval/jev/dataset.jsonl``).
 Fake credentials are obviously fake strings; secret-shaped test values are assembled at
@@ -28,21 +28,15 @@ from extorq.contracts.context import InvestigationContext, RelationshipBasis, Re
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATASET = REPO_ROOT / "eval" / "jev" / "dataset.jsonl"
 FAKE_JEV_KEY = "jev-test-key-0000000000000000"  # synthetic test credential
-FAKE_GEMINI_KEY = "gemini-test-key-111111111111"  # synthetic test credential
 
 _AI_ENV = [
     "EXTORQ_JEV_ENABLED",
-    "EXTORQ_GEMINI_ENABLED",
     "EXTORQ_JEV_MODEL",
-    "EXTORQ_GEMINI_MODEL",
+    "EXTORQ_JEV_DAILY_CAP",
     "JEV_API_KEY",
     "JEV_API_KEY_FILE",
-    "GEMINI_API_KEY",
-    "GEMINI_API_KEY_FILE",
     "EXTORQ_JEV_API_KEY",
-    "EXTORQ_GEMINI_API_KEY",
     "TYPESAFE_API_KEY",
-    "GOOGLE_API_KEY",
 ]
 
 
@@ -51,7 +45,7 @@ def isolate_ai_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[
     for name in _AI_ENV:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("EXTORQ_AI_DOTENV", str(tmp_path / "no-such.env"))
-    monkeypatch.setattr(ai_settings, "_platform_key", lambda name: None)
+    monkeypatch.setattr(ai_settings, "_platform_key", lambda: None)
     ai_settings.get_ai_settings.cache_clear()
     ai_settings.get_provider_key.cache_clear()
     reset_optional_cache()
@@ -62,17 +56,13 @@ def isolate_ai_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[
 
 
 def enabled_settings(**overrides: Any) -> AISettings:
-    base: dict[str, Any] = {"jev_enabled": True, "gemini_enabled": True}
+    base: dict[str, Any] = {"jev_enabled": True}
     base.update(overrides)
     return AISettings(**base)
 
 
 def jev_key() -> ProviderKey:
     return ProviderKey("JEV_API_KEY", KeyState.CONFIGURED, SecretStr(FAKE_JEV_KEY), "env")
-
-
-def gemini_key() -> ProviderKey:
-    return ProviderKey("GEMINI_API_KEY", KeyState.CONFIGURED, SecretStr(FAKE_GEMINI_KEY), "env")
 
 
 def load_dataset_records() -> list[dict[str, Any]]:
@@ -243,87 +233,6 @@ def answering_client(**answer_kwargs: Any) -> FakeJevClient:
         return FakeJevResponse(answers)
 
     return FakeJevClient(respond)
-
-
-# ── Gemini fakes ──────────────────────────────────────────────────────
-
-
-@dataclass
-class FakeUsageMeta:
-    prompt_token_count: int | None = 2000
-    candidates_token_count: int | None = 500
-    thoughts_token_count: int | None = 100
-
-
-@dataclass
-class FakeFinish:
-    value: str
-
-
-@dataclass
-class FakeCandidate:
-    finish_reason: Any = field(default_factory=lambda: FakeFinish("STOP"))
-
-
-@dataclass
-class FakeGeminiResponse:
-    text: str | None
-    usage_metadata: FakeUsageMeta = field(default_factory=FakeUsageMeta)
-    model_version: str | None = "gemini-3.6-flash"
-    response_id: str | None = "resp_test_456"
-    candidates: list[FakeCandidate] = field(default_factory=lambda: [FakeCandidate()])
-    prompt_feedback: Any = None
-
-
-class _FakeModels:
-    def __init__(self, owner: FakeGeminiClient) -> None:
-        self.owner = owner
-
-    def generate_content(self, *, model: str, contents: Any, config: Any) -> Any:
-        self.owner.calls.append({"model": model, "contents": contents, "config": config})
-        return self.owner.respond(contents, config)
-
-
-class FakeGeminiClient:
-    def __init__(self, respond: Callable[[Any, Any], Any]) -> None:
-        self.respond = respond
-        self.calls: list[dict[str, Any]] = []
-        self.models = _FakeModels(self)
-
-
-def summary_json(
-    evidence_ids: list[str],
-    *,
-    extra_ids: list[str] | None = None,
-    steps: list[str] | None = None,
-    text: str = "Six failed SSH logins came from 203.0.113.9.",
-) -> str:
-    """A schema-valid model reply citing ``evidence_ids`` (+ ``extra_ids``)."""
-    cited = evidence_ids[:2] + (extra_ids or [])
-    return json.dumps(
-        {
-            "what_happened": [{"text": text, "evidence_ids": cited}],
-            "timeline": [
-                {
-                    "time": "2026-11-20T10:00:00.000Z",
-                    "description": "First failure.",
-                    "evidence_ids": evidence_ids[:1],
-                }
-            ],
-            "why_rule_fired": {
-                "text": "Five or more failed connections from one source.",
-                "evidence_ids": evidence_ids[:1],
-            },
-            "related_activity": [{"text": "No related activity was cited.", "evidence_ids": []}],
-            "benign_explanations": ["A misconfigured client could cause this."],
-            "missing_information": ["Whether the source address is known."],
-            "limitations": ["Only journald data was available."],
-            "recommended_next_steps": steps
-            if steps is not None
-            else ["Review other logins from 203.0.113.9."],
-            "overall_confidence": "medium",
-        }
-    )
 
 
 # ── ClickHouse fake ───────────────────────────────────────────────────

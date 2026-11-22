@@ -1,8 +1,9 @@
 # macOS endpoint telemetry (collector `macos-workstation-01`)
 
-Owner: B3. Code: `collectors/src/extorq_collectors/macos/`. Config:
-`config/collectors/macos.yaml`. Tests: `tests/unit/macos/` (fixtures in
-`tests/fixtures/macos/`). Simulation: `simulations/macos/mac_001_launchagent.sh`.
+Code: `collectors/src/extorq_collectors/macos/`. Config: `config/collectors/macos.yaml`.
+Tests: `tests/unit/macos/` (fixtures in `tests/fixtures/macos/`). Detection tests for this
+asset (MAC-001..005) are real activity on the Mac (section 9); contract schema 2.0 has no
+simulation marker and the collector treats test artefacts like any other activity.
 
 The collector is a native (non-containerised) process on the Apple Silicon host,
 asset **`macos:workstation-01`**, producer **`macos-workstation-01`**. It runs as
@@ -17,7 +18,7 @@ the logged-in user through supported, read-only interfaces only:
 * **standard tools do not provide EDR-grade telemetry.** Process execution,
   file activity and network flows are *not* collected (see "Collection gaps").
 
-Run it with A's SDK runner (single cycle or continuously):
+Run it with the SDK runner (single cycle or continuously):
 
 ```
 uv run extorq-collect run --only macos-workstation-01 --once
@@ -25,6 +26,9 @@ uv run extorq-collect run --only macos-workstation-01
 ```
 
 Validated on macOS 27.0.1 (26A434), Mac16,8, Python 3.12 (uv-managed CPython).
+Re-verified on 2026-11-22 for schema 2.0 with two dry cycles of the real collector on the
+reference host (scratch state store, nothing sent): every record contract-valid, no
+catalog violation, all eight sources `ok` (counts in `docs/team/status/H.md`).
 
 ## Sources and schedule
 
@@ -40,10 +44,16 @@ so two processes can never emit the same change twice.
 |---|---|---|---|
 | `unified_log` | 60 s | `macos.unified_log` | auth / sudo / XProtect / Gatekeeper events, gap events |
 | `launchd` | 60 s | `macos.launchd` | `persistence.launchd.item_{created,modified,deleted}`, `launch_item` inventory |
-| `inventory` | 300 s | `macos.inventory` | listeners (+ `network.listener.{opened,closed}`), processes, local accounts (+ `account.user.{created,deleted}`), services (`Service`, `ServiceInstance`, `service.*`) |
+| `listeners` | 60 s | `macos.inventory` | `network.listener.{opened,closed}` (bind address, exposure, owning process), `listener` inventory |
+| `inventory` | 300 s | `macos.inventory` | processes, local accounts (+ `account.user.{created,deleted}`), services (`Service`, `ServiceInstance`, `service.*`; reuses the listener snapshot when < 120 s old) |
 | `posture` | 300 s | `macos.posture` | 2 `ScanRun`s (`configuration`, `exposure`) + `PostureFinding`s, `config.security_setting.changed` |
-| `applications` | 3600 s | `macos.inventory` | `software` inventory (installed applications) |
+| `applications` | 3600 s | `macos.inventory` | `software` inventory (installed applications, system_profiler) |
+| `software` | 60 s | `macos.inventory` | `software.installed` / `software.removed` (application folders, codesign status of new bundles) |
 | `asset` | 300 s | — | `Asset` record (sent when changed or every 900 s) |
+
+Listeners and application folders have their own one-minute sources because both change
+quickly and both are detection inputs (MAC-003, MAC-005); the heavier process, account and
+service inventory stays at five minutes.
 
 All timestamps are UTC (`--timezone UTC` for `log show`; `ps lstart` local time is
 converted). Event ids are deterministic (`identity.event_id`), so re-reads and
@@ -72,6 +82,7 @@ Read-only policy (`check_read_only_policy`), refused otherwise:
 | `/usr/bin/csrutil` | `status`, `authenticated-root status` |
 | `/usr/libexec/ApplicationFirewall/socketfilterfw` | `--getglobalstate`, `--getstealthmode`, `--getallowsigned`, `--getblockall` |
 | `/usr/sbin/spctl` | `--status` |
+| `/usr/bin/codesign` | exactly `--verify --strict <bundle>` or `-dv --verbose=2 <bundle>`, `<bundle>` an `*.app` at the top of, or one folder below, `/Applications` or `/Users/<u>/Applications` (no `.`/`..` segments); never `-s`, `--remove-signature` or anything else |
 | `/usr/sbin/netstat`, `/usr/sbin/lsof`, `/bin/ps`, `/usr/bin/sw_vers`, `/usr/sbin/system_profiler` | read-only by nature |
 
 In-process (no subprocess): `plistlib` for launchd plists, `os.scandir`/`os.open`
@@ -103,7 +114,7 @@ configuration can only select producer *names*.
 
 | Producer | Predicate | Event types | On the reference host (24 h window, 2026-11-21) |
 |---|---|---|---|
-| `sudo` | `process == "sudo"` | `auth.sudo.command`, `auth.sudo.failure`, `system.log.notable` | no sudo use in window; parser tested with labelled synthetic records |
+| `sudo` | `process == "sudo"` | `auth.sudo.command`, `auth.sudo.failure`, `system.log.notable` | **no sudo record in the whole retained archive** (2026-10-23 to 2026-11-22, checked on 2026-11-22; the predicate runs, exit 0); parser tested on the sudoers(5) formats of the installed sudo 1.9.17p2 (labelled synthetic), see "sudo" below |
 | `sshd` | `process == "sshd" OR process == "sshd-session" OR process == "sshd-auth"` | `auth.ssh.login_failed`, `auth.ssh.invalid_user`, `auth.ssh.preauth_closed`, `auth.ssh.max_auth_exceeded`, `auth.ssh.login_succeeded` (same mapping as Linux, see "Remote Login (sshd)"); `system.log.notable` for other lines and for senders outside the sealed system volume | none: Remote Login is off (job not loaded) and stays off; parser tested with labelled synthetic records |
 | `screensharing` | `process == "screensharingd"` | `auth.local.failure`, `system.log.notable` | none: Screen Sharing off |
 | `opendirectory_auth` | opendirectoryd `auth` category, "Authentication failed for" | `auth.local.failure` | 6 records (real; user name is `<private>`, GeneratedUID public) |
@@ -113,12 +124,13 @@ configuration can only select producer *names*.
 | `gatekeeper` | `com.apple.syspolicy.exec` GK scan/evaluate, prompts, approvals | `security.gatekeeper.event` | 290 records |
 
 Fields: `event_time` (source timestamp, UTC), `observed_time`, `process.{pid,
-name, executable, uid, command_line}` (sudo `COMMAND=` only, redacted),
+name, executable, uid}` (sudo records retain the command executable or validation operation),
 `actor.{name,id}` (sudo user, sshd/screensharing user, opendirectoryd
 GeneratedUID), `network.{src_ip,src_port}` (sshd, screensharing viewer), source
 `severity_hint` from `messageType` (Fault high, Error medium, others info),
 `attributes`: `producer, subsystem, log_category, message_type, sender_image`,
-per producer `run_as, tty, cwd, reason, auth_service, auth_method, invalid_user,
+per producer `run_as, tty, cwd, reason, failure_kind, failed_attempts, env_specified,
+auth_service, auth_method, invalid_user,
 key_type, key_fingerprint, authenticating_user, close_kind, signal, source_verified,
 right, client, status_code, plugin, status_message, threat_detected, team_id,
 signing_id, bundle_id, path_hash, scan_result, prompt_type, approved`, and
@@ -169,13 +181,34 @@ records to Screen Sharing. Every verified record carries the ServiceRef of
 `last_telemetry_at`. The `uid` of the writer is not checked (the uid of `sshd-auth`
 could not be observed with Remote Login off).
 
-Detection note (owner C2): VM-001 currently selects `source_type = 'linux.journald'`,
+Detection note: VM-001 currently selects `source_type = 'linux.journald'`,
 so macOS sshd events are stored and attributed to the Remote Login service but do not
-feed VM-001 until C2 includes `macos.unified_log` (CORR-002 is a Linux sequence).
+feed VM-001 unless the rule includes `macos.unified_log` (CORR-002 is a Linux sequence).
 
 Verified with labelled synthetic records only (`tests/fixtures/macos/unified_log/
 synthetic_sshd_auth.ndjson`): Remote Login stays **off** on the reference host because
 enabling it would weaken the host.
+
+### sudo → `auth.sudo.*` (MAC-004 input)
+
+Formats (sudoers(5) "EVENT LOGGING", sudo 1.9.17p2 as installed): accepted
+`<user> : TTY=… ; PWD=… ; USER=… ; [GROUP=… ;] [ENV=<vars> ]COMMAND=<cmd>` (ENV is
+separated from COMMAND by one space); denied `<user> : <reason> ; TTY=… ; …`. `sudo -v`
+logs `COMMAND=validate`.
+
+| Reason | Event | Outcome | Attributes |
+|---|---|---|---|
+| `<N> incorrect password attempt(s)`, `a password is required`, `authentication failure` | `auth.sudo.failure` | `failure` | `failure_kind=authentication`, `failed_attempts=N` (only when sudo states a count: one record per invocation carries the total, so rules sum it), `reason`, `run_as`, `tty`, `cwd` |
+| `user NOT in sudoers`, `user NOT authorized on host`, `command not allowed`, … | `auth.sudo.failure` | `denied` | `failure_kind=policy`, `reason` |
+| no reason, `COMMAND=` present | `auth.sudo.command` | `success` | `attributes.command_executable`, `env_specified` (never the ENV values) |
+
+Sender verification as for sshd: only records written by `/usr/bin/sudo` (sealed system
+volume) are evidence; a process merely named `sudo` gives `system.log.notable` with
+`source_verified=false` and nothing taken from its message, so a local user can neither
+fabricate nor hide sudo failures with a copied binary. **Not verified on real records**:
+whether every `sudo` record of macOS 27 reaches the unified log under `process == "sudo"`
+is confirmed only when MAC-004 runs (no sudo use exists in the archive and ExtorQ never
+runs sudo itself).
 
 ## 2. LaunchAgents / LaunchDaemons (`macos.launchd`)
 
@@ -193,7 +226,11 @@ target read; FIFOs/devices never read), size-capped at 1 MiB (larger files are
 hashed only), hashed (SHA-256 of the file bytes) and parsed with `plistlib`
 (XML/binary; hostile input yields `parse_error`, never an exception).
 
-Kept keys: `Label`, `Program`/`ProgramArguments` (redacted, max 32),
+Kept keys: `Label`, `Program`/`ProgramArguments` (redacted, the first 16 entries;
+`program_arguments_count` is the real count), host facts about the program
+(`program_exists`, `program_user_writable`: the file or its folder can be modified by the
+logged-in user, i.e. code the user or malware running as the user can swap; relative
+programs stay unknown),
 `RunAtLoad`, `KeepAlive` (true/false/conditional), `StartInterval`,
 `StartCalendarInterval` (presence), `WatchPaths` (count), `Disabled`,
 `UserName`, `LimitLoadToSessionType`, `EnvironmentVariables` (**names only**:
@@ -211,8 +248,6 @@ Diff (SDK snapshot `launchd.items`, keyed by path, fingerprint = sha256):
 * `attributes.allowlisted=true` when the label matches `launchd.allowlist`
   (fnmatch): the event is **still emitted**; detection decides;
 * `service` (ServiceRef) = the launchd job the plist defines (label);
-* simulation tag: the generic `extorq-sim-<run_id>` marker or the launchd label
-  form `com.extorq.sim.<run_id>` (used by MAC-001);
 * a directory that cannot be read keeps its previous items (unreadable is never
   reported as deleted); a file that becomes unreadable is reported as modified
   with `read_error`;
@@ -270,7 +305,7 @@ settings add `added`/`removed`). Unknown values (None) never produce a change.
 
 ## 4. Inventory (`macos.inventory`)
 
-* **Listening sockets**: `netstat -anvW -p tcp|udp` (all sockets; the `process:pid`
+* **Listening sockets** (own source, every 60 s): `netstat -anvW -p tcp|udp` (all sockets; the `process:pid`
   column is the kernel's *last* pid that used the socket, name truncated to 16
   chars; socket-activated services show `launchd:1`). **Observed on macOS 27:**
   netstat returns an *empty* table (exit 0, no header) for any descendant of an
@@ -284,9 +319,14 @@ settings add `added`/`removed`). Unknown values (None) never produce a change.
   so switching methods never fabricates opened/closed events. Diff →
   `network.listener.opened` (also when the owning process changed:
   `attributes.owner_changed`, `previous_processes`) / `network.listener.closed`
-  with `network.{dst_ip,dst_port,protocol}`, `process.{name,pid,executable}`
-  when unique, and `service` when the owner was observed and belongs to exactly
-  one discovered service. `listener` inventory items.
+  with `network.{dst_ip,dst_port,protocol}`, `attributes.bind_address`,
+  `attributes.exposure` (contract ServiceEndpoint vocabulary: `any` = all interfaces,
+  `loopback`, `private`, `unknown`; identical on Linux), `processes`/`pids`/`users`/
+  `executables` of the owners, `process_attribution` (`lsof` | `netstat_last_pid` |
+  `unavailable`), `listener_method`, `process.{name,pid,executable}` when unique, and
+  `service` when the owner was observed and belongs to exactly one discovered service.
+  A closed socket keeps its bind address, exposure and last owners. `listener`
+  inventory items.
 * **Processes**: `ps -axww -o pid=,ppid=,uid=,user=,lstart=,comm=` plus the
   kernel-reported executable path from `proc_pidpath` (works unprivileged for
   user and root processes; `comm` is argv[0], which a process chooses itself).
@@ -301,11 +341,33 @@ settings add `added`/`removed`). Unknown values (None) never produce a change.
 * **Installed applications** (hourly): `system_profiler -json -detailLevel mini
   SPApplicationsDataType` → `software` items (`name, version, obtained_from,
   signer, signing_chain, signed, arch_kind, last_modified`), full snapshot each run
-  plus tombstones. No macOS package events exist in the catalog.
+  plus tombstones. Inventory only (too slow for detection).
+* **Application folders → `software.installed` / `software.removed`** (`software`
+  source, every 60 s, `software.py`): `*.app` bundles at the top of `/Applications`
+  (`scope=system`) and `~/Applications` (`scope=user`) and one folder below (e.g.
+  `/Applications/Utilities`). Only `Contents/Info.plist` is read (1 MiB cap, plistlib):
+  `bundle_id`, `version` (`CFBundleShortVersionString`), `build_version`,
+  `bundle_name`, `display_name`, `executable`. First scan = baseline. For a NEW bundle (or
+  a path now holding a different `bundle_id`: `replaced=true`, `previous_bundle_id`) two
+  read-only, time-bounded `codesign` calls give `signed` (`true` / `false` /
+  `"unknown"`), `signature_valid`, `signature_type` (`unsigned`, `adhoc`,
+  `apple_platform`, `app_store`, `developer_id`, `apple_development`, `other`),
+  `signature_team_id` (absent for Apple platform and ad-hoc code: `TeamIdentifier=not
+  set`), `signature_authority` (leaf) and `signature_authorities`,
+  `notarization_ticket` (`stapled`), `signature_error`. `--deep` is not used (minutes on
+  large bundles; nested code is covered as sealed resources). Budget: at most 4 checks and
+  60 s per scan, 20 s per call. **False positives considered:** a bundle still being
+  copied would fail verification ("a sealed resource is missing"), so a new bundle is
+  reported only once its entries have been quiet for 30 s (inode change time, which users
+  cannot set) and such a failure is re-checked next scan; both deferrals stop after 5
+  scans, so a bundle kept busy on purpose is still reported. A version update of a known
+  bundle is not an installation. `software.removed` carries the last `bundle_id` and
+  `version`. Real codesign outputs of an Apple app, a Developer ID app, ad-hoc, unsigned
+  and tampered bundles are the test fixtures.
 
 ## 5. Services (service-aware monitoring, PLAN §10)
 
-Runs with every inventory cycle through B1's shared interface
+Runs with every inventory cycle through the shared interface
 (`extorq_collectors.services`). Evidence:
 
 * launchd job **definitions**: the three plist directories above, plus the
@@ -398,7 +460,11 @@ services by coverage, unattributed listeners, findings, applications), and
 * `/System/Library` launchd plists are counted, not diffed;
 * TCC privacy database requires Full Disk Access: not collected;
 * (dynamic) socket table withheld → lsof, current user's processes only;
-* process arguments not collected (privacy default).
+* process arguments not collected (privacy default);
+* application folders: Gatekeeper / notarization assessment is not run (`spctl --assess`
+  may contact Apple; `notarization_ticket` reports a stapled ticket only); applications
+  outside `/Applications` and `~/Applications` appear only in the hourly system_profiler
+  inventory; a bundle added and removed between two 60 s scans is missed.
 
 ## 7. Asset record
 
@@ -424,31 +490,24 @@ configured in `asset.hostname`).
 All collected text is untrusted (log messages, plist values, process names) and is
 sanitised and bounded before it leaves the collector.
 
-## 9. MAC-001 simulation
+## 9. Detection-test inputs (MAC-001 .. MAC-005)
 
-`simulations/macos/mac_001_launchagent.sh [--run-id ID] [--wait S | --no-wait [--hold S]]`
-creates `~/Library/LaunchAgents/com.extorq.sim.<run_id>.plist` (Label
-`com.extorq.sim.<run_id>`, ProgramArguments `[/usr/bin/true]`, RunAtLoad false;
-`plutil -lint` checked, written atomically), records the SimulationRun
-(`started`, `completed`) with `uv run extorq-collect sim-record --scenario MAC-001 --asset
-macos:workstation-01`, waits (read-only query as `extorq_api_ro`,
-`simulations/macos/wait_event.py`) for `persistence.launchd.item_created`, and then
-**always removes the file again**, records `cleaned_up` and waits for
-`persistence.launchd.item_deleted`. It **never runs launchctl**; the job is never loaded.
-macOS may show a **"Background Items Added"** notification: that is expected.
+Detection tests (`detection_tests/`, PLAN section 12) are real activity on this Mac with
+artefacts named `com.extorq.test.*` / `extorq-test-*`; they never load a launch item, never
+obtain privileges with sudo and never change security settings. What each row reads:
 
-Cleanup guarantee: an `EXIT` trap removes the plist whenever the script ends after
-creating it: normal completion, any error, a wait that timed out, Ctrl-C (INT), TERM or
-HUP (signals interrupt the waits, so removal is immediate). It removes only the regular
-file carrying the run's label and verifies it is gone. With `--no-wait` the file is kept
-`--hold` seconds (default 90; the launchd source scans every 60 s) instead of querying
-ClickHouse. Only SIGKILL or a power loss can leave the file behind;
-`--cleanup --run-id ID` removes such a leftover (it refuses symlinks, non-regular files
-and files with another label). When the file is already absent it changes nothing (no
-SimulationRun update) and shows the `item_deleted` event stored earlier.
+| Rule | Positive action | Telemetry (tests in `tests/unit/macos/`) |
+|---|---|---|
+| MAC-001 | `~/Library/LaunchAgents/com.extorq.test.*.plist` running `/usr/bin/true` (never loaded) | `persistence.launchd.item_created` (`macos.launchd`): `resource.path`, `label`, `program`, `program_arguments`, `run_at_load`, `scope`, `allowlisted`, `sha256`; cleanup gives `item_deleted` |
+| MAC-002 | plist with `["/bin/sh","-c","/tmp/extorq-test-*"]` (never loaded) | the same event; `program=/bin/sh`, `program_arguments`, `program_arguments_count`, `program_exists`, `program_user_writable` |
+| MAC-003 | accept-and-close TCP listener on `0.0.0.0:<high port>`; negative control on `127.0.0.1` | `network.listener.opened`/`closed` (`macos.inventory`, `listeners` source): `bind_address`, `exposure` (`any` vs `loopback`), owner `processes`/`pids` (lsof), `process.{name,pid}` |
+| MAC-004 | `sudo -k`, then wrong passwords via `sudo -S -v` | `auth.sudo.failure` (`macos.unified_log`): `actor.name`, `failure_kind=authentication`, `failed_attempts`, `reason`, `attributes.command_operation=validate` |
+| MAC-005 | minimal unsigned bundle `/Applications/ExtorQ Test.app` (never executed); negative control: copy of a signed Apple app bundle | `software.installed` (`macos.inventory`, `software` source): `bundle_id`, `version`, `signed=false`, `signature_type=unsigned` vs `signed=true`, `signature_valid=true`, `signature_type=apple_platform`; cleanup gives `software.removed` |
 
-The C2 rule `rules/macos/MAC-001` alerts on `item_created` (simulation runs included:
-telemetry is genuine). Verified runs: `docs/team/status/B3.md`.
+Detection timing: launchd, listeners and application folders are scanned every 60 s,
+unified logging is read every 60 s with a 5 s settle delay; a new bundle is reported after
+it has been quiet for 30 s. Artefacts should be built elsewhere and moved into place (an
+atomic rename) so no scan sees them half-written.
 
 ## 10. Fixtures and verification
 
@@ -460,8 +519,7 @@ placeholder (provenance per file in `tests/fixtures/macos/README.md`).
 ```
 uv run pytest tests/unit/macos -q
 uv run extorq-collect run --only macos-workstation-01 --once
-uv run python simulations/macos/wait_event.py --event-type persistence.launchd.item_created \
-    --path ~/Library/LaunchAgents/com.extorq.sim.<run_id>.plist --since <iso>
 ```
 
-Recorded results: `docs/team/status/B3.md`.
+Recorded results: `docs/team/status/H.md` (schema 2.0 stage) and `docs/team/status/B3.md`
+(earlier sessions).

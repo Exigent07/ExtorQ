@@ -1,0 +1,154 @@
+rule_id: VM-003
+version: 1.0.0
+title: Local account created on a Linux host
+description: >-
+  A local user account appeared on a Linux host between two inventory snapshots of
+  /etc/passwd (account.user.created). New local accounts are a common persistence and
+  backdoor technique; on a managed server they are rare and should be explainable.
+  Confidence: high when an auditd identity-file watch hit (key extorq_identity: a successful
+  create or modify syscall on /etc/passwd or /etc/shadow, such as useradd's openat and
+  rename) precedes the snapshot that first saw the account, so two independent sources agree
+  and the writing executable is known; medium for the inventory diff alone. The alert reports
+  the uid, shell, home, groups, whether the uid is 0 (a second root), whether the uid is in
+  the system range and whether the account has a login shell or privileged group membership.
+severity: medium
+status: stable
+mitre_techniques: [T1136.001]
+asset_types: [linux_host]
+requires:
+  - source_type: linux.inventory
+    event_types: [account.user.created]
+  - source_type: linux.auditd
+    event_types: [file.audit.watch]
+    optional: true
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: event
+group_by: [asset_id, account, creation_event]
+params:
+  audit_key: extorq_identity
+  identity_files: [/etc/passwd, /etc/shadow]
+  # Writes up to this long before the snapshot that first saw the account corroborate it
+  # (inventory interval 60 s plus collection and ingestion lag).
+  corroboration_seconds: 600
+  # auditd syscalls that create or modify a file (allowlist; the shared definition in
+  # extorq.detection.linux_audit, same list as VM-002 and CORR-002).
+  change_syscalls:
+    - open
+    - openat
+    - openat2
+    - creat
+    - truncate
+    - ftruncate
+    - rename
+    - renameat
+    - renameat2
+    - link
+    - linkat
+    - symlink
+    - symlinkat
+    - mknod
+    - mknodat
+    - chmod
+    - fchmod
+    - fchmodat
+    - fchmodat2
+    - chown
+    - fchown
+    - fchownat
+    - lchown
+  # login.defs UID_MIN on Ubuntu: uids 1..999 are the system range.
+  uid_min: 1000
+  nologin_shells: [/usr/sbin/nologin, /sbin/nologin, /bin/false, /usr/bin/false]
+  privileged_groups: [root, sudo, admin, adm, wheel, shadow, disk, docker, lxd, systemd-journal]
+false_positives:
+  - >-
+    Package installation that creates a service account (adduser --system: system-range uid,
+    no login shell, often no home). Handling: reported, not suppressed. The alert shows
+    system_uid_range and login_shell, and the investigation context lists the asset's
+    package.* changes; an account created alongside a package install is closed as benign
+    after checking the package. No uid-range or shell allowlist because an attacker can
+    choose both (the matrix test itself uses a nologin account).
+  - >-
+    Provisioning or configuration management creating users for people. Handling: expected
+    accounts are recognisable by the writer executable (useradd/adduser run by the
+    automation's user, from the auditd corroboration) and the change ticket; there is no
+    account-name allowlist because names are chosen by whoever creates the account.
+blind_spots:
+  - >-
+    Accounts created and deleted between two inventory snapshots (60 s): the auditd write of
+    /etc/passwd is still recorded and visible in the investigation context, but no
+    account.user.created event exists, so this rule does not fire.
+  - >-
+    Changes to existing accounts (uid changed to 0, a login shell added, a user added to the
+    sudo group) are not account creations; privileged group changes appear as
+    config.file.changed on /etc/group.
+  - Accounts from directory services (LDAP/SSSD, NSS modules) never appear in /etc/passwd.
+  - >-
+    Without auditd (missing_sources) the writer is unknown and confidence stays medium; audit
+    logs without enriched syscall names never corroborate (fail closed).
+references:
+  - https://attack.mitre.org/techniques/T1136/001/
+  - https://manpages.ubuntu.com/manpages/noble/man5/login.defs.5.html
+query: VM-003.sql
+summary_template: >-
+  Local account {account} (uid {uid}, shell {shell}, groups {groups}) created on {asset_id};
+  uid 0: {uid_zero}; system uid range: {system_uid_range}; privileged groups:
+  {privileged_groups}; auditd corroborated: {audit_corroborated} (writer
+  {writer_executables})
+tests:
+  - name: matrix-useradd-captured-with-auditd
+    description: >-
+      Matrix positive, captured: the real VM records of `sudo useradd --system
+      --no-create-home --shell /usr/sbin/nologin extorq-test-...` (inventory snapshot diff and
+      the identity-file auditd hits, both produced by the Linux collector's own code from the
+      captured VM output). Inventory and auditd agree: high.
+    fixture: tests/VM-003/positive_matrix_useradd_captured.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    features:
+      audit_corroborated: true
+      writer_executables: [/usr/sbin/useradd]
+      login_shell: false
+      system_uid_range: true
+      uid_zero: false
+  - name: uid-zero-login-account-inventory-only
+    description: >-
+      A second uid-0 account with a login shell in the root and sudo groups, seen by the
+      inventory only (no auditd telemetry): alerted with medium confidence and uid_zero = true.
+    fixture: tests/VM-003/positive_uid0_inventory_only.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      uid_zero: true
+      login_shell: true
+      privileged_groups: [root, sudo]
+      audit_corroborated: false
+    summary_contains: "uid 0: yes"
+  - name: identity-write-long-before-does-not-corroborate
+    description: >-
+      An account appears in the inventory, but the only /etc/passwd write happened an hour
+      earlier (another change): no corroboration, medium.
+    fixture: tests/VM-003/positive_unrelated_earlier_write.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      audit_corroborated: false
+  - name: matrix-control-temp-file
+    description: >-
+      Matrix negative control: a temporary file is created and deleted in /tmp. No account
+      event exists (the identity watch is not touched), so no alert.
+    fixture: tests/VM-003/negative_matrix_temp_file.jsonl
+    expect: no_alert
+  - name: account-deleted-and-baseline
+    description: >-
+      An account deletion (userdel cleanup, with its identity-file writes) and a baseline
+      account row: neither is a creation.
+    fixture: tests/VM-003/negative_deleted_and_baseline.jsonl
+    expect: no_alert

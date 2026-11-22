@@ -30,7 +30,7 @@ evidence; AI assists interpretation and is never authoritative.**
 
 Pipeline: collection and scanning -> authenticated ingestion gateway -> durable
 SQLite spool -> writer -> ClickHouse -> versioned SQL detections -> correlation
-and InvestigationContext -> optional AI enrichment (Jev triage, Gemini summary)
+and InvestigationContext -> optional Jev triage
 -> analyst API, console and Grafana. Full description:
 [`docs/architecture.md`](docs/architecture.md).
 
@@ -60,14 +60,14 @@ service (additional adapters stay modular and planned).
 | `backend/src/extorq/contracts/` | versioned Pydantic contracts, event catalog, identities: the single source of truth | lead |
 | `backend/src/extorq/{common,storage,pipeline,ingest}/` | config, logging, redaction; ClickHouse access and migrations runner; spool and writer; ingest gateway (`ingest/otlp_k8s.py`: B2) | A |
 | `backend/src/extorq/{detection,correlation}/` | rule engine, SQL guard, alert identity, context builder | C2 |
-| `backend/src/extorq/ai/` | Jev triage, Gemini summaries, sanitisation, budgets, worker | E |
+| `backend/src/extorq/ai/` | Jev triage, sanitisation, budgets, worker | E |
 | `backend/src/extorq/api/` | analyst API | D1 |
 | `collectors/src/extorq_collectors/sdk/` | collector SDK: outbox, checkpoints, sender, runner | A |
 | `collectors/src/extorq_collectors/services/` | shared service-discovery interface, adapter registry, planned adapters | B1 (from the lead) |
 | `collectors/src/extorq_collectors/{linux,macos,kubernetes,github}/` | platform collectors and service adapters | B1, B3, B2, C1 |
 | `scanners/` | Trivy, Gitleaks, Semgrep integration (`extorq-scan`) | C3 |
 | `rules/` | detection rules (YAML metadata + SQL) and their JSONL fixtures | C2 |
-| `simulations/` | safe, reversible attack scenarios for lab assets | B1, B2, B3, C1, C2 |
+| `detection_tests/` | controlled validation and evidence verification | platform and asset owners |
 | `infra/clickhouse/` | server config, users, migrations (`0001`, `0004`, `0006`: lead; `0002`: A; `0003`, `0005`: C3) | as noted |
 | `infra/vm/`, `infra/kind/`, `infra/grafana/` | Ubuntu VM, kind cluster, Grafana | B1, B2, D1 |
 | `frontend/` | Next.js + shadcn/ui security console | D2 |
@@ -79,8 +79,7 @@ service (additional adapters stay modular and planned).
 ## 3. Security invariants (non-negotiable)
 
 1. **Never print, log, commit or transmit secrets.** `.env` (user-owned) holds
-   `JEV_API_KEY` and `GEMINI_API_KEY`: never overwrite, rename, delete, read,
-   cat or echo it. Generated secrets live in `var/secrets/`, TLS material in
+   operator configuration: never overwrite, rename, delete, read, cat or echo it. Generated secrets live in `var/secrets/`, TLS material in
    `var/tls/`, VM keys in `var/vm/`, kubeconfigs in `var/kube/` (files 0600,
    directories 0700). Pass secrets by file path (`*_FILE` settings, compose
    file secrets). Startup checks name missing settings, never values. Tokens,
@@ -117,14 +116,16 @@ service (additional adapters stay modular and planned).
 ## 4. Data contracts
 
 * All cross-boundary records are contract models from
-  `backend/src/extorq/contracts/` (schema **1.1**; 1.0 records stay valid):
+  `backend/src/extorq/contracts/` (wire schema **2.0**):
   `SecurityEvent`, `Asset`, `InventoryItem`, `PostureFinding`, `ScanRun`,
-  `CollectorHealth`, `SimulationRun`, `Service`, `ServiceInstance`, plus
+  `CollectorHealth`, `Service`, `ServiceInstance`, plus
   alerts, contexts and AI assessments. Models forbid extra fields, require
   aware UTC timestamps and reject NaN/Infinity.
 * Event types, their categories and allowed source types are fixed in
   `contracts/catalog.py`; the gateway quarantines anything else.
-* Identities are deterministic (`contracts/identity.py`). Breaking identity
+* Identities are deterministic (`contracts/identity.py`). The gateway derives event
+  storage IDs from the authenticated producer and source observation
+  (`ingest/event_identity.py`). Historical evidence keeps its stored IDs. Breaking identity
   changes add a new namespace version (`*.v2`); never edit an existing one.
 * ClickHouse column names in `infra/clickhouse/migrations/` are the contract for
   rule SQL, API queries and dashboards. Latest-state tables are
@@ -248,8 +249,7 @@ id) and follow the steps above.
 2. Add positive and negative JSONL fixtures under `rules/<platform>/tests/<ID>/`.
 3. Validate and test: `uv run extorq rules validate` and
    `uv run extorq rules test` (ephemeral ClickHouse, needs Docker).
-4. Document false positives and blind spots honestly; never filter out
-   simulation telemetry.
+4. Document false positives and blind spots honestly; verify controlled native validation with the same SQL as ordinary telemetry.
 
 ### 7.4 Add a scanner
 Follow `scanners/src/extorq_scanners/` (C3): run the tool in a pinned image by
@@ -274,14 +274,14 @@ that can also be run directly:
 | Task | Make target | Direct command |
 |---|---|---|
 | Secrets, CA, producer registry | `make bootstrap` | `python3 scripts/bootstrap.py && uv sync` |
-| Core / full stack | `make up` / `make up-full` (AI off) / `make up-demo` (AI on: Jev and Gemini flags) | `docker compose up -d --build --wait <core>` / `docker compose --profile full up -d --build --wait` |
+| Core / full stack | `make up` / `make up-full` (AI off) / `make up-demo` (Jev on with an approved budget) | `docker compose up -d --build --wait <core>` / `docker compose --profile full up -d --build --wait` |
 | Debug ClickHouse proxy (never in demos) | `make up-debug` | `docker compose --profile debug up -d clickhouse-debug` |
 | Stack status, logs, stop (volumes kept) | `make ps`, `make logs`, `make down` | `docker compose --profile full --profile debug ps` / `logs` / `down` |
 | Ubuntu VM | `make vm-up` / `vm-status` / `vm-down` | `infra/vm/vm.sh up` / `status` / `down` |
 | kind cluster | `make kind-up` / `kind-status` / `kind-down` | `infra/kind/kind.sh up` / `status` / `down` |
 | Collectors | background: `make collectors-start [ONLY=a,b]`, `collectors-status`, `collectors-stop`; foreground: `make collectors [ARGS="--only ids"]`; `collectors-once`, `collectors-flush` | `uv run extorq-collect run [--only ids] [--once]`; `uv run python scripts/collectors_ctl.py start` (`stop`, `status`) |
 | Scanners | `make scan` | `uv run extorq-scan run all` |
-| Simulations | `make sim-http`, `sim-vm-001`, `sim-vm-002`, `sim-k8s-001`, `sim-k8s-002`, `sim-mac-001`, `sim-gh-001 ARGS="--repo <owner>/extorq-lab"`; `make sim-cleanup SCENARIO=... RUN_ID=...` (GH-001 cleanup needs `ARGS="--repo ... --cleanup --run-id ..."`) | `simulations/**.sh`; verify with `uv run python simulations/lib/verify_scenario.py <run_id> --expect <RULE>` |
+| Detection validation | See [testing](docs/testing.md) for approved asset scope and evidence requirements | Controlled run reports are retained under `var/reports/` |
 | Rules | | `uv run extorq rules validate`, `uv run extorq rules test` |
 | Unit tests | `make test` | `uv run pytest -q` (excludes integration/lab/live_ai/failure) |
 | Security tests | `make test-security` | `uv run pytest tests/security -q` |
@@ -307,7 +307,7 @@ Details: [`docs/deployment.md`](docs/deployment.md),
 | Linux collector fails | `infra/vm/vm.sh status`; host-key and authentication errors are never retried; exit 77 means the dispatcher denied the command |
 | Kubernetes telemetry missing | `infra/kind/kind.sh status` and `netcheck` (pods to gateway over TLS) |
 | Rule produces nothing | `extorq.rule_runs` (status, `missing_sources`, sanitised error); `uv run extorq rules test --only <ID>` |
-| AI output missing | providers are off unless `EXTORQ_JEV_ENABLED` / `EXTORQ_GEMINI_ENABLED` and a key are set; daily caps; detection never waits for AI |
+| AI output missing | Jev is off in the base deployment. The opt-in configuration needs a private key file and an approved daily cap. Check the worker health state |
 | Service shown unmonitored | read its `coverage_note`: no adapter, planned adapter, disabled, failing source, no or stale telemetry |
 
 ## 10. Actions requiring explicit human authorisation

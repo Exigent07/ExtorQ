@@ -38,6 +38,7 @@ EXPECTED_UIDS = {
     "extorq-linux",
     "extorq-kubernetes",
     "extorq-github",
+    "extorq-macos",
 }
 
 

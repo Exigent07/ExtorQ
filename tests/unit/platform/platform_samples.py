@@ -1,4 +1,4 @@
-"""SYNTHETIC contract records for platform unit tests (agent A).
+"""SYNTHETIC contract records for platform unit tests (contract schema 2.0).
 
 Every record built here is clearly synthetic test data (labels/attributes say so,
 collector ids start with ``synthetic-``). Nothing here is real telemetry and none
@@ -168,20 +168,6 @@ def health_data(
     }
 
 
-def simulation_data(asset_id: str = LINUX_ASSET, status: str = "completed") -> dict[str, Any]:
-    return {
-        "run_id": "synth0001",
-        "scenario_id": "VM-001",
-        "asset_id": asset_id,
-        "status": status,
-        "started_at": iso(NOW - timedelta(minutes=2)),
-        "finished_at": iso(NOW) if status != "started" else None,
-        "operator": "synthetic-operator",
-        "description": "SYNTHETIC simulation record",
-        "expected_rule_ids": ["VM-001"],
-    }
-
-
 def service_data(asset_id: str = LINUX_ASSET) -> dict[str, Any]:
     return {
         "service_id": service_id(asset_id, "host_service", "ssh.service"),
@@ -248,7 +234,6 @@ def all_kind_records(asset_id: str = LINUX_ASSET) -> list[dict[str, Any]]:
         record("finding", finding_data(asset_id)),
         record("scan_run", scan_run_data(asset_id)),
         record("collector_health", health_data(asset_id)),
-        record("simulation_run", simulation_data(asset_id)),
         record("service", service_data(asset_id)),
         record("service_instance", service_instance_data(asset_id)),
     ]

@@ -1,4 +1,4 @@
-"""Failure injection against the SHARED stack (``-m failure``; agent A only, PLAN §7).
+"""Failure injection against the SHARED stack (``-m failure``; platform only, PLAN §7).
 
 These tests stop/restart shared services. Announce them in docs/team/status/A.md
 before running and keep outages short. Every record sent is SYNTHETIC (see
@@ -30,6 +30,7 @@ from platform_live import (
     GATEWAY,
     PRODUCER,
     REPO,
+    accepted_event_id,
     batch,
     event_counts,
     post,
@@ -93,7 +94,7 @@ def _stack() -> None:
 def test_clickhouse_outage_loses_nothing() -> None:
     marker = uuid.uuid4().hex
     events = [synthetic_event(marker, i) for i in range(100)]
-    ids = [e["event_id"] for e in events]
+    ids = [accepted_event_id(e) for e in events]
     stopped_at = time.monotonic()
     compose("stop", "clickhouse", timeout=90)
     try:
@@ -135,7 +136,7 @@ def test_gateway_and_writer_restart_mid_stream_loses_nothing(tmp_path: Path) -> 
         for i in range(total)
     ]
     store.commit([("event", r) for r in records])
-    ids = [json.loads(r)["data"]["event_id"] for r in records]
+    ids = [accepted_event_id(json.loads(r)["data"]) for r in records]
     client = GatewayClient(GATEWAY, token(), REPO / "var" / "tls" / "ca.crt", timeout=10)
     sender = Sender(store, client, PRODUCER, max_records=25)
     done = threading.Event()

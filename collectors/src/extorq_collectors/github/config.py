@@ -1,13 +1,13 @@
 """Validated configuration of the GitHub collector (``config/collectors/github.yaml``).
 
-The file holds no secrets: the token comes from ``EXTORQ_GITHUB_TOKEN_FILE`` /
-``EXTORQ_GITHUB_TOKEN`` (see token.py). ``token_file`` may name a *path* only.
+The file holds no secrets. ``EXTORQ_GITHUB_TOKEN_FILE`` and ``token_file`` name
+a *path* only (see token.py).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -73,10 +73,8 @@ class GitHubCollectorConfig(BaseModel):
     api_base_url: str = "https://api.github.com"
     #: Path to the token file (only used when EXTORQ_GITHUB_TOKEN_FILE is unset). Never a token.
     token_file: str | None = None
-    #: Opt-in fallback to ``gh auth token`` (broad OAuth scopes; reported in health).
-    #: YAML key ``gh_cli_token_fallback`` is accepted as an alias because the SDK's config
-    #: secret heuristic flags any ``*_token: <value>`` pair, even a boolean.
-    allow_gh_cli_token: bool = Field(
+    #: Accept old checked-in and operator configs that explicitly disabled the fallback.
+    allow_gh_cli_token: Literal[False] = Field(
         default=False,
         validation_alias=AliasChoices("allow_gh_cli_token", "gh_cli_token_fallback"),
     )
@@ -138,11 +136,6 @@ class GitHubCollectorConfig(BaseModel):
         if len(names) > 50:
             raise ValueError("at most 50 repositories per collector")
         return self
-
-    @property
-    def gh_hostname(self) -> str:
-        host = urlsplit(self.api_base_url).hostname or "github.com"
-        return "github.com" if host == "api.github.com" else host
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None) -> GitHubCollectorConfig:

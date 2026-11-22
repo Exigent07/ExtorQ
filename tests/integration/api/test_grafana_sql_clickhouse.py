@@ -1,8 +1,8 @@
 """Every Grafana panel query on a throwaway ClickHouse as the real extorq_grafana role.
 
-Runs with ``-m integration``; does NOT use the shared stack. The harness applies the real
-migrations (0001-0004) and the roles/profiles of 0002, seeds SYNTHETIC rows only and
-removes the container. The plugin macros are expanded the way grafana-clickhouse-datasource
+Runs with ``-m integration``; does NOT use the shared stack. The harness applies the current
+migrations and the roles/profiles of 0002, seeds SYNTHETIC rows only and removes
+the container. The plugin macros are expanded the way grafana-clickhouse-datasource
 4.x does (``$__timeFilter(c)`` -> ``c >= toDateTime(from) AND c <= toDateTime(to)``,
 ``$__timeInterval(c)`` -> ``toStartOfInterval(toDateTime(c), INTERVAL n second)``); the
 expansion inputs are the committed dashboard files only. The live check through Grafana
@@ -154,3 +154,30 @@ def test_investigation_panels_return_the_evidence(run: Any, dataset: Dataset) ->
     assert [(p["pod"], p["node"]) for p in pods] == [("lab-portal-0", "extorq-lab-control-plane")]
     nodes = run("extorq-kubernetes", "Kubernetes nodes")
     assert [(n["asset_id"], n["cluster"]) for n in nodes] == [(dataset.k8s_node, dataset.k8s)]
+
+
+def test_tables_show_inventory_names_and_keep_the_id(run: Any, dataset: Dataset) -> None:
+    """Cross-asset tables show v_assets.name (latest asset version) next to the asset id."""
+    names = {dataset.linux: "synthetic-vm", dataset.github: "synthetic-repo"}
+    recent = run("extorq-security-overview", "Recent alerts")
+    assert {(r["asset"], r["asset_id"]) for r in recent} == {("synthetic-vm", dataset.linux)}
+    events = run("extorq-security-overview", "Events by asset and source")
+    for row in events:
+        if row["asset_id"] in names:
+            assert row["asset"] == names[row["asset_id"]]
+    collectors = {
+        r["collector_id"]: r["asset"]
+        for r in run("extorq-collector-health", "Collectors: last success and staleness")
+    }
+    assert collectors == {"synthetic-linux": "synthetic-vm", "synthetic-github": "synthetic-repo"}
+    rules = run("extorq-collector-health", "Rules: latest run")
+    assert [(r["rule_id"], r["title"]) for r in rules] == [("VM-001", "synthetic failed SSH burst")]
+    # Per-class investigation dashboards name the host by the id's natural name.
+    sources = run("extorq-linux", "SSH failure sources")
+    assert {r["host"] for r in sources} == {dataset.linux.split(":", 1)[1]}
+
+
+def test_unknown_booleans_stay_unknown(run: Any) -> None:
+    """A workflow change without the write_all_added attribute is "not reported", never "no"."""
+    workflows = run("extorq-github", "Workflow modifications and permission deltas")
+    assert {w["write_all_added"] for w in workflows} <= {"YES", "no", "not reported"}

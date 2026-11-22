@@ -1,9 +1,9 @@
 """extorq.storage.rows: every RecordKind maps exactly onto its ClickHouse columns.
 
-The column contract is parsed from the migration files themselves
-(``0001_core_tables.sql`` CREATE TABLE + ``0004_services.sql`` CREATE TABLE /
-ALTER TABLE ADD COLUMN), so a schema change without a mapping change fails here.
-All records are SYNTHETIC (see platform_samples.py).
+The column contract is replayed from the migration files themselves, in version order
+(CREATE TABLE, ALTER TABLE ADD/DROP COLUMN, DROP TABLE), so it is the schema after every
+migration (schema 2.0: 0008 removed the simulation storage). A schema change without a
+mapping change fails here. All records are SYNTHETIC (see platform_samples.py).
 """
 
 from __future__ import annotations
@@ -38,6 +38,10 @@ _CREATE = re.compile(
 _ADD_COLUMN = re.compile(
     r"ALTER TABLE extorq\.(?P<table>\w+) ADD COLUMN IF NOT EXISTS (?P<column>\w+)\s"
 )
+_DROP_COLUMN = re.compile(
+    r"ALTER TABLE extorq\.(?P<table>\w+) DROP COLUMN IF EXISTS (?P<column>\w+)\b"
+)
+_DROP_TABLE = re.compile(r"DROP TABLE IF EXISTS extorq\.(?P<table>\w+)\b")
 
 
 def _strip_comments(sql: str) -> str:
@@ -45,19 +49,36 @@ def _strip_comments(sql: str) -> str:
 
 
 def ddl_columns() -> dict[str, set[str]]:
+    """Columns per table after replaying every migration in version order."""
     tables: dict[str, set[str]] = {}
-    for name in ("0001_core_tables.sql", "0004_services.sql"):
-        sql = _strip_comments((MIGRATIONS / name).read_text(encoding="utf-8"))
-        for match in _CREATE.finditer(sql):
-            columns = set()
-            for line in match["body"].splitlines():
-                line = line.strip().rstrip(",")
-                if not line or line.startswith("INDEX "):
-                    continue
-                columns.add(line.split()[0])
-            tables[match["table"]] = columns
-        for match in _ADD_COLUMN.finditer(sql):
-            tables[match["table"]].add(match["column"])
+    for path in sorted(MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql")):
+        sql = _strip_comments(path.read_text(encoding="utf-8"))
+        events: list[tuple[int, str, re.Match[str]]] = [
+            (m.start(), kind, m)
+            for kind, pattern in (
+                ("create", _CREATE),
+                ("add", _ADD_COLUMN),
+                ("drop_column", _DROP_COLUMN),
+                ("drop_table", _DROP_TABLE),
+            )
+            for m in pattern.finditer(sql)
+        ]
+        for _pos, kind, match in sorted(events, key=lambda e: e[0]):
+            table = match["table"]
+            if kind == "create":
+                columns = set()
+                for line in match["body"].splitlines():
+                    line = line.strip().rstrip(",")
+                    if not line or line.startswith("INDEX "):
+                        continue
+                    columns.add(line.split()[0])
+                tables.setdefault(table, columns)
+            elif kind == "add":
+                tables[table].add(match["column"])
+            elif kind == "drop_column":
+                tables.get(table, set()).discard(match["column"])
+            else:
+                tables.pop(table, None)
     return tables
 
 
@@ -129,10 +150,8 @@ def test_event_service_and_container_columns() -> None:
     assert json.loads(row["payload"])["service"]["service_id"] == SSH_SERVICE_ID
 
 
-def test_schema_1_0_event_maps_service_columns_to_null() -> None:
-    data = event_data()
-    data["schema_version"] = "1.0"
-    rec = INGEST_RECORD_ADAPTER.validate_python(record("event", data))
+def test_event_without_service_maps_service_columns_to_null() -> None:
+    rec = INGEST_RECORD_ADAPTER.validate_python(record("event", event_data()))
     row = rows.to_row("event", rec.data, producer_id="p", batch_id="b", ingested_at=INGESTED)
     for column in (
         "service_id",
@@ -142,7 +161,33 @@ def test_schema_1_0_event_maps_service_columns_to_null() -> None:
         "k8s_container_id",
     ):
         assert row[column] is None
-    assert row["schema_version"] == "1.0"
+    assert row["schema_version"] == "2.0"
+
+
+def test_schema_2_0_has_no_simulation_storage() -> None:
+    """Migration 0008 dropped the simulation table and columns; rows never carry them."""
+    assert "simulation_runs" not in COLUMNS
+    assert not {"simulation_run_id", "scenario_id"} & COLUMNS["events"]
+    assert "simulation_run_ids" not in COLUMNS["alerts"]
+    assert "simulation_runs" not in rows.TABLE_BY_KIND.values()
+    event_row = rows.to_row(
+        "event",
+        INGEST_RECORD_ADAPTER.validate_python(record("event", event_data())).data,
+        producer_id="p",
+        batch_id="b",
+        ingested_at=INGESTED,
+    )
+    assert not {"simulation_run_id", "scenario_id"} & set(event_row)
+    assert "simulation_run_ids" not in rows.alert_to_row(alert())
+
+
+def test_schema_1_records_are_refused_by_the_contracts() -> None:
+    data = event_data()
+    data["schema_version"] = "1.1"
+    with pytest.raises(ValueError, match="schema_version"):
+        INGEST_RECORD_ADAPTER.validate_python(record("event", data))
+    with pytest.raises(ValueError):
+        INGEST_RECORD_ADAPTER.validate_python({"kind": "simulation_run", "data": {}})
 
 
 def test_service_row_values() -> None:
@@ -197,10 +242,6 @@ def test_row_versions_follow_ddl_formulas() -> None:
     scan = INGEST_RECORD_ADAPTER.validate_python(raw).data
     row = rows.to_row("scan_run", scan, producer_id="p", batch_id="b", ingested_at=INGESTED)
     assert row["row_version"] == rows.epoch_ms(NOW) * 10 + 1  # succeeded beats running
-    raw = next(r for r in all_kind_records() if r["kind"] == "simulation_run")
-    sim = INGEST_RECORD_ADAPTER.validate_python(raw).data
-    row = rows.to_row("simulation_run", sim, producer_id="p", batch_id="b", ingested_at=INGESTED)
-    assert row["row_version"] == 2 * 10**13 + rows.epoch_ms(NOW)  # completed
 
 
 def test_kind_model_mismatch_and_unknown_kind_are_row_errors() -> None:

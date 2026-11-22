@@ -15,6 +15,7 @@ collection boundary are described in `docs/telemetry/linux.md`.
 | `status` | image, disk, process, SSH reachability, cloud-init, `ssh nginx auditd lab-portal` state |
 | `ssh [cmd]` | operator shell / command as `extorq-admin` (sudo) |
 | `redeploy` | push dispatcher, provisioning script, sshd drop-in, nginx site, audit rules, lab-portal unit and app into the running VM and reload the services (keeps all telemetry) |
+| `redeploy-dispatcher` | validate and atomically replace only the root-owned dispatcher on the running VM |
 | `console [-n]` | follow (or print) the serial console log |
 | `destroy --yes [--purge]` | stop and delete disk/seed/state (`--purge`: also image and keys) |
 
@@ -76,6 +77,11 @@ GRUB would need a reboot (**planned**, not applied to the running VM).
 * Port in use: another process holds 127.0.0.1:2222/8088 (`lsof -nP -iTCP:2222`).
 * Host key mismatch: the VM was recreated without `create` regenerating `known_hosts`;
   never disable `StrictHostKeyChecking`, run `vm.sh destroy --yes` + `vm.sh up`.
-* Collector check: `uv run python -c 'from pathlib import Path; from extorq_collectors.linux.ssh
-  import SSHDispatchClient, SSHTarget; print(SSHDispatchClient(SSHTarget.from_mapping({},
-  base_dir=Path.cwd())).run("version"))'`.
+* To update only the collector boundary on the verified ExtorQ VM, run
+  `infra/vm/vm.sh status`, then `infra/vm/vm.sh redeploy-dispatcher`. Check the deployed
+  version through the pinned host key and restricted collector identity.
+
+  ```bash
+  uv run python -c 'from pathlib import Path; from extorq_collectors.linux.ssh import SSHDispatchClient, SSHTarget; print(SSHDispatchClient(SSHTarget.from_mapping({}, base_dir=Path.cwd())).run("version"))'
+  uv run extorq-collect run --only linux-ssh-lab-vm-01 --once
+  ```

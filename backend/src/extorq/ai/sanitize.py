@@ -1,27 +1,25 @@
-"""Sanitisation of untrusted text for AI provider inputs, and of provider outputs.
+"""Sanitisation of untrusted text before it reaches Jev.
 
-Every string that reaches Jev or Gemini passes through :func:`clean_untrusted`
-(telemetry-derived text) or :func:`clean_trusted` (ExtorQ's own rule metadata):
+Every string in Jev's state passes through :func:`clean_untrusted` (telemetry-derived
+text) or :func:`clean_trusted` (ExtorQ's own rule metadata and coverage notes):
 
 1. Unicode NFKC normalisation (folds full-width / compatibility look-alikes).
-2. Control, format (bidi overrides, zero-width), private-use and surrogate
-   characters are removed; line breaks and tabs become spaces (single line).
-3. Secret redaction: ``extorq.common.redaction.redact_text`` (agent A) when
-   available, then ExtorQ-AI's own defence-in-depth patterns (private keys,
-   cloud/API tokens, JWTs, bearer/basic credentials, ``password=...`` pairs,
-   credentials in URLs, e-mail addresses), then exact scrubbing of the
-   configured provider keys.
-4. Untrusted text only: stand-alone 32-hex tokens (the shape of ExtorQ event
-   ids) are masked as ``[hex32]`` so log content cannot smuggle evidence ids;
-   ``<`` becomes U+2039 so HTML/script tags cannot open; prompt
-   delimiter look-alikes (``-----``, ``BEGIN/END UNTRUSTED``,
-   ``ALLOWED_EVIDENCE_IDS``, boundary tokens) are neutralised.
-5. Whitespace is collapsed and the text is truncated to a per-field limit with
-   an explicit ``…[truncated]`` marker.
+2. Control, format (bidi overrides, zero-width), private-use and surrogate characters
+   are removed; line breaks and tabs become spaces (single line).
+3. Secret redaction: ``extorq.common.redaction.redact_text`` (agent A) when available,
+   then this module's defence-in-depth patterns (private keys, cloud/API tokens, JWTs,
+   bearer/basic credentials, ``password=...`` pairs, credentials in URLs, e-mail
+   addresses), then exact scrubbing of the configured Jev key.
+4. Untrusted text only: stand-alone 32-hex tokens are masked as ``[hex32]`` because
+   ExtorQ's own event, alert and context ids have that shape, and telemetry must not be
+   able to impersonate them in the state. In all text ``<`` becomes U+2039, so tag-like
+   payloads (``</data><instructions>``) cannot imitate markup structure for the model.
+5. Whitespace is collapsed and the text is truncated to a per-field limit with an
+   explicit ``…[truncated]`` marker.
 
-Provider *outputs* go through :func:`clean_output`: same normalisation and
-redaction, markup neutralised, URLs defanged (``hxxp://``), Markdown links and
-images removed. The API contract only ever carries plain text.
+Jev returns only typed answers (probabilities and option labels), never free text, so
+no provider output is ever rendered; :func:`clean_token` bounds the few identifiers that
+come back (request ids) and the caller-supplied ``requested_by``.
 """
 
 from __future__ import annotations
@@ -36,7 +34,7 @@ from extorq.ai._compat import optional_attr
 TRUNCATION_MARK = "…[truncated]"
 _HARD_INPUT_CAP = 32_768  # contracts bound strings far below this; defence against abuse
 
-# Per-field limits (characters) for untrusted text in provider inputs.
+# Per-field limits (characters) for untrusted text in the Jev state.
 LIMIT_LOG_MESSAGE = 300
 LIMIT_SUMMARY = 300
 LIMIT_COMMIT_MESSAGE = 200
@@ -50,11 +48,6 @@ LIMIT_EXCERPT = 200
 _WS = re.compile(r"\s+")
 _LINE_BREAKS = str.maketrans({"\n": " ", "\r": " ", "\t": " ", "\u2028": " ", "\u2029": " "})
 _HEX32 = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32}(?![0-9A-Fa-f])")
-_MARKERS = re.compile(
-    r"(?i)(?:(?:begin|end)[\s_-]*untrusted[\s_-]*(?:evidence)?|allowed[\s_-]*evidence[\s_-]*ids"
-    r"|exq-[0-9a-f]{8,})"
-)
-_DASH_RUN = re.compile(r"[-=_~]{3,}")
 
 # Defence-in-depth secret patterns. Quantifiers are bounded to avoid pathological
 # backtracking on attacker-controlled input.
@@ -129,15 +122,11 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
 )
 
-_URL_SCHEME = re.compile(r"(?i)\bh(tt)(ps?)://")
-_DANGEROUS_SCHEME = re.compile(r"(?i)\b(javascript|vbscript|file):")
-_DATA_URL = re.compile(r"(?i)\bdata:([a-z]+/)")
-_MD_IMAGE = re.compile(r"!\[([^\]]{0,200})\]\([^)]{0,2000}\)")
-_MD_LINK = re.compile(r"\[([^\]]{0,200})\]\([^)]{0,2000}\)")
-
 
 @dataclass(frozen=True)
 class Cleaned:
+    """Cleaned text plus what cleaning did (counted into the projection's statistics)."""
+
     text: str
     redactions: int
     truncated: bool
@@ -211,40 +200,26 @@ def neutralise_markup(text: str) -> str:
 
 
 def clean_untrusted(value: object, limit: int, *, known_secrets: Iterable[str] = ()) -> Cleaned:
-    """Clean attacker-controllable telemetry text for inclusion in a provider input."""
+    """Clean attacker-controllable telemetry text for inclusion in Jev's state."""
     text = _normalise(value)
     text, redactions = redact_secrets(text, known_secrets)
     text = _HEX32.sub("[hex32]", text)
     text = neutralise_markup(text)
-    text = _MARKERS.sub("[marker]", text)
-    text = _DASH_RUN.sub("--", text)
     text = _WS.sub(" ", text).strip()
     text, truncated = _truncate(text, limit)
     return Cleaned(text, redactions, truncated)
 
 
 def clean_trusted(value: object, limit: int, *, known_secrets: Iterable[str] = ()) -> Cleaned:
-    """Clean ExtorQ-authored text (rule metadata, coverage notes): normalise, redact, bound."""
+    """Clean ExtorQ-authored text (rule metadata, coverage notes): normalise, redact, bound.
+
+    Rule text may legitimately quote ids, so 32-hex tokens are kept here.
+    """
     text = _normalise(value)
     text, redactions = redact_secrets(text, known_secrets)
     text = neutralise_markup(text)
-    text = _MARKERS.sub("[marker]", text)
     text, truncated = _truncate(text, limit)
     return Cleaned(text, redactions, truncated)
-
-
-def clean_output(value: object, limit: int, *, known_secrets: Iterable[str] = ()) -> str:
-    """Clean provider output for storage and display as plain text."""
-    text = _normalise(value)
-    text, _ = redact_secrets(text, known_secrets)
-    text = _MD_IMAGE.sub("[image removed]", text)
-    text = _MD_LINK.sub(r"\1 (link removed)", text)
-    text = _URL_SCHEME.sub(r"hxx\2://", text)
-    text = _DANGEROUS_SCHEME.sub(r"\1[:]", text)
-    text = _DATA_URL.sub(r"data[:]\1", text)
-    text = neutralise_markup(text)
-    text, _ = _truncate(text, limit)
-    return text
 
 
 _SAFE_TOKEN = re.compile(r"[^A-Za-z0-9:._@/+-]")

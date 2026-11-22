@@ -1,4 +1,4 @@
-"""ExtorQ collector SDK (owner: agent A; PLAN §5, docs/collectors.md).
+"""ExtorQ collector SDK (owner: platform; PLAN §5, docs/collectors.md).
 
 Public API::
 
@@ -14,7 +14,7 @@ Public API::
             ctx.emit(events, {"journal.cursor": new_cursor})   # atomic outbox + checkpoint
 
 * ``ctx.emit(records, checkpoints)`` validates every record against the contracts
-  (schema 1.1, including ``Service`` / ``ServiceInstance``) and commits outbox rows,
+  (schema 2.0, including ``Service`` / ``ServiceInstance``) and commits outbox rows,
   checkpoints and staged snapshots in ONE SQLite transaction.
 * ``ctx.diff_snapshot(name, items)`` -> ``(added, changed, removed)``; the new
   snapshot is persisted by the next ``emit`` together with the diff records.

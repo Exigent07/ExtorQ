@@ -11,7 +11,6 @@ from typing import Any
 import httpx2
 import pytest
 from ai_fakes import (
-    FAKE_GEMINI_KEY,
     FAKE_JEV_KEY,
     FakeChoice,
     FakeJevClient,
@@ -318,14 +317,16 @@ def test_insufficient_context_status() -> None:
     assert assessment.triage.recommendation is R.INSUFFICIENT_CONTEXT
 
 
-def test_state_contains_no_configured_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GEMINI_API_KEY", FAKE_GEMINI_KEY)
-    ctx = ssh_context(summary_text=f"leaked {FAKE_JEV_KEY} and {FAKE_GEMINI_KEY} in a log line")
+def test_state_contains_no_configured_secret() -> None:
+    ctx = ssh_context(
+        summary_text=f"leaked {FAKE_JEV_KEY} in a log line",
+        extra_fields={"message": f"upstream rejected {FAKE_JEV_KEY}"},
+    )
     client = answering_client()
     _provider(client).assess(ctx)
     state_text = repr(client.calls[0]["state"])
     assert FAKE_JEV_KEY not in state_text
-    assert FAKE_GEMINI_KEY not in state_text
+    assert "[REDACTED:configured_secret]" in state_text
 
 
 def test_oversized_state_is_shrunk_to_configured_cap() -> None:

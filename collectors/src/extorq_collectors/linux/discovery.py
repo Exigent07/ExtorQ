@@ -30,10 +30,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from extorq.common.redaction import redact_text, sanitize_untrusted
 from extorq.contracts import DiscoveryEvidence, PortAttribution, ServiceEndpoint, ServiceKind
 from extorq.contracts.identity import instance_id as make_instance_id
 from extorq_collectors.linux.adapters.webapp_json import LOG_SCHEMA, WebAppBinding
+from extorq_collectors.linux.common import unit_exec_paths
 from extorq_collectors.services.base import ServiceAdapter, ServiceCandidate, exposure_of
 from extorq_collectors.services.registry import match_adapter
 
@@ -102,7 +102,7 @@ class ProcessFact:
     uid: int | None
     user: str | None
     comm: str
-    args: str
+    executable: str | None
     start_ticks: int | None
     cgroup: str | None
 
@@ -123,7 +123,9 @@ class ProcessFact:
             uid=uid if isinstance(uid, int) else None,
             user=raw["user"][:64] if isinstance(raw.get("user"), str) else None,
             comm=str(raw.get("comm") or "")[:64],
-            args=str(raw.get("args") or "")[:256],
+            executable=raw["executable"][:1024]
+            if isinstance(raw.get("executable"), str) and raw["executable"].startswith("/")
+            else None,
             start_ticks=ticks if isinstance(ticks, int) else None,
             cgroup=raw["cgroup"][:1024] if isinstance(raw.get("cgroup"), str) else None,
         )
@@ -302,10 +304,6 @@ def _last(values: Sequence[str]) -> str | None:
     return values[-1] if values else None
 
 
-def _redacted(text: str, limit: int) -> str:
-    return sanitize_untrusted(redact_text(text)[0], limit)
-
-
 def _endpoint(listener: ListenerFact, attribution: PortAttribution, basis: str) -> ServiceEndpoint:
     return ServiceEndpoint(
         protocol="tcp" if listener.proto == "tcp" else "udp",
@@ -464,9 +462,9 @@ def discover(
             attributes["vendor_unit"] = facts.get("unit_dir") not in LOCAL_UNIT_DIRS
             if facts.get("description"):
                 attributes["unit_description"] = str(facts["description"])[:256]
-            exec_start = facts.get("exec_start") or []
+            exec_start = unit_exec_paths(facts.get("exec_start"))
             if exec_start:
-                attributes["exec_start"] = _redacted(str(exec_start[0]), 512)
+                attributes["exec_start"] = exec_start[0]
             directives = (
                 facts.get("directives") if isinstance(facts.get("directives"), Mapping) else {}
             )
@@ -488,8 +486,7 @@ def discover(
         is_manager = unit == MANAGER_UNIT
         executable = None
         if mains:
-            first = mains[0].args.split(" ", 1)[0] if mains[0].args else ""
-            executable = first if first.startswith("/") else mains[0].comm
+            executable = mains[0].executable or mains[0].comm
         candidate = ServiceCandidate(
             asset_id=asset,
             service_kind=ServiceKind.HOST_SERVICE,

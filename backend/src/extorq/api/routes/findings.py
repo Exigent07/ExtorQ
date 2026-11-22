@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query
 from extorq.api import schemas as s
 from extorq.api import service
 from extorq.api.auth import CurrentPrincipal
-from extorq.api.errors import BadRequest
+from extorq.api.errors import BadRequest, NotFound
 from extorq.api.repository import FindingFilters
 from extorq.api.routes.common import (
     IDENTIFIER_PATTERN,
@@ -45,6 +45,12 @@ def list_findings(
     ] = None,
     service_id: ServiceIdQuery = None,
 ) -> s.FindingListResponse:
+    scope_asset = ""
+    if service_id:
+        owner = repo.get_service(service_id)
+        if owner is None:
+            raise NotFound("service not found")
+        scope_asset = str(owner["asset_id"])
     filters = FindingFilters(
         asset_id=asset_id or "",
         severities=tuple(sev.value for sev in severity or ()),
@@ -52,6 +58,7 @@ def list_findings(
         category=category.value if category else "",
         states=tuple(state or ()),
         service_id=service_id or "",
+        scope_asset=scope_asset,
     )
     if filters.states and not repo.findings_lifecycle_available():
         raise BadRequest(

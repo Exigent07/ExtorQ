@@ -47,15 +47,14 @@ def row(evidence: list[str], **kw) -> RuleRow:
         "entities": {"src_ip": "203.0.113.45"},
         "features": {"distinct_connections": 6, "usernames": ["admin"]},
         "confidence": EvidenceConfidence.MEDIUM,
-        "simulation_run_ids": [],
         "bucket_start": T0,
     }
     base.update(kw)
     return RuleRow(**base)
 
 
-def _decide(r: RuleRow, existing=None, stored=None, now=T0 + timedelta(minutes=2)):
-    rule = RULES["VM-001"]
+def _decide(r: RuleRow, existing=None, stored=None, now=T0 + timedelta(minutes=2), rule=None):
+    rule = rule or RULES["VM-001"]
     return decide(
         rule,
         r,
@@ -83,12 +82,13 @@ def test_new_alert_then_late_evidence_creates_a_new_version() -> None:
     assert "203.0.113.45" in alert.summary
 
     # Same row again: nothing new -> no version.
-    assert _decide(row(ids(5)), existing=alert, stored=dict.fromkeys(ids(5), "trigger")) is None
+    stored = dict.fromkeys(ids(5), alert.updated_at)
+    assert _decide(row(ids(5)), existing=alert, stored=stored) is None
 
     late = _decide(
         row(ids(7), confidence=EvidenceConfidence.HIGH, last_seen=T0 + timedelta(seconds=90)),
         existing=alert,
-        stored=dict.fromkeys(ids(5), "trigger"),
+        stored=stored,
         now=T0 + timedelta(minutes=4),
     )
     assert late is not None and not late.created
@@ -110,6 +110,36 @@ def test_confidence_never_decreases_and_evidence_array_is_capped() -> None:
         stored={},
     )
     assert lower is not None and lower.alert.confidence is EvidenceConfidence.HIGH
+
+
+def test_rule_version_reassesses_confidence_without_creating_another_alert() -> None:
+    original = RULES["VM-001"]
+    earlier = _decide(row(ids(3), confidence=EvidenceConfidence.HIGH), rule=original).alert
+    revised = original.metadata.model_copy(update={"version": "99.0.0"})
+    from dataclasses import replace
+
+    rule = replace(original, metadata=revised)
+    current_row = row(ids(2), confidence=EvidenceConfidence.LOW, features={"revised": True})
+    changed = _decide(current_row, existing=earlier, rule=rule)
+    assert changed is not None and not changed.created
+    assert changed.alert.alert_id == earlier.alert_id
+    assert changed.alert.rule_version == "99.0.0"
+    assert changed.alert.confidence is EvidenceConfidence.LOW
+    assert changed.alert.features == {"revised": True}
+    assert changed.alert.evidence_event_ids == ids(3)
+    assert _decide(current_row, existing=changed.alert, rule=rule) is None
+
+
+def test_retry_repairs_alert_when_evidence_was_written_first() -> None:
+    published = _decide(row(ids(3))).alert
+    stored = dict.fromkeys(ids(3), published.updated_at)
+    pending_eid = ids(4)[-1]
+    updated_at = published.updated_at + timedelta(seconds=30)
+    stored[pending_eid] = updated_at
+    repaired = _decide(row(ids(4)), existing=published, stored=stored, now=updated_at)
+    assert repaired is not None
+    assert pending_eid in repaired.alert.evidence_event_ids
+    assert repaired.new_evidence == []
 
 
 def test_service_ids_are_validated_unioned_and_sorted() -> None:
@@ -155,7 +185,6 @@ def test_parse_row_rejects_contract_violations() -> None:
         "entities": {"src_ip": "1.2.3.4"},
         "features": '{"a": 1}',
         "confidence": "high",
-        "simulation_run_ids": [],
         "bucket_start": T0,
     }
     assert parse_row(rule, good).features == {"a": 1}
@@ -201,11 +230,64 @@ def test_registry_reports_invalid_rules(tmp_path: Path) -> None:
     assert "table alerts is not allowed" in text
 
 
-def test_repository_rules_all_have_positive_and_negative_tests() -> None:
-    assert {"VM-001", "VM-002", "K8S-001", "K8S-002", "GH-001", "CORR-002"} <= set(RULES)
+#: The detection-test matrix (docs/team/PLAN.md section 12): every rule it names exists.
+MATRIX_RULES = {
+    "linux_host": {"VM-001", "VM-002", "VM-003", "VM-004", "HTTP-001", "APP-001", "CORR-002"},
+    "kubernetes_cluster": {"K8S-001", "K8S-002", "K8S-003", "K8S-004", "K8S-005", "APP-001"},
+    "github_repository": {"GH-001", "GH-002", "GH-003", "GH-004", "GH-005"},
+    "macos_host": {"MAC-001", "MAC-002", "MAC-003", "MAC-004", "MAC-005"},
+}
+
+
+def test_repository_rules_cover_the_detection_test_matrix() -> None:
+    for asset_type, rule_ids in MATRIX_RULES.items():
+        assert rule_ids <= set(RULES), sorted(rule_ids - set(RULES))
+        for rule_id in rule_ids:
+            declared = {a.value for a in RULES[rule_id].metadata.asset_types}
+            assert asset_type in declared, f"{rule_id} does not declare {asset_type}"
     for rule in RULES.values():
         assert {c.expect for c in rule.tests} == {"alert", "no_alert"}, rule.rule_id
         assert rule.metadata.false_positives and rule.metadata.blind_spots, rule.rule_id
+        assert rule.metadata.mitre_techniques, rule.rule_id
+
+
+def test_rule_outputs_carry_no_simulation_column() -> None:
+    """Schema 2.0: rule SQL neither reads simulation columns nor returns simulation_run_ids."""
+    for rule in RULES.values():
+        assert "simulation" not in rule.query_text.lower(), rule.rule_id
+
+
+def test_case_param_overrides_are_validated(tmp_path: Path) -> None:
+    rule_yaml = _VALID_RULE.replace("tests:\n", "params: {allowlist: [], limit: 3}\ntests:\n")
+    (tmp_path / "XX-002.sql").write_text(_VALID_SQL)
+    (tmp_path / "f.jsonl").write_text("")
+
+    def load(case: str):
+        (tmp_path / "XX-002.yaml").write_text(rule_yaml + case)
+        return load_rule_file(tmp_path / "XX-002.yaml", tmp_path)
+
+    rule, problems = load(
+        "  - name: c\n    fixture: f.jsonl\n    expect: no_alert\n"
+        "    params: {allowlist: [x], limit: 5}\n"
+    )
+    assert problems == [] and rule is not None
+    [case] = rule.tests
+    assert case.params == {"allowlist": ["x"], "limit": 5}
+    overridden = rule.with_params(case.params)
+    assert overridden.metadata.params == {"allowlist": ["x"], "limit": 5}
+    assert overridden.query_text == rule.query_text
+    assert overridden.metadata.query_sha256 == rule.metadata.query_sha256
+    assert rule.metadata.params == {"allowlist": [], "limit": 3}  # the original is unchanged
+    assert rule.with_params({}) is rule
+
+    _, problems = load(
+        "  - name: c\n    fixture: f.jsonl\n    expect: no_alert\n    params: {other: 1}\n"
+    )
+    assert "overrides undeclared param 'other'" in "\n".join(map(str, problems))
+    _, problems = load(
+        "  - name: c\n    fixture: f.jsonl\n    expect: no_alert\n    params: {limit: [1]}\n"
+    )
+    assert "param 'limit' override has the wrong type" in "\n".join(map(str, problems))
 
 
 _VALID_RULE = (

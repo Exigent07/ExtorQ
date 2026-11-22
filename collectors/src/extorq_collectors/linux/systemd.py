@@ -144,7 +144,6 @@ def parse_systemd(entry: JournalEntry, ctx: ParseContext) -> list[SecurityEvent]
                 "boot_id": entry.boot_id,
                 **extra,
             },
-            sim_texts=(unit,),
             is_self=_self_unit(unit, desc, ctx) or is_self(entry, ctx),
         )
     ]

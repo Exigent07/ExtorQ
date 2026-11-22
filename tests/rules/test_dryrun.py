@@ -1,6 +1,7 @@
 """extorq.detection.dryrun on a real (ephemeral) ClickHouse: read-only, engine-identical.
 
-SYNTHETIC data: the VM-002 and CORR-002 rule fixtures.
+Data: the VM-002 matrix fixture (captured VM records parsed by the Linux collector) and a
+SYNTHETIC CORR-002 fixture.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ def _counts(ch: harness.EphemeralClickHouse) -> tuple[int, ...]:
 
 def test_dry_run_reports_new_then_stored_and_never_writes(clean, to_row) -> None:
     rule = RULES["VM-002"]
-    path = ROOT / "linux" / "tests" / "VM-002" / "positive_created_with_audit_sim.jsonl"
+    path = ROOT / "linux" / "tests" / "VM-002" / "positive_matrix_unit_created_enabled.jsonl"
     records, start, end = _load(path)
     harness.insert_records(clean.client("admin"), records, to_row)
 
@@ -55,7 +56,7 @@ def test_dry_run_reports_new_then_stored_and_never_writes(clean, to_row) -> None
         rule, start, end, rules_client=clean.client("rules_ro"), read_client=clean.client("detect")
     )
     assert _counts(clean) == before  # nothing written
-    assert lines[0].startswith("VM-002 v1.2.0") and "1 row(s)" in lines[0]
+    assert lines[0].startswith(f"VM-002 v{rule.version}") and "1 row(s)" in lines[0]
     assert any(line.startswith("row 1: alert ") and line.endswith(" NEW") for line in lines)
     assert any("file.audit.watch linux.auditd syscall=openat" in line for line in lines)
 
@@ -70,8 +71,10 @@ def test_dry_run_reports_new_then_stored_and_never_writes(clean, to_row) -> None
     lines = dryrun.run(
         rule, start, end, rules_client=clean.client("rules_ro"), read_client=clean.client("detect")
     )
-    assert any(f"alert {alert['alert_id']} STORED (v1.2.0, high" in line for line in lines)
-    assert any("stored evidence not produced by v1.2.0 in this window: 0" in ln for ln in lines)
+    stored = f"alert {alert['alert_id']} STORED (v{rule.version}, high"
+    assert any(stored in line for line in lines)
+    not_produced = f"stored evidence not produced by v{rule.version} in this window: 0"
+    assert any(not_produced in line for line in lines)
 
 
 def test_dry_run_shows_removal_as_context_not_evidence(clean, to_row) -> None:

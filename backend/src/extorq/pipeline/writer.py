@@ -41,6 +41,7 @@ from extorq.contracts.common import HealthStatus, utc_now
 from extorq.contracts.health import PipelineHealth
 from extorq.contracts.identity import canonical_json, iso_utc, stable_id
 from extorq.contracts.ingest import INGEST_RECORD_ADAPTER, RecordKind
+from extorq.ingest.event_identity import stored_event
 from extorq.pipeline.spool import NewRecord, Spool, SpoolRow, SpoolUnavailable
 from extorq.storage.clickhouse import is_transient_error
 from extorq.storage.rows import (
@@ -71,9 +72,19 @@ def _parse_time(value: str) -> datetime:
 def decode_row(row: SpoolRow) -> tuple[str, dict[str, Any]]:
     """Convert a spool row into ``(table, clickhouse_row)``; raises on permanent errors."""
     if row.kind in _KINDS:
-        record = INGEST_RECORD_ADAPTER.validate_python(json.loads(row.payload))
+        payload = json.loads(row.payload)
+        if row.kind == "event" and isinstance(payload, dict) and payload.get("kind") == "event":
+            data = payload.get("data")
+            if isinstance(data, dict) and data.get("schema_version") in {"1.0", "1.1"}:
+                event = stored_event(data)
+                if event is None or event.event_id != row.record_key:
+                    raise RowError("historical event cannot be converted without changing evidence")
+                payload["data"] = event
+        record = INGEST_RECORD_ADAPTER.validate_python(payload)
         if record.kind != row.kind:
             raise RowError(f"spool kind {row.kind} does not match payload kind {record.kind}")
+        if record.kind == "event" and record.data.event_id != row.record_key:
+            raise RowError("spool event key does not match its payload identity")
         return TABLE_BY_KIND[RecordKind(row.kind)], to_row(
             row.kind,
             record.data,

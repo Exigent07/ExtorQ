@@ -1,17 +1,22 @@
--- VM-001 v1.0.0: burst of failed SSH authentication from one source address.
+-- VM-001 v1.1.0: burst of failed SSH authentication from one source address.
 --
--- Sliding-window threshold. An event is a "crossing" when the trailing window
--- ending at it ({window_seconds}) holds >= {threshold_connections} distinct
--- (src_ip, src_port) connections, or >= {threshold_failures} 'Failed <method>'
--- attempts (one connection may try several passwords). The rule returns one row
--- per (asset, src_ip, bucket of the crossing); the engine merges rows of one
--- continuous burst into a single alert, so a burst crossing a bucket boundary is
--- neither missed nor duplicated.
+-- Sliding-window threshold. An event is a "crossing" when the trailing window ending at
+-- it ({window_seconds}) holds >= {threshold_connections} distinct (src_ip, src_port)
+-- connections that failed authentication, or >= {threshold_failures} 'Failed <method>'
+-- attempts (one connection may try several passwords). Every sshd failure shape counts
+-- as a failed connection: login_failed, invalid_user, preauth_closed (a client that
+-- offered a rejected key and gave up) and max_auth_exceeded. Successful logins never do.
 --
--- Evidence: every failed-auth event from the source between (first crossing -
--- window) and the last crossing in the bucket, earliest first, capped at 500.
+-- One row per (asset, src_ip, bucket of the crossing); the engine merges rows of one
+-- continuous burst into a single alert, so a burst that crosses a bucket boundary is
+-- neither missed nor duplicated. Evidence: every failure from the source between
+-- (first crossing - window) and the last crossing in the bucket, earliest first.
+--
+-- Confidence (evidence completeness, not maliciousness):
+--   high    the connection threshold was reached from an attributable source
+--   medium  the source is a shared NAT/gateway address ({shared_nat_ips}: the burst is
+--           real, its origin is not attributable), or only the attempt threshold was met
 -- Duplicate-safe: events are de-duplicated by event_id before any counting.
--- Simulation-tagged events are NOT filtered: scenario telemetry is genuine.
 WITH
     ev AS (
         SELECT
@@ -22,8 +27,7 @@ WITH
             asset_type,
             assumeNotNull(src_ip) AS src,
             src_port,
-            substring(ifNull(actor_name, ''), 1, 64) AS user_name,
-            simulation_run_id
+            substring(ifNull(actor_name, ''), 1, 64) AS user_name
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -74,6 +78,7 @@ SELECT
         toUInt32(uniqExact(tuple(e.src, e.src_port))),
         toUInt32(countIf(e.event_type = 'auth.ssh.login_failed')),
         toUInt32(countIf(e.event_type = 'auth.ssh.invalid_user')),
+        toUInt32(countIf(e.event_type = 'auth.ssh.preauth_closed')),
         toUInt32(uniqExactIf(e.user_name, e.user_name != '')),
         arraySort(groupUniqArrayIf(10)(e.user_name, e.user_name != '')),
         toUInt32(max(c.peak_connections)),
@@ -83,19 +88,17 @@ SELECT
         toUInt32({threshold_connections:UInt32}),
         toUInt32({threshold_failures:UInt32})
     ), concat('Tuple(distinct_connections UInt32, failed_attempts UInt32, invalid_user_events UInt32, ',
-              'distinct_usernames UInt32, usernames Array(String), peak_window_connections UInt32, ',
-              'peak_window_failures UInt32, src_ip_shared_nat Bool, window_seconds UInt32, ',
-              'threshold_connections UInt32, threshold_failures UInt32)'))) AS features,
+              'preauth_closed_events UInt32, distinct_usernames UInt32, usernames Array(String), ',
+              'peak_window_connections UInt32, peak_window_failures UInt32, src_ip_shared_nat Bool, ',
+              'window_seconds UInt32, threshold_connections UInt32, threshold_failures UInt32)'))) AS features,
     c.bucket_start AS bucket_start,
     multiIf(
         has({shared_nat_ips:Array(String)}, c.src), 'medium',
         max(c.peak_connections) >= {threshold_connections:UInt32}, 'high',
-        'medium') AS confidence,
-    groupUniqArray(16)(e.simulation_run_id) AS simulation_run_ids
+        'medium') AS confidence
 FROM crossings AS c
 INNER JOIN ev AS e ON e.asset_id = c.asset_id AND e.src = c.src
 WHERE e.event_time >= c.first_crossing - toIntervalMillisecond({window_seconds:UInt32} * 1000)
   AND e.event_time <= c.last_crossing
 GROUP BY c.asset_id, c.src, c.bucket_start
 ORDER BY first_seen
-LIMIT 1000

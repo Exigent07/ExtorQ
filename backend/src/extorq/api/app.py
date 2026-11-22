@@ -17,7 +17,7 @@ from extorq.api.logs import get_logger
 from extorq.api.middleware import SecurityMiddleware
 from extorq.api.repository import ClickHouseRepository, Repository
 from extorq.api.routes import api_router
-from extorq.api.service import SummaryGate, utc_now
+from extorq.api.service import utc_now
 from extorq.api.settings import ApiSettings
 from extorq.version import __version__
 
@@ -26,7 +26,13 @@ log = get_logger("extorq.api")
 API_PREFIX = "/api/v1"
 
 DESCRIPTION = """
-Read API over ExtorQ's ClickHouse store plus two audited analyst mutations.
+Read API over ExtorQ's ClickHouse store. The only analyst mutation is the workflow state of
+an alert (`POST /alerts/{alert_id}/state`); an investigation context built on demand for an
+analyst is also persisted. Both are audited.
+
+**AI is advisory and read-only here.** Jev triage assessments are written by the ai-worker
+and listed by `GET /alerts/{alert_id}/assessments`; the API never calls an AI provider and
+AI output never changes an alert.
 
 **Authentication.** Every `/api/v1` call needs `Authorization: Bearer <api service token>`
 (held only by the console's Next.js server), `X-ExtorQ-User` and `X-ExtorQ-Role`
@@ -76,7 +82,6 @@ def create_app(
     app.state.integrations = integrations if integrations is not None else PlatformIntegrations()
     app.state.clock = clock or utc_now
     app.state.token_verifier = TokenVerifier(settings)
-    app.state.summary_gate = SummaryGate(settings.summary_requests_per_minute)
     app.state.response_cache = (
         response_cache
         if response_cache is not None

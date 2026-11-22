@@ -7,10 +7,11 @@
    admin password passed through a 0600 env-file that is deleted right after start). The
    name is unique per run, so concurrent runs (two sessions running the suite) never touch
    each other's container; leftovers of runs whose process is gone are removed
-2. apply ``infra/clickhouse/migrations/0001_core_tables.sql`` (and 0003 if present)
-   with the official ``clickhouse-client`` inside the container
+2. apply the production migrations in order (:data:`MIGRATIONS`: 0001, 0003-0006 and
+   0008-0009, including the retained evidence timestamps) with the
+   official ``clickhouse-client`` inside the container
 3. create least-privilege users that mirror PLAN section 4.4: ``c2_rules_ro``
-   (readonly=1, SELECT on the six telemetry tables) executes rule SQL and
+   (readonly=1, SELECT on the telemetry tables only) executes rule SQL and
    ``c2_detect`` reads telemetry/alert tables and writes detection tables
 4. for each test case: truncate, insert the fixture records through A's
    ``extorq.storage.rows.to_row`` (time-shifted by whole days so bucket
@@ -21,7 +22,8 @@
 5. remove the container (always, also on failure)
 
 Fixture files are JSONL; each line is a SecurityEvent or an ingest record
-``{"kind": ..., "data": ...}``. Fixtures are synthetic and labelled as such.
+``{"kind": ..., "data": ...}``. Fixtures are synthetic (or derived from captured records
+with the producer's own normaliser) and labelled as such in ``labels["extorq.fixture"]``.
 """
 
 from __future__ import annotations
@@ -59,12 +61,16 @@ OWNER_LABEL = "extorq.owner=c2"
 PID_LABEL = "extorq.harness-pid"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 #: Applied in order. 0002 (RBAC, password templating) is replaced by the c2_* users
-#: below; the roles that 0004's GRANT statements reference are created first.
+#: below; the roles that the GRANT/REVOKE statements of 0004 and 0008 reference are
+#: created first. 0007 only tunes a production quota and is skipped.
 MIGRATIONS = (
     "0001_core_tables.sql",
     "0003_findings_views.sql",
     "0004_services.sql",
     "0005_findings_services.sql",
+    "0006_refresh_views.sql",
+    "0008_remove_simulation.sql",
+    "0009_alert_evidence_event_time.sql",
 )
 PLATFORM_ROLES = (
     "extorq_role_ingest",
@@ -75,13 +81,13 @@ PLATFORM_ROLES = (
     "extorq_role_api_writer",
     "extorq_role_grafana",
 )
+#: Mirrors extorq_role_rules_ro: the only tables rule SQL may read (sqlguard.ALLOWED_TABLES).
 RULES_RO_TABLES = (
     "events",
     "assets",
     "inventory_items",
     "finding_observations",
     "scan_runs",
-    "simulation_runs",
 )
 #: Mirrors extorq_role_detect (0002 + 0004).
 DETECT_SELECT = (
@@ -129,7 +135,6 @@ TRUNCATE_TABLES = (
     "collector_health",
     "finding_observations",
     "scan_runs",
-    "simulation_runs",
     "inventory_items",
     "pipeline_health",
 )
@@ -432,20 +437,10 @@ def resolve_to_row() -> ToRow | None:
 
 
 def table_for(kind: RecordKind) -> str:
-    try:
-        from extorq.storage.rows import TABLE_BY_KIND
+    """Destination table of a record kind (A's mapping, the same one the writer uses)."""
+    from extorq.storage.rows import TABLE_BY_KIND
 
-        return TABLE_BY_KIND[kind]
-    except ImportError:
-        return {
-            RecordKind.EVENT: "events",
-            RecordKind.ASSET: "assets",
-            RecordKind.INVENTORY_ITEM: "inventory_items",
-            RecordKind.FINDING: "finding_observations",
-            RecordKind.SCAN_RUN: "scan_runs",
-            RecordKind.COLLECTOR_HEALTH: "collector_health",
-            RecordKind.SIMULATION_RUN: "simulation_runs",
-        }[kind]
+    return TABLE_BY_KIND[kind]
 
 
 def insert_records(
@@ -490,7 +485,7 @@ class CaseResult:
 def fetch_alerts(client: ClickHouseConnectClient, rule_id: str) -> list[dict[str, Any]]:
     result = client.select(
         "SELECT alert_id, confidence, entities, event_count, evidence_event_ids, "
-        "evidence_truncated, simulation_run_ids, created_at, updated_at, summary, group_key, "
+        "evidence_truncated, created_at, updated_at, summary, group_key, "
         "service_ids, features FROM alerts FINAL WHERE rule_id = {r:String} ORDER BY first_seen",
         {"r": rule_id},
     )
@@ -547,6 +542,7 @@ def run_case(
     today: datetime | None = None,
 ) -> CaseResult:
     started = time.monotonic()
+    rule = rule.with_params(case.params)
     ch.truncate()
     records = load_fixture(case.fixture)
     delta = day_offset(anchor_time(records, case), today)
@@ -584,13 +580,6 @@ def run_case(
         for text in case.summary_contains:
             if text not in str(alert.get("summary") or ""):
                 problems.append(f"summary lacks {text!r}: {str(alert.get('summary'))[:300]!r}")
-    fixture_sims = {
-        m.simulation.run_id for _, m in records if isinstance(m, SecurityEvent) and m.simulation
-    }
-    if alerts and fixture_sims:
-        tagged = set().union(*(set(a["simulation_run_ids"]) for a in alerts))
-        if not tagged & fixture_sims:
-            problems.append("simulation_run_ids of the fixture were not propagated to the alert")
     problems.extend(check_integrity(ch.client("admin"), alerts))
     summary = [
         {

@@ -1,13 +1,10 @@
-"""``extorq-collect``: run host-native collectors and record simulation runs (owner: A).
+"""``extorq-collect``: run, inspect and flush the host-native collectors (owner: platform).
 
 Commands::
 
     extorq-collect run [--only a,b] [--once] [--config FILE ...] [--config-dir DIR]
     extorq-collect status [--config ...] [--json]
-    extorq-collect flush [--only a,b] [--timeout 60]
-    extorq-collect sim-record --scenario VM-001 --asset linux:lab-vm-01 \\
-        --status started|completed|failed|cleaned_up --run-id <id> \\
-        [--description TEXT] [--expected-rules VM-001,CORR-002] [--note TEXT ...]
+    extorq-collect flush [--only a,b] [--timeout 60] [--requeue-dead]
 
 Paths (``config/collectors``, ``var/collectors``, ``var/secrets/tokens``,
 ``var/tls/ca.crt``) resolve against ``EXTORQ_HOME`` or, when unset, the ExtorQ
@@ -28,7 +25,7 @@ import typer
 
 app = typer.Typer(
     name="extorq-collect",
-    help="ExtorQ collectors: run, inspect and flush; record simulation runs.",
+    help="ExtorQ collectors: run, inspect and flush buffered records.",
     no_args_is_help=True,
     add_completion=False,
     pretty_exceptions_enable=False,
@@ -148,7 +145,6 @@ def status(
 ) -> None:
     """Show local collector state (outbox depth, dead letters, last health). Read-only."""
     from extorq_collectors.sdk.runner import state_path
-    from extorq_collectors.sdk.simulation import STATE_ID
     from extorq_collectors.sdk.state import read_status
 
     settings = _settings()
@@ -162,17 +158,6 @@ def status(
                 "producer_id": cfg.producer_id,
                 "asset_id": cfg.asset_id,
                 **(read_status(state_path(settings, cfg.collector_id)) or {"state": "none"}),
-            }
-        )
-    sim = read_status(state_path(settings, STATE_ID))
-    if sim:
-        rows.append(
-            {
-                "collector_id": STATE_ID,
-                "enabled": True,
-                "producer_id": "simulation-runner",
-                "asset_id": None,
-                **sim,
             }
         )
     if as_json:
@@ -204,11 +189,10 @@ def flush(
         ),
     ] = False,
 ) -> None:
-    """Deliver buffered outbox records (collectors + simulation-runner) without collecting."""
+    """Deliver buffered outbox records of the configured collectors without collecting."""
     _configure_logging()
     from extorq_collectors.sdk.runner import default_client, state_path
     from extorq_collectors.sdk.sender import Sender
-    from extorq_collectors.sdk.simulation import PRODUCER_ID, STATE_ID
     from extorq_collectors.sdk.state import StateStore, read_status
 
     settings = _settings()
@@ -216,8 +200,6 @@ def flush(
         (c.collector_id, c.producer_id)
         for c in _load_configs(settings, config, config_dir, only, include_disabled=True)
     ]
-    if not only:
-        targets.append((STATE_ID, PRODUCER_ID))
     remaining = 0
     deadline = time.monotonic() + timeout
     for collector_id, producer_id in targets:
@@ -249,73 +231,6 @@ def flush(
             + (f" last_error={report.error}" if report.error else "")
         )
     raise typer.Exit(EXIT_BUFFERED if remaining else 0)
-
-
-@app.command("sim-record")
-def sim_record(
-    scenario: Annotated[str, typer.Option(help="Scenario id, e.g. VM-001.")],
-    asset: Annotated[str, typer.Option(help="Target asset id, e.g. linux:lab-vm-01.")],
-    status_: Annotated[
-        str, typer.Option("--status", help="started | completed | failed | cleaned_up")
-    ],
-    run_id: Annotated[str, typer.Option(help="Run id: 8-32 lowercase letters or digits.")],
-    description: Annotated[str | None, typer.Option(help="What the run does.")] = None,
-    expected_rules: Annotated[
-        str | None, typer.Option(help="Comma-separated rule ids expected to fire.")
-    ] = None,
-    note: Annotated[list[str] | None, typer.Option(help="Free-text note (repeatable).")] = None,
-    operator: Annotated[
-        str | None, typer.Option(help="Who ran it (default simulation-runner).")
-    ] = None,
-    started_at: Annotated[
-        str | None, typer.Option(help="ISO 8601 start time when no local 'started' record exists.")
-    ] = None,
-    timeout: Annotated[float, typer.Option(help="Seconds to try delivering now.")] = 30.0,
-) -> None:
-    """Record a SimulationRun lifecycle step (producer simulation-runner)."""
-    _configure_logging()
-    from extorq_collectors.sdk.simulation import SimulationRecordError, record_simulation
-
-    rules = [r.strip() for r in (expected_rules or "").split(",") if r.strip()]
-    try:
-        result = record_simulation(
-            _settings(),
-            delivery_seconds=timeout,
-            scenario=scenario,
-            asset=asset,
-            status=status_,
-            run_id=run_id,
-            description=description,
-            expected_rules=rules,
-            operator=operator,
-            notes=note or [],
-            started_at=started_at,
-        )
-    except SimulationRecordError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(EXIT_INVALID) from None
-    report = result.report
-    typer.echo(
-        json.dumps(
-            {
-                "run_id": result.run.run_id,
-                "scenario_id": result.run.scenario_id,
-                "asset_id": result.run.asset_id,
-                "status": result.run.status.value,
-                "delivered": result.buffered == 0,
-                "accepted": report.accepted,
-                "duplicates": report.duplicates,
-                "dead_lettered": report.dead_lettered,
-                "buffered": result.buffered,
-                "error": report.error,
-            },
-            sort_keys=True,
-        )
-    )
-    if report.dead_lettered:
-        raise typer.Exit(1)
-    if result.buffered:
-        raise typer.Exit(EXIT_BUFFERED)
 
 
 def main() -> None:  # pragma: no cover - console script shim

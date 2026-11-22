@@ -1,0 +1,90 @@
+rule_id: MAC-005
+version: 1.0.0
+title: Unsigned or ad-hoc signed application installed on macOS
+description: >-
+  An application bundle without a valid identity-bearing code signature appeared in
+  /Applications or ~/Applications: unsigned, tampered (the signature no longer verifies) or
+  ad-hoc signed (signed without any identity, which is how unsigned arm64 code is made
+  runnable). Legitimate macOS software is signed by Apple or an identified developer;
+  trojanised apps and loaders often are not, and Gatekeeper only prompts when the
+  quarantine attribute is present. The collector verifies the signature of new bundles; an
+  undetermined verdict never alerts. No allowlist: such a bundle has no verifiable identity.
+  Confidence: high when the bundle identifier was read together with the verdict; medium when
+  the bundle carries no readable identity.
+severity: medium
+status: stable
+mitre_techniques: [T1204.002, T1553.001]
+asset_types: [macos_host]
+requires:
+  - source_type: macos.inventory
+    event_types: [software.installed]
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 3600
+  late_tolerance_seconds: 1800
+dedup:
+  strategy: event
+group_by: [asset_id, path, version]
+params: {}
+false_positives:
+  - >-
+    Open-source or in-house tools distributed without a Developer ID signature, and apps
+    built locally (Xcode "Sign to Run Locally" is ad-hoc) and copied to /Applications.
+    Handling: alerted by design; each install of a version is one alert. No bundle-id, name
+    or path allowlist because all three are written by the bundle's author; the durable fix
+    is to sign in-house builds.
+  - >-
+    A bundle still being copied fails verification. Handling: the collector reports a new
+    bundle only after it has been quiet for settle_seconds and re-checks a just-settled
+    failure on the next scan, so a half-copied bundle is not reported as unsigned.
+  - >-
+    Apps whose signature breaks because they modify their own bundle (some self-updaters).
+    Handling: reported; a broken signature is also what tampering looks like, so it is
+    reviewed rather than suppressed.
+blind_spots:
+  - >-
+    Bundles outside the inventoried application directories (Downloads, /tmp, external
+    volumes), command-line binaries, and apps that are run without being copied anywhere.
+  - >-
+    An undetermined signature check (timeout, unreadable bundle) is never alerted: unknown is
+    not treated as unsigned.
+  - >-
+    Notarisation and the quarantine attribute are not evaluated (spctl --assess may contact
+    Apple); a validly signed but malicious app is out of scope.
+  - >-
+    Ad-hoc signatures are recognised only when the collector reports signature_type; without
+    it only explicitly unsigned or invalid bundles alert.
+references:
+  - https://attack.mitre.org/techniques/T1553/001/
+  - https://developer.apple.com/documentation/security/code-signing-services
+query: MAC-005.sql
+summary_template: >-
+  Application {name} ({bundle_id}, version {version}) installed at {path} on {asset_id}
+  without an identity-bearing signature (signed: {signed}; signature type: {signature_type})
+tests:
+  - name: matrix-unsigned-test-bundle-installed
+    description: >-
+      Matrix positive: a minimal unsigned bundle "/Applications/ExtorQ Test.app" (never
+      executed) with an Info.plist identifier: high.
+    fixture: tests/MAC-005/positive_matrix_unsigned_bundle.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {bundle_id: com.extorq.test.app}
+  - name: adhoc-signed-bundle-without-identity
+    description: >-
+      An ad-hoc signed bundle (signature verifies, no identity) in ~/Applications whose
+      Info.plist has no bundle identifier: alerted, medium (no readable identity).
+    fixture: tests/MAC-005/positive_adhoc_no_identity.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      signed: true
+      signature_type: adhoc
+  - name: matrix-control-signed-apple-bundle-copy
+    description: >-
+      Matrix negative control: a copy of a signed Apple application bundle (valid signature),
+      plus a bundle whose signature could not be determined and a removal event.
+    fixture: tests/MAC-005/negative_matrix_signed_copy_and_unknown.jsonl
+    expect: no_alert

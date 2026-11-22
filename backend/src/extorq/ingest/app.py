@@ -42,6 +42,7 @@ from extorq.common.config import Settings, get_settings
 from extorq.common.logging import get_logger
 from extorq.common.redaction import sanitize_untrusted
 from extorq.contracts.common import SCHEMA_VERSION, HealthStatus, utc_now
+from extorq.contracts.compat import LEGACY_WIRE_VERSIONS, upgrade_batch_document
 from extorq.contracts.health import PipelineHealth
 from extorq.contracts.identity import canonical_json, iso_utc, sha256_hex, stable_id
 from extorq.contracts.ingest import (
@@ -59,6 +60,12 @@ from extorq.ingest.body import (
     gunzip_limited,
     read_limited,
 )
+from extorq.ingest.otlp_health import (
+    MAX_HEALTH_BYTES,
+    PRODUCER_ID,
+    DeliveryHealth,
+    parse_observation,
+)
 from extorq.ingest.processing import (
     Limits,
     PreparedBatch,
@@ -70,19 +77,23 @@ from extorq.ingest.processing import (
     summarize_validation_error,
 )
 from extorq.ingest.registry import ProducerEntry, ProducerRegistry
-from extorq.pipeline.spool import NewRecord, Spool, SpoolUnavailable
+from extorq.pipeline.spool import NewRecord, Spool, SpoolFull, SpoolUnavailable
 
 log = get_logger("extorq.ingest")
 
 OTLP_LOGS_PATH = "/v1/otlp/v1/logs"
+OTLP_METRICS_PATH = "/v1/otlp/v1/metrics"
 INGEST_PATH = "/v1/ingest"
 BODY_READ_TIMEOUT_SECONDS = 30.0
 RETRY_AFTER_FULL = "30"
 RETRY_AFTER_UNAVAILABLE = "10"
 NORMALIZER_MODULE = "extorq.ingest.otlp_k8s"
 MAX_TOKEN_LENGTH = 512
-#: Contract versions accepted on the wire (1.1 is additive over 1.0; contracts enforce it).
-ACCEPTED_SCHEMA_VERSIONS = ("1.0", "1.1")
+#: Contract versions accepted on the wire, advertised by ``/v1/status``. Schema 2.0 removed
+#: the simulation category (breaking), so 1.x envelopes and records are refused by the
+#: contracts themselves (422 envelope / ``invalid_record`` quarantine); this constant only
+#: reports what the contracts enforce.
+ACCEPTED_SCHEMA_VERSIONS = (SCHEMA_VERSION,)
 
 Normalizer = Callable[..., tuple[list[Any], list[tuple[int, str]]]]
 
@@ -263,17 +274,17 @@ class Gateway:
                 503, "spool disk space low, retry later", headers={"Retry-After": RETRY_AFTER_FULL}
             )
 
-    async def read_body(self, request: Request) -> bytes:
-        check_content_length(request.headers.get("content-length"), MAX_BODY_BYTES)
+    async def read_body(self, request: Request, max_bytes: int = MAX_BODY_BYTES) -> bytes:
+        check_content_length(request.headers.get("content-length"), max_bytes)
         encoding = content_encoding(request.headers.get("content-encoding"))
         try:
             raw = await asyncio.wait_for(
-                read_limited(request.stream(), MAX_BODY_BYTES), timeout=BODY_READ_TIMEOUT_SECONDS
+                read_limited(request.stream(), max_bytes), timeout=BODY_READ_TIMEOUT_SECONDS
             )
         except TimeoutError:
             raise Reject(408, "request body not received in time") from None
         if encoding == "gzip":
-            return await run_in_threadpool(gunzip_limited, raw, MAX_BODY_BYTES)
+            return await run_in_threadpool(gunzip_limited, raw, max_bytes)
         return raw
 
     async def deny(
@@ -327,15 +338,28 @@ class Gateway:
     ) -> tuple[dict[str, Any], bool, bool]:
         """Commit a prepared batch; return (result, replayed, conflict)."""
         quarantined = prepared.quarantined
+        conflicts: list[QuarantineNotice] = []
         notices = [QuarantineNotice(index=q.index, reason=q.reason) for q in quarantined]
+
+        def quarantine_conflict(record: NewRecord) -> NewRecord:
+            reason = "event_identity_conflict: canonical event key already has different evidence"
+            entry = QuarantineEntry(
+                index=record.index,
+                kind=record.kind,
+                reason=reason,
+                excerpt=canonical_json({"canonical_event_id": record.record_key}),
+                payload_sha256=sha256_hex(record.payload),
+            )
+            conflicts.append(QuarantineNotice(index=entry.index, reason=reason))
+            return self._quarantine_records(producer.producer_id, batch_id, received, [entry])[0]
 
         def build_result(accepted: int, duplicates: int) -> dict[str, Any]:
             return IngestResult(
                 batch_id=batch_id,
                 accepted=accepted,
                 duplicates=duplicates,
-                rejected=len(quarantined),
-                quarantined=notices,
+                rejected=len(notices) + len(conflicts),
+                quarantined=sorted([*notices, *conflicts], key=lambda notice: notice.index),
                 replayed=False,
             ).model_dump(mode="json")
 
@@ -345,14 +369,23 @@ class Gateway:
             content_sha256=content_sha256,
             ingested_at=iso_utc(received),
             records=[
-                NewRecord(kind=c.kind, record_key=c.record_key, payload=c.payload)
+                NewRecord(
+                    kind=c.kind,
+                    record_key=c.record_key,
+                    payload=c.payload,
+                    event_receipt=c.event_receipt,
+                    index=c.index,
+                )
                 for c in prepared.candidates
             ],
             extra=self._quarantine_records(producer.producer_id, batch_id, received, quarantined),
             build_result=build_result,
+            quarantine_conflict=quarantine_conflict,
+            max_records=self.settings.spool_max_records,
             counters={
                 "quarantined_total": len(quarantined),
                 "redactions_total": prepared.redactions,
+                "legacy_records_upgraded_total": prepared.legacy_upgraded,
                 "batches_total": 1,
             },
         )
@@ -389,6 +422,8 @@ class Gateway:
                 "rejected_401_total": counters.get("rejected_401_total", 0),
                 "rejected_403_total": counters.get("rejected_403_total", 0),
                 "redactions_total": counters.get("redactions_total", 0),
+                "legacy_records_upgraded_total": counters.get("legacy_records_upgraded_total", 0),
+                "event_identity_conflicts_total": counters.get("event_identity_conflicts_total", 0),
                 "replayed_batches_total": counters.get("replayed_batches_total", 0),
                 "batches_total": counters.get("batches_total", 0),
                 "spool_free_bytes": free,
@@ -426,6 +461,8 @@ def _parse_envelope(body: bytes) -> IngestBatch:
         raise Reject(
             400, "body is not valid JSON (NaN/Infinity and malformed input are rejected)"
         ) from None
+    # Producers started before the 2.0 rollout stamp 1.x; see contracts/compat.py.
+    document, _ = upgrade_batch_document(document)
     try:
         return IngestBatch.model_validate(document)
     except ValidationError as exc:
@@ -489,6 +526,7 @@ def create_app(
     background_tasks: bool = True,
 ) -> FastAPI:
     cfg = settings or get_settings()
+    delivery_health = DeliveryHealth()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -557,6 +595,7 @@ def create_app(
                 "producer_id": producer.producer_id,
                 "schema_version": SCHEMA_VERSION,
                 "accepted_schema_versions": list(ACCEPTED_SCHEMA_VERSIONS),
+                "legacy_wire_versions_upgraded": sorted(LEGACY_WIRE_VERSIONS),
                 "spool": {
                     "depth": depth,
                     "max_records": gateway.settings.spool_max_records,
@@ -615,6 +654,10 @@ def create_app(
                 received=received,
                 prepared=prepared,
             )
+        except SpoolFull:
+            raise Reject(
+                503, "spool full, retry later", headers={"Retry-After": RETRY_AFTER_FULL}
+            ) from None
         except SpoolUnavailable:
             log.exception("spool_commit_failed", producer_id=producer.producer_id)
             raise Reject(
@@ -630,8 +673,9 @@ def create_app(
             records=len(batch.records),
             accepted=result["accepted"],
             duplicates=result["duplicates"],
-            quarantined=len(prepared.quarantined),
+            quarantined=result["rejected"],
             redactions=prepared.redactions,
+            legacy_upgraded=prepared.legacy_upgraded,
             replayed=replayed,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
@@ -715,6 +759,10 @@ def create_app(
                 received=received,
                 prepared=prepared,
             )
+        except SpoolFull:
+            raise Reject(
+                503, "spool full, retry later", headers={"Retry-After": RETRY_AFTER_FULL}
+            ) from None
         except SpoolUnavailable:
             log.exception("spool_commit_failed", producer_id=producer.producer_id)
             raise Reject(
@@ -728,10 +776,66 @@ def create_app(
             events=len(events),
             accepted=result["accepted"],
             duplicates=result["duplicates"],
-            quarantined=len(prepared.quarantined),
+            quarantined=result["rejected"],
             duration_ms=int((time.monotonic() - started) * 1000),
         )
+        if (
+            producer.producer_id == PRODUCER_ID
+            and not _replayed
+            and not result["rejected"]
+            and len(events) == result["accepted"]
+            and events
+        ):
+            delivery_health.record_logs(payload, events, received)
         return _otlp_response(result)
+
+    @app.post(OTLP_METRICS_PATH)
+    async def otlp_metrics(request: Request) -> JSONResponse:
+        """Accept only the pinned node Collector's allow-listed delivery metrics."""
+        gateway: Gateway = request.app.state.gateway
+        producer = await gateway.authenticate(request)
+        if producer.producer_id != PRODUCER_ID or not producer.kind_allowed("collector_health"):
+            raise await gateway.deny(request, producer, claimed=None, reasons=["otel_health_scope"])
+        check_json_content_type(request.headers.get("content-type"))
+        await gateway.ensure_capacity()
+        body = await gateway.read_body(request, MAX_HEALTH_BYTES)
+        received = utc_now()
+        try:
+            payload = await run_in_threadpool(_strict_json_loads, body)
+        except (ValueError, RecursionError):
+            raise Reject(400, "body is not valid JSON") from None
+        sample = parse_observation(payload, received)
+        if sample is None:
+            raise Reject(400, "no valid Collector delivery metrics")
+        reports = delivery_health.reports(sample)
+        raw = [{"kind": "collector_health", "data": r.model_dump(mode="json")} for r in reports]
+        body_sha256 = sha256_hex(body)
+        batch_id = sha256_hex(f"otel-health\x1f{producer.producer_id}\x1f{body_sha256}")[:32]
+        prepared = await run_in_threadpool(
+            prepare_batch, raw, producer, batch_id=batch_id, now=received, limits=gateway.limits
+        )
+        if prepared.denied:
+            raise await gateway.deny(request, producer, claimed=None, reasons=prepared.denials)
+        try:
+            result, _, _ = await run_in_threadpool(
+                gateway.commit,
+                producer=producer,
+                batch_id=batch_id,
+                content_sha256=body_sha256,
+                received=received,
+                prepared=prepared,
+            )
+        except SpoolFull:
+            raise Reject(
+                503, "spool full, retry later", headers={"Retry-After": RETRY_AFTER_FULL}
+            ) from None
+        except SpoolUnavailable:
+            raise Reject(
+                503, "spool unavailable", headers={"Retry-After": RETRY_AFTER_UNAVAILABLE}
+            ) from None
+        if result["rejected"]:
+            return _json(200, {"partialSuccess": {"errorMessage": "delivery report rejected"}})
+        return _json(200, {})
 
     return app
 

@@ -48,7 +48,6 @@ from extorq.contracts.identity import canonical_json, sha256_hex
 from extorq.contracts.ingest import INGEST_RECORD_ADAPTER, MAX_RECORD_BYTES, IngestRecord
 from extorq.contracts.scan import ScanRun
 from extorq.contracts.service import Service, ServiceInstance
-from extorq.contracts.simulation import SimulationRun
 from extorq_collectors.sdk.config import CollectorConfig
 from extorq_collectors.sdk.state import StagedSnapshot, StateStore
 
@@ -62,7 +61,6 @@ _KIND_BY_MODEL: dict[type[BaseModel], str] = {
     PostureFinding: "finding",
     ScanRun: "scan_run",
     CollectorHealth: "collector_health",
-    SimulationRun: "simulation_run",
     Service: "service",
     ServiceInstance: "service_instance",
 }

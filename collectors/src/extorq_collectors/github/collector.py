@@ -29,13 +29,14 @@ from extorq_collectors.github.client import (
 )
 from extorq_collectors.github.config import GitHubCollectorConfig
 from extorq_collectors.github.poller import PollReport, RepoPoller
-from extorq_collectors.github.records import clean_text, iso
+from extorq_collectors.github.records import clean_text, iso, parse_time
 from extorq_collectors.github.state import RepoState, checkpoint_key
-from extorq_collectors.github.token import resolve_token, scope_warnings
+from extorq_collectors.github.token import resolve_token
 from extorq_collectors.github.workflow import WorkflowAnalysis
 from extorq_collectors.sdk.base import Collector, CollectorContext
 
 MAX_HEALTH_ITEMS = 32
+_RATE_LIMIT_CHECKPOINT = "github:rate_limited_until"
 
 
 def _bounded(items: list[str]) -> list[str]:
@@ -66,13 +67,14 @@ class GitHubCollector(Collector):
             details["note"] = "no repositories configured in config/collectors/github.yaml"
             ctx.health_details = details
             return
-        token = resolve_token(
-            config_token_file=cfg.token_file,
-            allow_gh_cli=cfg.allow_gh_cli_token,
-            gh_hostname=cfg.gh_hostname,
-        )
-        warnings: list[str] = list(token.warnings)
+        token = resolve_token(config_token_file=cfg.token_file)
+        warnings: list[str] = []
         details.update({"token_source": token.source, "token_kind": token.kind})
+        retry_at = parse_time(ctx.checkpoints.get(_RATE_LIMIT_CHECKPOINT))
+        if retry_at is not None and retry_at > datetime.now(UTC):
+            ctx.health_details = {**details, "requests": 0, "rate_limited_until": iso(retry_at)}
+            ctx.mark_degraded("GitHub API backoff is active")
+            return
         reports: list[PollReport] = []
         failure: str | None = None
         rate_limited_until: float | None = None
@@ -111,7 +113,6 @@ class GitHubCollector(Collector):
                     reports.append(poller.report)
                     warnings.append(f"rate limited during {repo_cfg.full_name}: {exc.message}")
                     break
-            warnings.extend(scope_warnings(client.token_scopes))
             limit = client.rate_limit
             details.update(
                 {
@@ -127,7 +128,9 @@ class GitHubCollector(Collector):
                 }
             )
         if rate_limited_until is not None:
-            details["rate_limited_until"] = iso(datetime.fromtimestamp(rate_limited_until, UTC))
+            retry_at_text = iso(datetime.fromtimestamp(rate_limited_until, UTC))
+            details["rate_limited_until"] = retry_at_text
+            ctx.emit([], {_RATE_LIMIT_CHECKPOINT: retry_at_text})
         gaps = [
             f"{r.repo}: {name}: {reason}"
             for r in reports
@@ -154,6 +157,10 @@ class GitHubCollector(Collector):
         )
         if failure is not None:
             raise GitHubCollectorError(failure)
+        if rate_limited_until is not None:
+            ctx.mark_degraded("GitHub API rate limit stopped the cycle")
+        if errors or gaps or len(reports) != len(cfg.repos):
+            ctx.mark_degraded("GitHub API collection has incomplete source coverage")
         if reports and not any(r.completed for r in reports) and rate_limited_until is None:
             # Records of the phases that did run were committed; the cycle still counts as
             # failed so the incomplete coverage is visible in health.

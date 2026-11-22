@@ -1,12 +1,16 @@
 rule_id: VM-001
-version: 1.0.0
+version: 1.1.0
 title: Burst of failed SSH authentication from one source
 description: >-
-  Five or more distinct SSH connections (src_ip, src_port) from the same source address
-  fail authentication against a Linux host within five minutes (sliding window), or one
-  source accumulates ten or more 'Failed <method>' attempts in that window (several
-  passwords tried per connection). Evidence is the set of sshd failure lines
-  (login_failed, invalid_user, preauth_closed, max_auth_exceeded) collected from journald.
+  Five or more distinct SSH connections (src_ip, src_port) from the same source address fail
+  authentication against a Linux host within five minutes (sliding window), or one source
+  accumulates ten or more 'Failed <method>' attempts in that window (several passwords per
+  connection). Every sshd failure shape counts: failed password/key attempts, invalid users,
+  clients that offered a rejected key and disconnected before authenticating, and
+  'maximum authentication attempts exceeded'. Evidence is the sshd log collected from
+  journald. Confidence: high when the connection threshold is met from an attributable
+  source; medium when the source is a shared NAT/gateway address or only the attempt
+  threshold was met.
 severity: medium
 status: stable
 mitre_techniques: [T1110, T1110.001, T1110.003]
@@ -30,24 +34,36 @@ params:
   window_seconds: 300
   threshold_connections: 5
   threshold_failures: 10
-  # Addresses that aggregate many origins (QEMU user-mode NAT gateway, loopback).
-  # A match lowers confidence to medium: the burst is real, its origin is not attributable.
+  # Addresses that aggregate many origins (QEMU user-mode NAT gateway, loopback). A match
+  # lowers confidence to medium: the burst is real, its origin is not attributable.
   shared_nat_ips: ["10.0.2.2", "127.0.0.1", "::1"]
 false_positives:
-  - An administrator or automation repeatedly using a wrong key or password (for example a
-    misconfigured Ansible inventory or CI deploy key) from one host.
-  - Several legitimate users behind one NAT or VPN egress address mistyping credentials at
-    the same time. In this lab every connection from the Mac host arrives from the QEMU NAT
-    gateway 10.0.2.2, so the source is never attributable to one origin (confidence medium).
-  - Vulnerability scanners or SSH health checks that open many unauthenticated connections.
+  - >-
+    An administrator or automation repeatedly using a wrong key or password (for example a
+    misconfigured Ansible inventory or CI deploy key) from one host. Handling: the threshold
+    (five failed connections in five minutes from one address) is above what a person
+    retrying a typo produces; successful logins are never counted, so a client that
+    eventually authenticates with the right key adds nothing.
+  - >-
+    Several legitimate users behind one NAT or VPN egress address mistyping credentials at
+    the same time. Handling: shared NAT/gateway addresses are configured (shared_nat_ips)
+    and lower confidence to medium. On the monitored VM every connection from the Mac host
+    arrives from the QEMU gateway 10.0.2.2, so such alerts are always medium.
+  - >-
+    Vulnerability scanners or SSH health checks that open many unauthenticated connections.
+    Handling: no source allowlist (addresses are not identities); the alert shows the
+    usernames tried and the connection count so a scheduled scan is recognisable.
 blind_spots:
-  - Low-and-slow guessing below five connections (or ten failures) per five minutes per
-    source address.
+  - >-
+    Low-and-slow guessing below five failed connections (or ten failed attempts) per five
+    minutes per source address.
   - Distributed guessing from many source addresses (one or two attempts each).
-  - Successful logins are not evaluated here; success after failures is shown by the
-    investigation context, not by this rule.
-  - Authentication handled outside sshd/journald (e.g. a PAM module logging elsewhere) and
-    lines journald dropped under rate limiting.
+  - >-
+    Successful logins are not evaluated here; success after failures is shown by the
+    investigation context (ssh_success_after_failures), not by this rule.
+  - >-
+    Authentication handled outside sshd/journald (a PAM module logging elsewhere), and lines
+    journald dropped under rate limiting.
   - Attempts that never reach sshd authentication (connections refused by a firewall).
 references:
   - https://attack.mitre.org/techniques/T1110/
@@ -56,10 +72,39 @@ query: VM-001.sql
 summary_template: >-
   {distinct_connections} SSH connections from {src_ip} failed authentication on {asset_id}
   ({failed_attempts} failed attempts, usernames: {usernames}) between {first_seen} and
-  {last_seen}
+  {last_seen}; shared NAT source: {src_ip_shared_nat}
 tests:
-  - name: burst-from-external-source
-    description: Six connections from one documentation-range address in one minute.
+  - name: matrix-key-rejected-burst-via-qemu-nat
+    description: >-
+      Matrix positive: eight connections from the Mac through the QEMU gateway 10.0.2.2 with
+      commonly guessed users and a throwaway key (sshd logs the rejected key as a
+      pre-authentication disconnect; unknown users also as 'Invalid user'). Shared NAT
+      source: medium.
+    fixture: tests/VM-001/positive_matrix_key_rejected_nat.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    entities: {src_ip: 10.0.2.2}
+    features:
+      distinct_connections: 8
+      distinct_usernames: 5
+      src_ip_shared_nat: true
+  - name: captured-vm-burst-and-throwaway-key
+    description: >-
+      Captured: the sshd lines of a real burst on the VM (nine connections through the QEMU
+      gateway), the admin's key logins and, three minutes later, a throwaway-key attempt and
+      two TCP resets from the same gateway, parsed by the Linux collector's journal parser.
+      The later failures are inside the sliding window of the burst, so they extend the same
+      alert (12 failed connections) instead of opening a second one; logins never count.
+    fixture: tests/VM-001/positive_captured_vm_burst.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    entities: {src_ip: 10.0.2.2}
+    features:
+      distinct_connections: 12
+  - name: password-burst-from-external-source
+    description: Six failed password connections from one documentation-range address in one minute.
     fixture: tests/VM-001/positive_burst_external.jsonl
     expect: alert
     alerts: 1
@@ -67,25 +112,24 @@ tests:
     entities: {src_ip: 203.0.113.45}
   - name: burst-crossing-bucket-boundary
     description: >-
-      Three connections just before and three just after a 5-minute bucket boundary;
-      fixed buckets would miss it, the sliding window must produce exactly one alert.
+      Three connections just before and three just after a 5-minute bucket boundary; fixed
+      buckets would miss it, the sliding window produces exactly one alert.
     fixture: tests/VM-001/positive_bucket_boundary.jsonl
     expect: alert
     alerts: 1
     confidence: high
-  - name: burst-via-qemu-nat-gateway
-    description: Burst arriving from the QEMU NAT gateway 10.0.2.2 (simulation-tagged).
-    fixture: tests/VM-001/positive_nat_gateway_sim.jsonl
-    expect: alert
-    alerts: 1
-    confidence: medium
-    entities: {src_ip: 10.0.2.2}
   - name: many-passwords-few-connections
-    description: Two connections trying six passwords each (MaxAuthTries) = 12 failures.
+    description: Two connections trying six passwords each (MaxAuthTries) = 12 failed attempts.
     fixture: tests/VM-001/positive_failures_two_connections.jsonl
     expect: alert
     alerts: 1
     confidence: medium
+  - name: matrix-control-successful-key-logins
+    description: >-
+      Matrix negative control: three successful key logins by the admin user through the
+      same gateway. Successful logins are never counted.
+    fixture: tests/VM-001/negative_matrix_successful_logins.jsonl
+    expect: no_alert
   - name: below-threshold
     description: Four failed connections in five minutes.
     fixture: tests/VM-001/negative_below_threshold.jsonl
@@ -97,8 +141,4 @@ tests:
   - name: distributed-sources
     description: Six failed connections from six different addresses.
     fixture: tests/VM-001/negative_distributed.jsonl
-    expect: no_alert
-  - name: successful-logins
-    description: Six successful logins (auth.ssh.login_succeeded) from one address.
-    fixture: tests/VM-001/negative_successes.jsonl
     expect: no_alert

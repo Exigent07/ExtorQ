@@ -1,14 +1,18 @@
 rule_id: MAC-001
-version: 1.0.0
-title: New or modified macOS LaunchAgent/LaunchDaemon
+version: 2.0.0
+title: New or modified macOS launch item
 description: >-
   A launchd property list appeared or changed in a persistence location on a macOS host
-  (~/Library/LaunchAgents, /Library/LaunchAgents, /Library/LaunchDaemons), as observed by
-  the macOS collector comparing snapshots, and its label is not on the collector's
-  allow-list. launchd loads user agents at the next login and daemons at boot, so a new
-  plist is persistence even before it runs.
+  (~/Library/LaunchAgents, /Library/LaunchAgents, /Library/LaunchDaemons), as observed by the
+  macOS collector comparing snapshots. launchd loads user agents at the next login and daemons
+  at boot, so a new plist is persistence even before it runs. Since v2.0.0 the only
+  suppression is an exact content digest of a reviewed plist; the collector's label
+  allow-list is shown as context but no longer suppresses, because the label is whatever the
+  plist author writes. Confidence: high when the plist was read and parsed (program and digest
+  known); medium when it could not be read or parsed. MAC-002 flags the subset that runs a
+  shell, an interpreter or a program from a temporary or shared location.
 severity: medium
-status: experimental
+status: stable
 mitre_techniques: [T1543.001, T1543.004]
 asset_types: [macos_host]
 requires:
@@ -22,46 +26,80 @@ dedup:
   strategy: event
 group_by: [asset_id, path, sha256]
 params:
-  # Exact labels expected to change, in addition to the collector's own allow-list.
-  allowlist_labels: []
+  # Exact SHA-256 digests of reviewed plist contents (content-addressed: a different
+  # program or argument changes the digest).
+  allowlist_sha256: []
 false_positives:
   - >-
     Software installs and updates (browsers, updaters, Homebrew services) that create or
-    rewrite their launch agents; add their labels to the collector allow-list once
-    reviewed (allow-listed items stay visible as events).
-  - Administrators deploying management agents through MDM or scripts.
+    rewrite their launch agents. Handling: one alert per distinct plist content; after review,
+    the exact content digest can be allowlisted (allowlist_sha256). A label or path
+    allowlist is not used because both are chosen by whoever writes the plist; the
+    collector's label allow-list is reported as collector_label_allowlisted for triage.
+  - >-
+    Administrators deploying management agents through MDM or scripts. Handling: as above;
+    the alert shows the program, scope and RunAtLoad/KeepAlive so the agent is recognisable.
 blind_spots:
   - >-
-    Plists created and removed between two collector scans, and persistence outside these
-    three directories (login items in the Background Task Management database, cron,
+    Plists created and removed between two collector scans (60 s), and persistence outside
+    these three directories (login items in the Background Task Management database, cron,
     shell profiles, configuration profiles).
   - >-
     Whether launchd actually loaded the job is not visible without root; the alert is about
     the file on disk.
   - >-
-    Label-based allow-listing: an attacker who reuses an allow-listed label evades the rule
-    (the event is still recorded with attributes.allowlisted = true).
+    An unreadable or unparseable plist (permissions, binary corruption) is alerted with
+    medium confidence; its program is unknown.
 references:
   - https://attack.mitre.org/techniques/T1543/001/
   - https://attack.mitre.org/techniques/T1543/004/
 query: MAC-001.sql
 summary_template: >-
   launchd {kind} plist {path} ({label}, scope {scope}) {change_types} on {asset_id}:
-  program {program}; RunAtLoad {run_at_load}; KeepAlive {keep_alive}
+  program {program}; RunAtLoad {run_at_load}; KeepAlive {keep_alive}; collector
+  label-allowlisted: {collector_label_allowlisted}
 tests:
-  - name: user-agent-created-simulation
-    description: Shape of B3's mac_001_launchagent.sh (com.extorq.sim.<run_id>, /usr/bin/true).
-    fixture: tests/MAC-001/positive_user_agent_created_sim.jsonl
+  - name: matrix-user-launch-agent-created
+    description: >-
+      Matrix positive: ~/Library/LaunchAgents/com.extorq.test.agent.plist running
+      /usr/bin/true, never loaded (attributes as the macOS collector reports them).
+    fixture: tests/MAC-001/positive_matrix_user_agent_created.jsonl
     expect: alert
     alerts: 1
     confidence: high
+    entities: {label: com.extorq.test.agent}
+  - name: label-allowlisted-item-still-alerts
+    description: >-
+      A new agent whose label matches the collector's allow-list (homebrew.mxcl.*) but whose
+      program lives in /tmp: reported (label allow-lists are not trusted) with
+      collector_label_allowlisted = true.
+    fixture: tests/MAC-001/positive_label_allowlisted_reused.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    features:
+      collector_label_allowlisted: true
   - name: daemon-modified-unparseable
     description: A LaunchDaemon plist rewritten with content that does not parse.
     fixture: tests/MAC-001/positive_daemon_modified_unparseable.jsonl
     expect: alert
     alerts: 1
     confidence: medium
-  - name: allowlisted-and-deleted
-    description: An allow-listed updater agent created, and a plist deleted.
-    fixture: tests/MAC-001/negative_allowlisted_and_deleted.jsonl
+  - name: matrix-control-text-file-and-deletion
+    description: >-
+      Matrix negative control: a .txt file created and deleted in ~/Library/LaunchAgents
+      produces no launchd event; the fixture holds the plist deletion of the cleanup and a
+      reviewed agent whose exact content digest is allowlisted for this case.
+    fixture: tests/MAC-001/negative_matrix_deleted_and_digest_allowlisted.jsonl
     expect: no_alert
+    params:
+      allowlist_sha256: [4810885157ed636557c3576eeb626b179ac903c8fc02ad5a48a841c3f59c851e]
+  - name: digest-not-allowlisted-alerts
+    description: >-
+      The same fixture without the digest allowlist: the reviewed agent alerts (the deletion
+      never does), proving the exception is exactly the digest.
+    fixture: tests/MAC-001/negative_matrix_deleted_and_digest_allowlisted.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {label: com.example.reviewed}

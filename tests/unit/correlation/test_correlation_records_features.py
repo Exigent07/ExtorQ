@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from correlation_helpers import K8S, T0, ev
+from dataclasses import replace
+
+from correlation_helpers import K8S, T0, VM, ev
 
 from extorq.contracts.alert import DetectionAlert
 from extorq.contracts.context import Relationship, RelationshipBasis, RelationshipType
@@ -27,7 +29,6 @@ def _row(**overrides):
         "svc_id": "a" * 32,
         "svc_name": "ssh",
         "svc_instance_id": None,
-        "simulation_run_id": None,
     }
     row.update(overrides)
     return row
@@ -49,12 +50,10 @@ def test_record_from_row_parses_and_validates():
 def test_record_from_row_rejects_bad_identity_and_drops_invalid_values():
     assert record_from_row(_row(event_id="not-hex")) is None
     assert record_from_row(_row(event_time=T0.replace(tzinfo=None))) is None
-    rec = record_from_row(
-        _row(svc_id="bogus", src_ip="999.1.1.1", attributes="{not json", simulation_run_id="BAD!")
-    )
+    rec = record_from_row(_row(svc_id="bogus", src_ip="999.1.1.1", attributes="{not json"))
     assert rec is not None
     assert rec.service_id is None and rec.src_ip is None
-    assert rec.attributes == {} and rec.simulation_run_id is None
+    assert rec.attributes == {}
 
 
 def test_summaries_strip_control_characters_and_truncate():
@@ -159,6 +158,26 @@ def test_ssh_features_success_after_failures_and_sudo():
     assert f["ssh_success_users"] == ["ubuntu"]
     assert f["sudo_after_login"] is True
     assert f["related_candidate"] == 3 and f["causation_established"] is False
+    assert not any("simulation" in key for key in f)  # schema 2.0: no simulation category
+
+
+def test_ssh_success_ignores_shared_ip_different_host_and_preceding_activity() -> None:
+    ip = "203.0.113.45"
+    failures = [
+        ev("auth.ssh.login_failed", 0, src_ip=ip),
+        ev("auth.ssh.login_failed", 10, src_ip=ip),
+    ]
+    unrelated = [
+        ev("auth.ssh.login_succeeded", 20, src_ip=ip, asset_id="linux:other"),
+        ev("auth.ssh.login_succeeded", 9, src_ip=ip),
+        ev("auth.ssh.login_succeeded", 10, src_ip=ip),
+    ]
+    features = compute_features(_alert(), failures, unrelated, [])
+    assert features["ssh_success_after_failures"] is False
+    shared_failures = [replace(e, src_ip="10.0.2.2") for e in failures]
+    shared_success = ev("auth.ssh.login_succeeded", 20, src_ip="10.0.2.2", asset_id=VM)
+    features = compute_features(_alert(), shared_failures, [shared_success], [])
+    assert features["ssh_success_after_failures"] is False
 
 
 def test_http_and_kubernetes_features():
@@ -289,3 +308,19 @@ def test_persistence_context_rename_into_place_corroborates_the_created_path():
     f = compute_features(_alert(rule_id="VM-002"), [created], [rename], [])
     assert f["auditd_corroborated"] is True and f["auditd_writers"] == ["/usr/bin/mv"]
     assert f["auditd_removals"] == 0  # the removed name (/tmp) is not a changed unit path
+
+
+def test_unrelated_audit_writes_do_not_corroborate_a_unit_observation() -> None:
+    unit = "/etc/systemd/system/example.service"
+    created = ev(
+        "persistence.systemd.unit_created",
+        240,
+        source_type="linux.inventory",
+        resource_path=unit,
+    )
+    old = _audit_hit(0, unit, "openat", "CREATE")
+    later = _audit_hit(241, unit, "openat", "CREATE")
+    other = replace(_audit_hit(239, unit, "openat", "CREATE"), asset_id="linux:other")
+    features = compute_features(_alert(rule_id="VM-002"), [created], [old, later, other], [])
+    assert features["auditd_corroborated"] is False
+    assert features["auditd_writers"] == []

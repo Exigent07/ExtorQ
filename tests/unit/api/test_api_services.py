@@ -5,6 +5,7 @@ All data is SYNTHETIC (see api_fakes.py).
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from typing import Any
 from urllib.parse import quote
@@ -43,7 +44,14 @@ def _seed_mixed(repo: FakeRepository) -> dict[str, str]:
         collector_row(
             "k8s-inventory",
             asset_id=CLUSTER,
-            source_types=["k8s.api_inventory", "k8s.container_log"],
+            source_types=["k8s.api_inventory"],
+        ),
+        collector_row(
+            "k8s-otel-health-synthetic",
+            collector_type="k8s_otel",
+            asset_id=NODE,
+            source_types=["k8s.container_log"],
+            details='{"delivery_state":"delivering"}',
         ),
     ]
     rows = {
@@ -82,6 +90,7 @@ def _seed_mixed(repo: FakeRepository) -> dict[str, str]:
             adapter_id="webapp-json",
             telemetry_sources=["k8s.container_log"],
             endpoints="[]",
+            attributes=json.dumps({"running_node_asset_ids": [NODE], "running_node_count": 1}),
         ),
         "k8s_service": service_row(
             "extorq-apps/lab-portal",
@@ -225,6 +234,33 @@ def test_cluster_collector_covers_node_assets() -> None:
     other = service.collector_status(collector_row("other", asset_id="k8s:extorq-lab2"), NOW)
     assert service.collectors_for_asset(NODE, [cluster_collector, other]) == [cluster_collector]
     assert service.collectors_for_asset(CLUSTER, [other]) == []
+
+
+def test_workload_coverage_requires_delivery_on_every_hosting_node() -> None:
+    other_node = f"{CLUSTER}/node/other-node"
+    status = service.collector_status(
+        collector_row(
+            "k8s-otel-health-other",
+            collector_type="k8s_otel",
+            asset_id=other_node,
+            source_types=["k8s.container_log"],
+            details='{"delivery_state":"delivering"}',
+        ),
+        NOW,
+    )
+    evaluator = service.ServiceEvaluator([status], NOW, 3600)
+    workload = evaluator.record(
+        service_row(
+            "extorq-apps/Deployment/lab-portal",
+            asset_id=CLUSTER,
+            service_kind="k8s_workload",
+            telemetry_sources=["k8s.container_log"],
+            attributes=json.dumps({"running_node_asset_ids": [NODE], "running_node_count": 1}),
+        )
+    )
+    assert workload.coverage_state == "degraded"
+    assert any(NODE in reason for reason in workload.coverage_reasons)
+    assert evaluator.telemetry(workload, [])[0].collection == "no_collector_health"
 
 
 def test_filters_reach_storage_and_coverage_filter_paginates(
@@ -530,6 +566,10 @@ def test_service_id_filters_on_events_alerts_findings(
     assert alerts["page"]["total"] == 1
     findings = client.get("/api/v1/findings", headers=viewer, params={"service_id": sid}).json()
     assert [f["service_id"] for f in findings["items"]] == [sid]
+    assert repo.last_call("list_findings").scope_asset == "linux:lab-vm-01"
+    for path in ("/api/v1/events", "/api/v1/findings"):
+        unknown = client.get(path, headers=viewer, params={"service_id": "f" * 32})
+        assert unknown.status_code == 404, path
     for path in ("/api/v1/events", "/api/v1/alerts", "/api/v1/findings"):
         bad = client.get(path, headers=viewer, params={"service_id": "x' OR 1=1"})
         assert bad.status_code == 422, path

@@ -1,6 +1,7 @@
-# ExtorQ lab portal (deployed by cloud-init from infra/vm/files/systemd/lab-portal.service).
+# ExtorQ demo web application "lab-portal" (deployed by cloud-init from
+# infra/vm/files/systemd/lab-portal.service; `infra/vm/vm.sh redeploy` updates a running VM).
 [Unit]
-Description=ExtorQ lab portal (demo web application behind nginx)
+Description=ExtorQ demo web application (behind nginx)
 Documentation=file:///opt/extorq/lab-portal/README.md
 After=network.target
 

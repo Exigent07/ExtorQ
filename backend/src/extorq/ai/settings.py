@@ -1,33 +1,31 @@
-"""AI feature flags, limits and provider credentials.
+"""Jev feature flag, limits and API key resolution.
 
 Non-secret settings use the ``EXTORQ_`` prefix (pydantic-settings), e.g.
-``EXTORQ_JEV_ENABLED=true``. Both providers are **disabled by default**: ExtorQ
-works completely without AI.
+``EXTORQ_JEV_ENABLED=true``. Jev is **disabled by default**: ExtorQ works completely
+without AI.
 
-Provider keys are resolved in this order, and are never logged, printed or
-included in error messages (only the variable *name* is ever reported):
+The key ``JEV_API_KEY`` is resolved in this order, and is never logged, printed or
+included in error messages (only the variable *name* and its state are reported):
 
-1. the platform settings (``extorq.common.config.Settings.jev_api_key`` /
-   ``gemini_api_key``, owned by agent A), which accept ``JEV_API_KEY`` /
-   ``EXTORQ_JEV_API_KEY`` and the ``*_FILE`` variants (compose mounts the keys as
-   ``/run/secrets/...``);
-2. if the platform settings are unavailable or cannot be constructed: ExtorQ-AI's
-   own reading of ``<NAME>_FILE`` and then ``<NAME>``;
-3. local development only: the same names loaded programmatically from a dotenv
-   file (``EXTORQ_AI_DOTENV``, default ``.env`` in the working directory; set it to
-   an empty value to disable this path). Only ``JEV_API_KEY`` and ``GEMINI_API_KEY``
-   are read from it. Container images contain no ``.env`` (``.dockerignore``), so
-   compose services always use the ``*_FILE`` secrets; the API's configuration
-   report calls :func:`resolve_key` with ``use_dotenv=False``.
+1. the platform settings (``extorq.common.config.Settings.jev_api_key``, owned by
+   agent A), which accept ``JEV_API_KEY`` / ``EXTORQ_JEV_API_KEY`` and the ``*_FILE``
+   variants (compose mounts the key as ``/run/secrets/...``);
+2. if the platform settings are unavailable or cannot be constructed: this module's
+   own reading of ``JEV_API_KEY_FILE`` and then ``JEV_API_KEY``;
+3. local development only: ``JEV_API_KEY`` loaded programmatically from a dotenv file
+   (``EXTORQ_AI_DOTENV``, default ``.env`` in the working directory; set it to an empty
+   value to disable this path). No other name is read from that file. Container images
+   contain no ``.env`` (``.dockerignore``), so compose services always use the file
+   secret; the API's configuration report calls :func:`resolve_key` with
+   ``use_dotenv=False``.
 
-``JEV_API_KEY`` is passed explicitly to ``TypeSafeClient(api_key=...)``; the SDK's
-own ``TYPESAFE_API_KEY`` variable is never consulted because ExtorQ never builds
-a client without an explicit key.
+The key is passed explicitly to ``TypeSafeClient(api_key=...)``; the SDK's own
+``TYPESAFE_API_KEY`` variable is never consulted because ExtorQ never builds a client
+without an explicit key.
 
-Reconciliation note: the platform settings object (``extorq.common.config``,
-owned by agent A) reads the same environment variables; these AI-specific fields
-live here so the AI package stays importable and testable on its own (see
-docs/team/interface-changes/E.md).
+Why AI settings live here and not in ``extorq.common.config``: the AI package must stay
+importable and testable on its own, and the platform settings may fail to construct for
+reasons unrelated to AI (e.g. another missing secret). Step 1 still prefers them.
 """
 
 from __future__ import annotations
@@ -44,25 +42,26 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from extorq.ai._compat import optional_attr
 
+#: The only provider key ExtorQ resolves. Other names are refused so this module can never
+#: be used as a generic reader of secret-bearing environment variables.
+JEV_KEY_NAME = "JEV_API_KEY"
+KeyName = Literal["JEV_API_KEY"]
 #: Upper bound on the size of a key file; anything larger is rejected unread.
 MAX_SECRET_FILE_BYTES = 4096
 _MODEL_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$"
 
 
 class AISettings(BaseSettings):
-    """Non-secret AI configuration (environment prefix ``EXTORQ_``)."""
+    """Non-secret Jev configuration (environment prefix ``EXTORQ_``)."""
 
     model_config = SettingsConfigDict(
         env_prefix="EXTORQ_", extra="ignore", frozen=True, hide_input_in_errors=True
     )
 
-    # ── feature flags ───────────────────────────────────────────────
+    # ── feature flag and model ──────────────────────────────────────
     jev_enabled: bool = False
-    gemini_enabled: bool = False
-
-    # ── models (pinned) ─────────────────────────────────────────────
+    #: Pinned model id; the id the provider reports is stored with every assessment.
     jev_model: str = Field(default="jev-1.14.0", pattern=_MODEL_ID_PATTERN)
-    gemini_model: str = Field(default="gemini-3.6-flash", pattern=_MODEL_ID_PATTERN)
 
     # ── timeouts and bounded retries ────────────────────────────────
     #: Per HTTP attempt.
@@ -70,30 +69,13 @@ class AISettings(BaseSettings):
     #: Total budget for one Jev call including retries and backoff.
     jev_retry_budget_seconds: float = Field(default=25.0, gt=0, le=300)
     jev_max_retries: int = Field(default=2, ge=0, le=5)
-    #: Per HTTP attempt (also sent as the server deadline). Observed summary latency with
-    #: thinking level "low" was 20-35 s, so 30 s cut off a live attempt; 60 s keeps one
-    #: attempt within the console's 90 s wait.
-    gemini_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
-    #: Attempts including the first one (1 = no retry). The SDK retries timeouts too, and a
-    #: retried generation doubles cost and exceeds the console wait, so the default is 1;
-    #: a failed attempt is returned as rate_limited / timeout / error and can be re-requested.
-    gemini_max_attempts: int = Field(default=1, ge=1, le=5)
-    gemini_max_output_tokens: int = Field(default=8192, ge=1024, le=65536)
-    #: "none" sends no thinking configuration at all.
-    gemini_thinking_level: Literal["none", "minimal", "low", "medium", "high"] = "low"
-    #: Sent as GenerateContentConfig.store; False asks the API not to log the request.
-    gemini_store_requests: bool = False
 
-    # ── budgets ─────────────────────────────────────────────────────
+    # ── budget ──────────────────────────────────────────────────────
+    #: Provider attempts per UTC day, counted from ``ai_assessments`` (fail closed).
     jev_daily_cap: int = Field(default=300, ge=0, le=10_000)
-    gemini_daily_cap: int = Field(default=50, ge=0, le=1_000)
-    #: Minimum time between summary attempts for one alert. Successful summaries are reused
-    #: per context hash without a call, so this mainly bounds retries after failures.
-    gemini_alert_cooldown_seconds: int = Field(default=120, ge=0, le=86_400)
 
-    # ── input size caps (characters of serialised provider input) ───
+    # ── input size cap (characters of the serialised Jev state) ─────
     jev_max_state_chars: int = Field(default=24_000, ge=2_000, le=200_000)
-    gemini_max_prompt_chars: int = Field(default=60_000, ge=4_000, le=400_000)
     #: Raw evidence excerpts are dropped unless explicitly enabled.
     ai_include_excerpts: bool = False
     #: Let AIService ask the correlation builder for a context when none is stored.
@@ -126,7 +108,7 @@ class KeyState(StrEnum):
 
 @dataclass(frozen=True)
 class ProviderKey:
-    """A resolved provider key. ``repr`` never shows the value."""
+    """A resolved provider key. ``repr`` never shows the value (``SecretStr``)."""
 
     name: str
     state: KeyState
@@ -149,12 +131,11 @@ class ProviderKey:
 
 
 class _DotenvKeys(BaseSettings):
-    """Reads only the two provider key names from a dotenv file (dev convenience)."""
+    """Reads only ``JEV_API_KEY`` from a dotenv file (local development convenience)."""
 
     model_config = SettingsConfigDict(extra="ignore", hide_input_in_errors=True)
 
-    jev_api_key: SecretStr | None = Field(default=None, validation_alias="JEV_API_KEY")
-    gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    jev_api_key: SecretStr | None = Field(default=None, validation_alias=JEV_KEY_NAME)
 
 
 def _valid_key(raw: str) -> bool:
@@ -171,53 +152,55 @@ def _read_key_file(path_value: str) -> str | None:
         return None
 
 
-_PLATFORM_FIELDS = {"JEV_API_KEY": "jev_api_key", "GEMINI_API_KEY": "gemini_api_key"}
-
-
-def _platform_key(name: str) -> SecretStr | None:
+def _platform_key() -> SecretStr | None:
     """The key from A's platform settings; None if unset, unavailable or unconstructible."""
     get_settings = optional_attr("extorq.common.config", "get_settings")
-    field_name = _PLATFORM_FIELDS.get(name)
-    if get_settings is None or field_name is None:
+    if get_settings is None:
         return None
     try:
-        value = getattr(get_settings(), field_name, None)
+        value = getattr(get_settings(), "jev_api_key", None)
     except Exception:  # noqa: BLE001 - e.g. ConfigError for an unrelated secret: fall back
         return None
     return value if isinstance(value, SecretStr) else None
 
 
+def _checked(raw: str, source: Literal["platform", "file", "env", "dotenv"]) -> ProviderKey:
+    if not _valid_key(raw):
+        return ProviderKey(JEV_KEY_NAME, KeyState.MALFORMED, source=source)
+    return ProviderKey(JEV_KEY_NAME, KeyState.CONFIGURED, SecretStr(raw), source)
+
+
 def resolve_key(
-    name: str,
+    name: str = JEV_KEY_NAME,
     *,
     dotenv_path: str | None = None,
     use_dotenv: bool = True,
     use_platform: bool = True,
 ) -> ProviderKey:
-    """Resolve ``name`` (``JEV_API_KEY`` / ``GEMINI_API_KEY``) without ever exposing it."""
+    """Resolve ``JEV_API_KEY`` without ever exposing it (see the module docstring).
+
+    ``name`` exists for call sites that name the key explicitly; any other name raises
+    ``ValueError`` (ExtorQ has no other AI provider).
+    """
+    if name != JEV_KEY_NAME:
+        raise ValueError(f"unknown AI provider key name {name!r}; only {JEV_KEY_NAME} exists")
     if use_platform:
-        platform = _platform_key(name)
+        platform = _platform_key()
         if platform is not None:
             raw = platform.get_secret_value().strip()
             if raw:
-                if not _valid_key(raw):
-                    return ProviderKey(name, KeyState.MALFORMED, source="platform")
-                return ProviderKey(name, KeyState.CONFIGURED, SecretStr(raw), "platform")
+                return _checked(raw, "platform")
 
-    file_path = os.environ.get(f"{name}_FILE", "").strip()
+    file_path = os.environ.get(f"{JEV_KEY_NAME}_FILE", "").strip()
     if file_path:
         from_file = _read_key_file(file_path)
         if from_file is None:
-            return ProviderKey(name, KeyState.UNREADABLE, source="file")
-        if not _valid_key(from_file):
-            return ProviderKey(name, KeyState.MALFORMED, source="file")
-        return ProviderKey(name, KeyState.CONFIGURED, SecretStr(from_file), "file")
+            return ProviderKey(JEV_KEY_NAME, KeyState.UNREADABLE, source="file")
+        return _checked(from_file, "file")
 
-    env_value = os.environ.get(name, "").strip()
+    env_value = os.environ.get(JEV_KEY_NAME, "").strip()
     if env_value:
-        if not _valid_key(env_value):
-            return ProviderKey(name, KeyState.MALFORMED, source="env")
-        return ProviderKey(name, KeyState.CONFIGURED, SecretStr(env_value), "env")
+        return _checked(env_value, "env")
 
     if use_dotenv:
         path = (
@@ -227,15 +210,12 @@ def resolve_key(
             try:
                 loaded = _DotenvKeys(_env_file=path)
             except Exception:  # noqa: BLE001 - a broken dotenv must never surface its content
-                return ProviderKey(name, KeyState.UNREADABLE, source="dotenv")
-            secret = loaded.jev_api_key if name == "JEV_API_KEY" else loaded.gemini_api_key
-            if secret is not None:
-                raw = secret.get_secret_value().strip()
+                return ProviderKey(JEV_KEY_NAME, KeyState.UNREADABLE, source="dotenv")
+            if loaded.jev_api_key is not None:
+                raw = loaded.jev_api_key.get_secret_value().strip()
                 if raw:
-                    if not _valid_key(raw):
-                        return ProviderKey(name, KeyState.MALFORMED, source="dotenv")
-                    return ProviderKey(name, KeyState.CONFIGURED, SecretStr(raw), "dotenv")
-    return ProviderKey(name, KeyState.MISSING)
+                    return _checked(raw, "dotenv")
+    return ProviderKey(JEV_KEY_NAME, KeyState.MISSING)
 
 
 @lru_cache(maxsize=1)
@@ -244,22 +224,18 @@ def get_ai_settings() -> AISettings:
     return AISettings()
 
 
-@lru_cache(maxsize=4)
-def get_provider_key(name: Literal["JEV_API_KEY", "GEMINI_API_KEY"]) -> ProviderKey:
+@lru_cache(maxsize=1)
+def get_provider_key(name: KeyName = "JEV_API_KEY") -> ProviderKey:
     """Process-wide cached key resolution (call ``get_provider_key.cache_clear()`` in tests)."""
     return resolve_key(name)
 
 
 def startup_report(settings: AISettings | None = None) -> dict[str, str]:
-    """Configuration summary safe to log: flags, models and key *states* only."""
+    """Configuration summary safe to log: flag, model and key *state* only."""
     s = settings or get_ai_settings()
-    jev = get_provider_key("JEV_API_KEY")
-    gemini = get_provider_key("GEMINI_API_KEY")
     return {
         "jev_enabled": str(s.jev_enabled).lower(),
         "jev_model": s.jev_model,
-        "jev_key": jev.state.value,
-        "gemini_enabled": str(s.gemini_enabled).lower(),
-        "gemini_model": s.gemini_model,
-        "gemini_key": gemini.state.value,
+        "jev_key": get_provider_key(JEV_KEY_NAME).state.value,
+        "jev_daily_cap": str(s.jev_daily_cap),
     }

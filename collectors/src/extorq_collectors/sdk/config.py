@@ -59,8 +59,7 @@ def secret_setting_paths(value: Any, path: str = "", key: str = "") -> list[str]
 
     Each string is checked together with its own key (``"<key>: <value>"``), so key-based
     rules (``password: x``) still apply, but booleans, numbers, dates and nulls are never
-    candidates: ``allow_gh_cli_token: true`` is a flag, not a token (C1 3.1). Values are
-    never returned or printed, only their paths.
+    candidates. The result contains only setting paths.
     """
     from extorq.common.redaction import contains_secret
 

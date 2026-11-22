@@ -232,7 +232,7 @@ def test_new_cluster_admin_binding_then_deletion(harness: Any) -> None:
     }
     assert "cluster_admin" in created["attributes"]["risk_flags"]
     assert "baseline" not in created["attributes"]
-    assert created["simulation"]["run_id"] == "abcd1234ef"
+    assert "simulation" not in created
     assert created["event_time"].startswith("2026-11-21T10:18:31")  # creationTimestamp
     assert (
         json.loads(created["attributes"]["object_summary"])["role_ref"]
@@ -451,6 +451,10 @@ def test_owner_resolution() -> None:
     empty = OwnerIndex.build([], [])
     pod = next(p for p in view["Pod"] if p["metadata"]["name"].startswith("lab-portal-"))
     assert empty.workload_of(pod) is None
+    replaced = copy.deepcopy(view["ReplicaSet"])
+    for replica in replaced:
+        replica["metadata"]["uid"] = "replacement-uid"
+    assert OwnerIndex.build(replaced, view["Job"]).workload_of(pod) is None
     workloads = top_level_workloads(view)
     assert "extorq-apps/ReplicaSet/" not in " ".join(workloads)  # owned by a Deployment
 

@@ -1,4 +1,4 @@
-"""Alert endpoints: list, detail/evidence, context, assessments, summary, state."""
+"""Alert endpoints: list, detail/evidence, context, Jev assessments, state."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from api_fakes import (
 from fastapi.testclient import TestClient
 
 from extorq.api.errors import ServiceUnavailable
+from extorq.common.config import EVENT_RETENTION_DAYS
 from extorq.contracts import AIStatus
 
 
@@ -29,6 +30,40 @@ def _seed_alert(repo: FakeRepository, label: str = "a1", **kw: Any) -> str:
     row = alert_row(label, **kw)
     repo.alerts.append(row)
     return str(row["alert_id"])
+
+
+def test_evidence_retention_distinguishes_eligible_missing_from_unknown(
+    client: TestClient, analyst: dict[str, str], repo: FakeRepository
+) -> None:
+    cutoff = NOW - timedelta(days=EVENT_RETENTION_DAYS)
+    retained = event_row("retained-pending-ttl-merge", event_time=cutoff)
+    expired_id = hexid("expired-missing")
+    too_recent_id = hexid("recent-missing")
+    historical_id = hexid("legacy-unknown")
+    repo.events[retained["event_id"]] = retained
+    alert_id = _seed_alert(
+        repo, evidence_event_ids=[retained["event_id"], expired_id, too_recent_id, historical_id]
+    )
+    repo.evidence[alert_id] = [
+        {
+            "event_id": event_id,
+            "role": "supporting",
+            "added_at": NOW,
+            "event_time": event_time,
+        }
+        for event_id, event_time in (
+            (retained["event_id"], cutoff),
+            (expired_id, cutoff),
+            (too_recent_id, cutoff + timedelta(seconds=1)),
+            (historical_id, None),
+        )
+    ]
+    response = client.get(f"/api/v1/alerts/{alert_id}", headers=analyst)
+    assert response.status_code == 200
+    body = response.json()
+    assert [record["event_id"] for record in body["evidence"]] == [retained["event_id"]]
+    assert set(body["unresolved_evidence_ids"]) == {expired_id, too_recent_id, historical_id}
+    assert body["expired_evidence_ids"] == [expired_id]
 
 
 # ── list ──────────────────────────────────────────────────────────────────────────
@@ -174,6 +209,18 @@ def test_alert_detail_404_and_422(client: TestClient, analyst: dict[str, str]) -
     assert client.get("/api/v1/alerts/" + "a" * 32, headers=analyst).status_code == 404
     assert client.get("/api/v1/alerts/not-hex", headers=analyst).status_code == 422
     assert client.get("/api/v1/alerts/" + "A" * 32, headers=analyst).status_code == 422
+
+
+def test_alert_detail_does_not_substitute_a_newer_rule_version(
+    client: TestClient, analyst: dict[str, str], repo: FakeRepository
+) -> None:
+    alert_id = _seed_alert(repo, rule_version="1.0.0")
+    repo.rules.append(rule_row(version="2.0.0"))
+
+    response = client.get(f"/api/v1/alerts/{alert_id}", headers=analyst)
+    assert response.status_code == 200
+    assert response.json()["alert"]["rule_version"] == "1.0.0"
+    assert response.json()["rule"] is None
 
 
 # ── state mutation ────────────────────────────────────────────────────────────────
@@ -417,146 +464,113 @@ def test_assessments_via_ai_store_newest_first(
     assert [a["status"] for a in body["items"]] == ["ok", "timeout"]
 
 
-def test_assessments_direct_fallback_parses_e_row_format(
+def _stored_row(item: Any, **overrides: Any) -> dict[str, Any]:
+    """An ``ai_assessments`` row as the AI store writes it: flattened columns plus ``output``."""
+    base = item.model_dump(mode="python")
+    row = {k: base[k] for k in base if k not in ("triage", "schema_version")}
+    triage = base.get("triage")
+    row.update(
+        {
+            "recommendation": triage["recommendation"] if triage else None,
+            "uncertain": triage["uncertain"] if triage else None,
+            "output": json.dumps({"requested_model": "m", "triage": triage}, default=str),
+        }
+    )
+    row.update(overrides)
+    return row
+
+
+def test_assessments_direct_fallback_parses_stored_row_format(
     client: TestClient,
     analyst: dict[str, str],
     repo: FakeRepository,
     integrations: FakeIntegrations,
 ) -> None:
     alert_id = _seed_alert(repo)
-    integrations.assessments = None  # E's store module absent
-    base = assessment(alert_id).model_dump(mode="python")
-    good = {k: base[k] for k in base if k not in ("triage", "summary", "validation")}
-    good.update(
-        {
-            "provider": "google-gemini",
-            "task": "summary",
-            "status": "ok",
-            "recommendation": None,
-            "uncertain": None,
-            "output": json.dumps(
-                {"requested_model": "m", "triage": None, "summary": None, "validation": None}
-            ),
-        }
-    )
-    broken = dict(good, assessment_id=hexid("broken"), status="not-a-status")
+    integrations.assessments = None  # the AI module's store is absent
+    good = _stored_row(assessment(alert_id))
+    broken = _stored_row(assessment(alert_id), assessment_id=hexid("broken"), status="not-a-status")
     repo.direct_assessments = [good, broken]
     body = client.get(f"/api/v1/alerts/{alert_id}/assessments", headers=analyst).json()
     assert body["source"] == "direct"
     assert len(body["items"]) == 1
+    assert body["items"][0]["provider"] == "typesafe-jev"
+    assert body["items"][0]["triage"]["recommendation"] == "routine_review"
     assert body["invalid_records"] == 1
 
 
-# ── summary ───────────────────────────────────────────────────────────────────────
-
-
-def test_summary_success_is_audited_and_attributed(
+def test_assessments_direct_fallback_rejects_removed_provider_rows(
     client: TestClient,
     analyst: dict[str, str],
     repo: FakeRepository,
     integrations: FakeIntegrations,
 ) -> None:
+    """A stored row of the provider removed in schema 2.0 is counted invalid, never shown;
+    keys other than ``triage`` in ``output`` are ignored."""
     alert_id = _seed_alert(repo)
-    integrations.summary_result = assessment(alert_id)
-    response = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=analyst)
-    assert response.status_code == 200, response.text
-    assert response.json()["assessment"]["status"] == "ok"
-    assert integrations.summary_calls == [(alert_id, "analyst:alice")]
-    assert [row["action"] for _, row in repo.writes] == ["ai_summary_requested"]
+    integrations.assessments = None
+    legacy = _stored_row(
+        assessment(alert_id, status=AIStatus.TIMEOUT),
+        assessment_id=hexid("legacy"),
+        provider="google-gemini",
+        task="summary",
+        output=json.dumps({"requested_model": "m", "summary": {"what_happened": []}}),
+    )
+    current = _stored_row(
+        assessment(alert_id),
+        output=json.dumps(
+            {"requested_model": "m", "triage": None, "summary": None, "validation": None}
+        ),
+    )
+    repo.direct_assessments = [legacy, current]
+    body = client.get(f"/api/v1/alerts/{alert_id}/assessments", headers=analyst).json()
+    assert [item["provider"] for item in body["items"]] == ["typesafe-jev"]
+    assert body["invalid_records"] == 1
 
 
-def test_summary_disabled_is_graceful_503(
+def test_assessments_store_failure_falls_back_to_direct(
     client: TestClient,
     analyst: dict[str, str],
     repo: FakeRepository,
     integrations: FakeIntegrations,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     alert_id = _seed_alert(repo)
-    integrations.summary_result = assessment(
-        alert_id, status=AIStatus.DISABLED, error="EXTORQ_GEMINI_ENABLED is false"
-    )
-    response = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=analyst)
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "AI summaries are unavailable: EXTORQ_GEMINI_ENABLED is false"
-    )
+
+    def failing_store(_repo: Any, _alert_id: str) -> None:
+        raise RuntimeError("synthetic store failure")
+
+    monkeypatch.setattr(integrations, "list_assessments", failing_store)
+    repo.direct_assessments = [_stored_row(assessment(alert_id))]
+    body = client.get(f"/api/v1/alerts/{alert_id}/assessments", headers=analyst).json()
+    assert body["source"] == "direct"
+    assert len(body["items"]) == 1
 
 
-def test_summary_budget_refusal_is_returned_not_hidden(
-    client: TestClient,
-    analyst: dict[str, str],
-    repo: FakeRepository,
-    integrations: FakeIntegrations,
+# ── removed endpoints (schema 2.0) ────────────────────────────────────────────────
+
+
+def test_summary_endpoint_no_longer_exists(
+    client: TestClient, analyst: dict[str, str], repo: FakeRepository
 ) -> None:
+    """The on-demand AI summary (Gemini) was removed: no route, nothing written."""
     alert_id = _seed_alert(repo)
-    integrations.summary_result = assessment(
-        alert_id, status=AIStatus.BUDGET_EXCEEDED, error="cooldown_active"
-    )
     response = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=analyst)
+    assert response.status_code in (404, 405)
+    assert repo.writes == []
+
+
+def test_simulation_filter_is_not_accepted_as_a_filter(
+    client: TestClient, analyst: dict[str, str], repo: FakeRepository
+) -> None:
+    """``simulation_run_id`` is no longer a parameter: it is ignored like any unknown query
+    key and never reaches the repository filters."""
+    _seed_alert(repo)
+    response = client.get(
+        "/api/v1/alerts", headers=analyst, params={"simulation_run_id": "abcdef0123"}
+    )
     assert response.status_code == 200
-    assert response.json()["assessment"]["status"] == "budget_exceeded"
-
-
-def test_summary_module_absent_is_503(
-    client: TestClient,
-    analyst: dict[str, str],
-    repo: FakeRepository,
-    integrations: FakeIntegrations,
-) -> None:
-    alert_id = _seed_alert(repo)
-    integrations.summary_error = ServiceUnavailable("AI summary service is not installed")
-    response = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=analyst)
-    assert response.status_code == 503
-
-
-def test_summary_unexpected_failure_is_503(
-    client: TestClient,
-    analyst: dict[str, str],
-    repo: FakeRepository,
-    integrations: FakeIntegrations,
-) -> None:
-    alert_id = _seed_alert(repo)
-    integrations.summary_error = RuntimeError("provider exploded with detail")
-    response = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=analyst)
-    assert response.status_code == 503
-    assert "exploded" not in response.text
-
-
-def test_summary_unknown_alert_does_not_call_ai(
-    client: TestClient, analyst: dict[str, str], integrations: FakeIntegrations
-) -> None:
-    response = client.post("/api/v1/alerts/" + "d" * 32 + "/summary", headers=analyst)
-    assert response.status_code == 404
-    assert integrations.summary_calls == []
-
-
-def test_summary_rate_limit_per_user(
-    client: TestClient,
-    analyst: dict[str, str],
-    repo: FakeRepository,
-    integrations: FakeIntegrations,
-) -> None:
-    alert_id = _seed_alert(repo)
-    integrations.summary_result = assessment(alert_id)
-    statuses = [
-        client.post(f"/api/v1/alerts/{alert_id}/summary", headers=analyst).status_code
-        for _ in range(7)
-    ]
-    assert statuses[:6] == [200] * 6
-    assert statuses[6] == 429
-
-
-def test_summary_in_flight_conflict(
-    client: TestClient,
-    analyst: dict[str, str],
-    repo: FakeRepository,
-    integrations: FakeIntegrations,
-) -> None:
-    alert_id = _seed_alert(repo)
-    integrations.summary_result = assessment(alert_id)
-    gate = client.app.state.summary_gate  # type: ignore[attr-defined]
-    gate.acquire("someone-else", alert_id)
-    response = client.post(f"/api/v1/alerts/{alert_id}/summary", headers=analyst)
-    assert response.status_code == 409
-    gate.release(alert_id)
-    assert client.post(f"/api/v1/alerts/{alert_id}/summary", headers=analyst).status_code == 200
+    assert len(response.json()["items"]) == 1
+    filters = repo.last_call("list_alerts")
+    assert not hasattr(filters, "simulation_run_id")
+    assert "simulation_run_ids" not in response.json()["items"][0]

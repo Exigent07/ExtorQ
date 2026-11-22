@@ -188,3 +188,27 @@ def test_run_without_any_jev_answer_reports_no_accuracy() -> None:
     assert report["notes"][0].startswith("No Jev answer in this run")
     assert "outperform" not in report["notes"][0]
     assert "n/a" in render_markdown(report)
+
+
+def test_outdated_raw_answers_are_skipped_not_reused(tmp_path: Path) -> None:
+    """Raw lines from an older contract schema never crash a run and are never reused."""
+    cases = load_dataset(DATASET)[:2]
+    raw = tmp_path / "raw.jsonl"
+    run_eval(
+        cases, provider=_provider(sc=0.9), settings=enabled_settings(), max_calls=2, raw_path=raw
+    )
+    lines = raw.read_text(encoding="utf-8").splitlines()
+    outdated = json.loads(lines[0])
+    outdated["assessment"]["schema_version"] = "1.1"  # e.g. written before schema 2.0
+    raw.write_text(
+        "\n".join([json.dumps(outdated), lines[1], "{not json"]) + "\n", encoding="utf-8"
+    )
+    rerun = run_eval(
+        cases, provider=_provider(sc=0.9), settings=enabled_settings(), max_calls=2, raw_path=raw
+    )
+    assert rerun.raw_lines_skipped == 2
+    assert [r.reused for r in rerun.results] == [False, True]
+    assert rerun.calls_made == 1
+    report = build_report(rerun, dataset=DATASET, max_calls=2, date="2026-11-22")
+    assert report["run"]["raw_lines_skipped"] == 2
+    assert any("not reused" in note for note in report["notes"])

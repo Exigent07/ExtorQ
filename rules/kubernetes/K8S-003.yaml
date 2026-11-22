@@ -1,0 +1,106 @@
+rule_id: K8S-003
+version: 1.0.0
+title: Interactive exec into a pod by a human identity
+description: >-
+  A person opened an exec or attach session into a running pod (kubectl exec / attach),
+  as recorded by the kube-apiserver audit log. Exec gives command execution inside the
+  container with its service account token, mounted secrets and network position, so on a
+  production cluster it should be rare and explainable. Only sessions the API server
+  accepted count (101 Switching Protocols or 2xx; kubectl's WebSocket GET and the legacy
+  SPDY POST). Control-plane components and all service accounts (every 'system:' identity)
+  are excluded by design; reviewed automation with a non-system identity can be excluded by
+  exact identity. Repeated sessions by one person into one pod within 15 minutes are one
+  alert. Confidence: high when the target pod is named and the session was established;
+  medium otherwise.
+severity: medium
+status: stable
+mitre_techniques: [T1609]
+asset_types: [kubernetes_cluster]
+requires:
+  - source_type: k8s.audit
+    event_types: [k8s.api.request]
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 900
+group_by: [cluster, user, namespace, pod]
+params:
+  subresources: [exec, attach]
+  # Exact authenticated identities of reviewed automation (never a prefix or pattern).
+  excluded_users: []
+false_positives:
+  - >-
+    Administrators debugging a workload. Handling: alerted by design (exec is privileged
+    access to the container); sessions by one person in one pod merge into one alert per
+    15-minute episode, so a debugging session is one item to acknowledge.
+  - >-
+    CI/CD or operations tooling that runs commands in pods with a personal or tool
+    credential. Handling: the tool's exact authenticated identity can be listed in
+    excluded_users after review. Kubernetes user names come from the credential (client
+    certificate CN or OIDC claim), not from the request, so the exclusion is not something
+    a caller can spoof without that credential; no prefixes or patterns are accepted.
+blind_spots:
+  - >-
+    Exec by service accounts (for example a stolen pod token used for lateral movement) is
+    excluded by design (system identities); K8S-002 covers granting pods/exec through RBAC.
+  - >-
+    Exec through the kubelet API (port 10250) or the container runtime on the node bypasses
+    the API server and is not audited.
+  - >-
+    The executed command comes from the request URI and is redacted and bounded by the audit
+    normaliser (attributes.exec_command); what the command did inside the container (stdin of
+    an interactive shell) is never visible.
+  - >-
+    Denied attempts (403), port-forward sessions and ephemeral debug containers (kubectl
+    debug; K8S-001/K8S-005 when privileged) are not this rule.
+references:
+  - https://attack.mitre.org/techniques/T1609/
+  - https://kubernetes.io/docs/tasks/debug/debug-application/get-shell-running-container/
+query: K8S-003.sql
+summary_template: >-
+  {user} opened {sessions} interactive session(s) ({subresources}) into pod
+  {namespace}/{pod} on {asset_id} (response {response_codes}; impersonating
+  {impersonated_users}; commands {commands})
+tests:
+  - name: matrix-kubectl-exec-id-into-web-app-pod
+    description: >-
+      Matrix positive, captured: kubectl exec running `id` in the web application's pod by the
+      cluster administrator (real audit record: WebSocket GET pods/exec, response 101).
+    fixture: tests/K8S-003/positive_matrix_exec_captured.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {user: kubernetes-admin, namespace: extorq-apps}
+    features:
+      subresources: [exec]
+      verbs: [get]
+      response_codes: ["101"]
+      commands: [id]
+      containers: [b2-fixture-ok]
+      tty: false
+  - name: repeated-sessions-merge-and-spdy-attach
+    description: >-
+      Three sessions by the same person into the same pod within ten minutes (two WebSocket
+      exec, one legacy SPDY attach): one alert listing both subresources.
+    fixture: tests/K8S-003/positive_repeated_sessions.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    features:
+      sessions: 3
+      subresources: [attach, exec]
+      verbs: [create, get]
+  - name: matrix-control-kubectl-logs
+    description: >-
+      Matrix negative control: kubectl logs of the same pod (GET pods/log, 200).
+    fixture: tests/K8S-003/negative_matrix_kubectl_logs.jsonl
+    expect: no_alert
+  - name: service-account-and-denied-exec
+    description: >-
+      An exec by a service account (excluded by design), a node identity, and an exec by a
+      person that the API server denied with 403: none alerts.
+    fixture: tests/K8S-003/negative_service_account_and_denied.jsonl
+    expect: no_alert

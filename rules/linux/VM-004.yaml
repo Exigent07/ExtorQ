@@ -1,0 +1,141 @@
+rule_id: VM-004
+version: 1.0.0
+title: Cron persistence on a Linux host
+description: >-
+  A cron file was added or modified on a Linux host (system crontab, /etc/cron.d, the
+  hourly/daily/weekly/monthly script directories or a user crontab), as observed by comparing
+  inventory snapshots collected over SSH. cron runs these entries without any further user
+  action, so a new entry is persistence even before it first runs. Removals are not alerted.
+  Confidence: high when an auditd watch hit (key extorq_cron) records a successful create or
+  modify syscall on exactly that file shortly before the snapshot (two sources agree; the
+  writing executable is known); medium for the inventory diff alone, which is always the case
+  for locations without an audit watch.
+severity: high
+status: stable
+mitre_techniques: [T1053.003]
+asset_types: [linux_host]
+requires:
+  - source_type: linux.inventory
+    event_types: [persistence.cron.changed]
+  - source_type: linux.auditd
+    event_types: [file.audit.watch]
+    optional: true
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: event
+group_by: [asset_id, path, sha256]
+params:
+  audit_key: extorq_cron
+  corroboration_seconds: 600
+  # The dispatcher stamps the snapshot and then reads the cron files (same host clock).
+  snapshot_read_lag_seconds: 5
+  # auditd syscalls that create or modify a file (allowlist; the shared definition in
+  # extorq.detection.linux_audit, same list as VM-002 and CORR-002).
+  change_syscalls:
+    - open
+    - openat
+    - openat2
+    - creat
+    - truncate
+    - ftruncate
+    - rename
+    - renameat
+    - renameat2
+    - link
+    - linkat
+    - symlink
+    - symlinkat
+    - mknod
+    - mknodat
+    - chmod
+    - fchmod
+    - fchmodat
+    - fchmodat2
+    - chown
+    - fchown
+    - fchownat
+    - lchown
+  # Exact cron file paths managed by a controlled process (root-only directories).
+  allowlist_paths: []
+  # Writers reported as package_manager_writer (context only, never a suppression).
+  package_manager_executables: [/usr/bin/dpkg, /usr/bin/apt, /usr/bin/apt-get]
+false_positives:
+  - >-
+    Package installs and upgrades that ship or update cron files (sysstat, logrotate,
+    e2scrub). Handling: reported with the writer (package_manager_writer = true when dpkg
+    wrote /etc/cron.d) and the asset's package.* changes in the investigation context; not
+    suppressed, because root can also install a malicious package with dpkg.
+  - >-
+    Administrators or configuration management deploying scheduled jobs. Handling: exact
+    paths of files that a controlled process owns can be allowlisted (allowlist_paths); paths
+    rather than file names because only root can write these directories.
+blind_spots:
+  - >-
+    The inventory records a content digest, not the cron entry itself (file contents are
+    never collected), so the alert says that a file changed, not which command it schedules.
+  - >-
+    Entries added and removed between two inventory snapshots (60 s); systemd timers
+    (covered by VM-002 when the unit is new), at jobs, shell profiles and other persistence.
+  - >-
+    User crontabs in /var/spool/cron/crontabs are only seen when the collector can read
+    that directory; only /etc/cron.d has an auditd watch, so other locations are medium.
+  - Removing a cron file is not alerted (deletion is not persistence).
+references:
+  - https://attack.mitre.org/techniques/T1053/003/
+  - https://manpages.ubuntu.com/manpages/noble/man8/cron.8.html
+query: VM-004.sql
+summary_template: >-
+  Cron file {path} ({cron_location}) {change_types} on {asset_id}; auditd corroborated:
+  {audit_corroborated} (writer {writer_executables}, {writer_syscalls}); written by the
+  package manager: {package_manager_writer}
+tests:
+  - name: matrix-cron-d-file-written-with-tee
+    description: >-
+      Matrix positive: `sudo tee /etc/cron.d/extorq-test-job` with a harmless `true` job.
+      The inventory diff ('added') and the auditd extorq_cron openat by /usr/bin/tee on the
+      same path agree: high.
+    fixture: tests/VM-004/positive_matrix_cron_d_tee.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {path: /etc/cron.d/extorq-test-job}
+    features:
+      cron_location: cron.d
+      audit_corroborated: true
+      writer_executables: [/usr/bin/tee]
+      package_manager_writer: false
+  - name: system-crontab-modified-inventory-only
+    description: >-
+      /etc/crontab modified (no audit watch on that file): inventory diff only, medium.
+    fixture: tests/VM-004/positive_crontab_modified.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      cron_location: system_crontab
+      audit_corroborated: false
+  - name: package-install-cron-file-is-reported
+    description: >-
+      A package install drops /etc/cron.d/sysstat written by dpkg: still alerted (root can
+      install packages), with package_manager_writer = true as context.
+    fixture: tests/VM-004/positive_package_cron_file.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    features:
+      package_manager_writer: true
+  - name: matrix-control-crontab-listing
+    description: >-
+      Matrix negative control: `crontab -l` and reading /etc/cron.d (read-only): no cron
+      change and no write is recorded, so no alert.
+    fixture: tests/VM-004/negative_matrix_crontab_listing.jsonl
+    expect: no_alert
+  - name: removal-and-baseline
+    description: >-
+      The cleanup (cron file removed, with the auditd unlinkat) and a baseline-flagged cron
+      row: neither is persistence.
+    fixture: tests/VM-004/negative_removal_and_baseline.jsonl
+    expect: no_alert

@@ -10,11 +10,14 @@ source              default   records
 ==================  ========  ====================================================
 ``unified_log``     60 s      auth/sudo/XProtect/Gatekeeper events, gap events
 ``launchd``         60 s      persistence.launchd.* events + launch_item inventory
-``inventory``       300 s     listeners (+ network.listener.* events), processes,
-                              local accounts (+ account.user.* events), services
-                              (Service / ServiceInstance + service.* events)
+``listeners``       60 s      network.listener.opened/closed events + listener
+                              inventory (bind address, exposure, owning process)
+``inventory``       300 s     processes, local accounts (+ account.user.* events),
+                              services (Service / ServiceInstance + service.* events)
 ``posture``         300 s     ScanRun x2 + PostureFindings + setting-change events
-``applications``    3600 s    installed applications inventory
+``applications``    3600 s    installed applications inventory (system_profiler)
+``software``        60 s      software.installed/removed (application folders, codesign
+                              status of new bundles)
 ``asset``           300 s     Asset record (when changed or refresh due)
 ==================  ========  ====================================================
 
@@ -35,6 +38,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -52,6 +56,7 @@ from extorq.contracts.identity import event_id, iso_utc
 from extorq.contracts.service import ServiceRef
 from extorq_collectors.macos import launchd as launchd_mod
 from extorq_collectors.macos import services as services_mod
+from extorq_collectors.macos import software as software_mod
 from extorq_collectors.macos.adapters import MACOS_ADAPTERS
 from extorq_collectors.macos.commands import CommandRunner, SubprocessRunner
 from extorq_collectors.macos.common import (
@@ -110,7 +115,21 @@ UNIFIED_LOG_CHECKPOINT = "unified_log.window"
 KV_SOURCES = "macos.sources"
 KV_ADAPTER_LAST_EVENT = "macos.adapter_last_event"
 KV_FULL_INVENTORY = "macos.full_inventory"
-SOURCES = ("unified_log", "launchd", "inventory", "posture", "applications", "asset")
+KV_SOFTWARE_DEFERRED = "macos.software.deferred"
+#: Run order within a cycle: listeners before inventory (service discovery reuses the fresh
+#: listener snapshot) and inventory before posture (sharing checks reuse it as well).
+SOURCES = (
+    "unified_log",
+    "launchd",
+    "listeners",
+    "inventory",
+    "posture",
+    "applications",
+    "software",
+    "asset",
+)
+#: A listener snapshot younger than this is reused by inventory and posture.
+LISTENER_REUSE_SECONDS = 120
 
 #: Telemetry this collector cannot provide with supported, unprivileged interfaces.
 STATIC_GAPS: tuple[str, ...] = (
@@ -127,6 +146,9 @@ STATIC_GAPS: tuple[str, ...] = (
     "be rate-limited",
     "/System/Library launchd plists (sealed system volume) are counted, not diffed",
     "TCC privacy database requires Full Disk Access: not collected",
+    "application folders: only /Applications and ~/Applications (one folder deep) are "
+    "scanned every minute; Gatekeeper/notarization assessment is not run (spctl --assess "
+    "may contact Apple); a bundle added and removed between two scans is missed",
 )
 #: Posture checks that are, by definition, about one host service (launchd label).
 SHARING_CHECK_LABEL: dict[str, str] = {
@@ -185,6 +207,7 @@ class MacOSCollector(Collector):
         home: Path | None = None,
         uid: int | None = None,
         launch_locations: list[launchd_mod.Location] | None = None,
+        app_locations: list[software_mod.AppLocation] | None = None,
         apple_definitions_root: Path | None = None,
         system_count_dirs: tuple[str, ...] | None = None,
         require_macos: bool = True,
@@ -194,12 +217,14 @@ class MacOSCollector(Collector):
         self.home = home
         self.uid = os.getuid() if uid is None else uid
         self.launch_locations = launch_locations
+        self.app_locations = app_locations
         self.apple_root = apple_definitions_root
         self.system_count_dirs = system_count_dirs
         self.require_macos = require_macos
         self._launch_items: dict[str, launchd_mod.LaunchItem] | None = None
         self._listeners: ListenerSnapshot | None = None
         self._listeners_at: datetime | None = None
+        self._processes: dict[int, ProcessRow] = {}
         self._listener_services: dict[str, str] = {}
         self._service_names: dict[str, str] = {}
         self._guid_cache: dict[str, str | None] = {}
@@ -591,13 +616,12 @@ class MacOSCollector(Collector):
             change, src, observed_at=observed, snapshot=snap, service=ref
         )
 
-    # ── inventory (+ services) ────────────────────────────────────────
+    # ── processes (shared by listeners and inventory) ─────────────────
 
-    def _run_inventory(self, ctx: CollectorContext, settings: MacOSSettings, now: datetime) -> None:
+    def _process_rows(self, settings: MacOSSettings, timeout: float) -> list[ProcessRow]:
+        """``ps`` snapshot with kernel-verified executable paths (raises when unusable)."""
         cfg = settings.inventory
-        src = self._src(ctx)
-        observed = to_ms(now)
-        ps = self.runner.run(PS_ARGV, timeout=cfg.command_timeout_seconds)
+        ps = self.runner.run(PS_ARGV, timeout=timeout)
         if not ps.ok:
             raise SourceFailure(f"ps: {ps.summary()}")
         rows = parse_ps(ps.text())
@@ -607,21 +631,143 @@ class MacOSCollector(Collector):
             rows, self.resolve_path if cfg.verify_executable_paths else no_paths
         )
         if cfg.include_process_args:
-            args_result = self.runner.run(PS_ARGS_ARGV, timeout=cfg.command_timeout_seconds)
+            args_result = self.runner.run(PS_ARGS_ARGV, timeout=timeout)
             if args_result.ok:
                 args, _redactions = parse_ps_args(args_result.text())
                 rows = [replace(r, args=args.get(r.pid)) for r in rows]
-        processes: dict[int, ProcessRow] = {r.pid: r for r in rows}
+        self._processes = {r.pid: r for r in rows}
+        return rows
+
+    # ── listeners ─────────────────────────────────────────────────────
+
+    def _run_listeners(self, ctx: CollectorContext, settings: MacOSSettings, now: datetime) -> None:
+        """Listening sockets: diff -> network.listener.* events + listener inventory.
+
+        The owning process comes from netstat's last-pid column or, when the socket table is
+        withheld, from lsof (current user's processes only); ``ps`` adds the verified
+        executable path and user. A socket whose owner cannot be seen keeps empty
+        ``processes`` and ``process_attribution=unavailable`` (never guessed).
+        """
+        cfg = settings.listeners
+        src = self._src(ctx)
+        observed = to_ms(now)
+        self._process_rows(settings, cfg.command_timeout_seconds)
         listeners = collect_listeners(
             self.runner,
             include_udp=cfg.include_udp,
+            timeout=cfg.command_timeout_seconds,
+            process_index=self._processes,
+        )
+        if listeners.method == "unavailable":
+            raise SourceFailure("; ".join(listeners.errors) or "listening sockets unavailable")
+        snap = snapshot_id(ctx.collector_id, "listeners", now)
+        full = self._full_due(ctx, "listeners", cfg.full_inventory_seconds, now)
+        records: list[Any] = []
+        # The snapshot name carries the method: switching netstat <-> lsof never fakes diffs.
+        current = {k: v.summary() for k, v in listeners.listeners.items()}
+        ldiff = ctx.diff_snapshot(f"listeners.{listeners.method}", current)
+        if not ldiff.baseline:
+            for key in sorted(ldiff.added) + sorted(ldiff.changed):
+                extra: dict[str, Any] = {}
+                if key in ldiff.changed:
+                    before = ldiff.previous.get(key, {}).get("processes")
+                    extra = {
+                        "owner_changed": True,
+                        "previous_processes": before if isinstance(before, list) else None,
+                    }
+                records.append(
+                    listener_event(
+                        "opened",
+                        key,
+                        listeners.listeners[key],
+                        None,
+                        src,
+                        observed_at=observed,
+                        snapshot=snap,
+                        service=self._listener_ref(key),
+                        extra_attributes={"listener_method": listeners.method, **extra},
+                    )
+                )
+            for key, previous in sorted(ldiff.removed.items()):
+                records.append(
+                    listener_event(
+                        "closed",
+                        key,
+                        None,
+                        previous,
+                        src,
+                        observed_at=observed,
+                        snapshot=snap,
+                        extra_attributes={"listener_method": listeners.method},
+                    )
+                )
+        keys = (
+            set(listeners.listeners)
+            if (full or ldiff.baseline)
+            else (set(ldiff.added) | set(ldiff.changed))
+        )
+        for key in sorted(keys):
+            records.append(
+                inventory_item(
+                    InventoryItemType.LISTENER,
+                    key,
+                    listeners.listeners[key].attributes(),
+                    src,
+                    observed_at=observed,
+                    snapshot=snap,
+                )
+            )
+        for key, previous in sorted(ldiff.removed.items()):
+            records.append(
+                inventory_item(
+                    InventoryItemType.LISTENER,
+                    key,
+                    {"protocol": previous.get("protocol"), "port": previous.get("port")},
+                    src,
+                    observed_at=observed,
+                    snapshot=snap,
+                    present=False,
+                )
+            )
+        ctx.emit(records)
+        if full:
+            self._mark_full(ctx, "listeners", now)
+        self._listeners = listeners
+        self._listeners_at = now
+        self._set_stats(
+            "listeners",
+            method=listeners.method,
+            listeners=len(listeners.listeners),
+            exposed_any=sum(1 for v in listeners.listeners.values() if v.exposure == "any"),
+            events=sum(1 for r in records if isinstance(r, SecurityEvent)),
+            errors=listeners.errors[:4] or None,
+        )
+
+    def _fresh_listeners(self, now: datetime) -> ListenerSnapshot | None:
+        if self._listeners is None or self._listeners_at is None:
+            return None
+        if now - self._listeners_at >= timedelta(seconds=LISTENER_REUSE_SECONDS):
+            return None
+        return self._listeners
+
+    # ── inventory (+ services) ────────────────────────────────────────
+
+    def _run_inventory(self, ctx: CollectorContext, settings: MacOSSettings, now: datetime) -> None:
+        cfg = settings.inventory
+        src = self._src(ctx)
+        observed = to_ms(now)
+        rows = self._process_rows(settings, cfg.command_timeout_seconds)
+        processes = self._processes
+        # Service discovery needs the listening sockets; the listeners source diffs them.
+        listeners = self._fresh_listeners(now) or collect_listeners(
+            self.runner,
+            include_udp=settings.listeners.include_udp,
             timeout=cfg.command_timeout_seconds,
             process_index=processes,
         )
         records: list[Any] = []
         notes: dict[str, Any] = {}
 
-        # Services first: listener events reference the services that own the sockets.
         if settings.services.enabled:
             try:
                 records.extend(self._services(ctx, settings, now, processes, listeners))
@@ -633,67 +779,6 @@ class MacOSCollector(Collector):
 
         snap = snapshot_id(ctx.collector_id, "inventory", now)
         full = self._full_due(ctx, "inventory", cfg.full_inventory_seconds, now)
-
-        # Listening sockets (snapshot name carries the method: switching never fakes diffs).
-        if listeners.method != "unavailable":
-            current = {k: v.summary() for k, v in listeners.listeners.items()}
-            ldiff = ctx.diff_snapshot(f"listeners.{listeners.method}", current)
-            if not ldiff.baseline:
-                for key in sorted(ldiff.added) + sorted(ldiff.changed):
-                    extra: dict[str, Any] = {}
-                    if key in ldiff.changed:
-                        before = ldiff.previous.get(key, {}).get("processes")
-                        extra = {
-                            "owner_changed": True,
-                            "previous_processes": before if isinstance(before, list) else None,
-                        }
-                    records.append(
-                        listener_event(
-                            "opened",
-                            key,
-                            listeners.listeners[key],
-                            None,
-                            src,
-                            observed_at=observed,
-                            snapshot=snap,
-                            service=self._listener_ref(key),
-                            extra_attributes=extra,
-                        )
-                    )
-                for key, previous in sorted(ldiff.removed.items()):
-                    records.append(
-                        listener_event(
-                            "closed", key, None, previous, src, observed_at=observed, snapshot=snap
-                        )
-                    )
-            keys = (
-                set(listeners.listeners)
-                if (full or ldiff.baseline)
-                else (set(ldiff.added) | set(ldiff.changed))
-            )
-            for key in sorted(keys):
-                records.append(
-                    inventory_item(
-                        InventoryItemType.LISTENER,
-                        key,
-                        listeners.listeners[key].attributes(),
-                        src,
-                        observed_at=observed,
-                        snapshot=snap,
-                    )
-                )
-            for key, previous in sorted(ldiff.removed.items()):
-                records.append(
-                    inventory_item(
-                        InventoryItemType.LISTENER,
-                        key,
-                        {"protocol": previous.get("protocol"), "port": previous.get("port")},
-                        src,
-                        observed_at=observed,
-                        snapshot=snap,
-                        present=False,
-                    )
-                )
 
         # Processes (inventory only: the catalog has no macOS process events).
         pdiff = ctx.diff_snapshot(
@@ -795,8 +880,8 @@ class MacOSCollector(Collector):
         ctx.emit(records)
         if full:
             self._mark_full(ctx, "inventory", now)
-        self._listeners = listeners
-        self._listeners_at = now
+        if self._fresh_listeners(now) is None:
+            self._listeners, self._listeners_at = listeners, now
         self._set_stats(
             "inventory",
             processes=len(rows),
@@ -977,13 +1062,7 @@ class MacOSCollector(Collector):
     def _run_posture(self, ctx: CollectorContext, settings: MacOSSettings, now: datetime) -> None:
         cfg = settings.posture
         src = self._src(ctx)
-        fresh = (
-            self._listeners
-            if self._listeners is not None
-            and self._listeners_at is not None
-            and now - self._listeners_at < timedelta(seconds=120)
-            else None
-        )
+        fresh = self._fresh_listeners(now)
         run = run_posture(
             self.runner,
             PostureOptions(
@@ -1081,6 +1160,108 @@ class MacOSCollector(Collector):
             unsigned=sum(1 for a in apps if not a.signed_by),
         )
 
+    # ── software (application folders) ────────────────────────────────
+
+    def _run_software(self, ctx: CollectorContext, settings: MacOSSettings, now: datetime) -> None:
+        """Application folders -> ``software.installed`` / ``software.removed`` (MAC-005).
+
+        The first scan is a baseline (nothing is "installed" just because ExtorQ started
+        looking). A new bundle is reported once settled; its signature is checked with
+        bounded codesign calls, within a per-scan count and time budget. A bundle that
+        cannot be reported yet (not settled, retryable verification failure, budget spent)
+        is left out of the snapshot so it is still new on the next scan, at most
+        ``max_defer_scans`` times; after that it is reported with what is known.
+        """
+        cfg = settings.software
+        src = self._src(ctx)
+        observed = to_ms(now)
+        locations = self.app_locations or software_mod.default_locations(
+            self.home, include_user=cfg.include_user_applications
+        )
+        scan = software_mod.scan_locations(locations)
+        name = "software.bundles"
+        stored = {path: json.loads(text) for path, (text, _d) in ctx.store.snapshot(name).items()}
+        baseline = not ctx.has_snapshot(name)
+        waited_before = ctx.state.get(KV_SOFTWARE_DEFERRED, {}) or {}
+        deferred: dict[str, int] = {}
+        current: dict[str, dict[str, Any]] = {}
+        pending: list[tuple[software_mod.Change, software_mod.Signature | None]] = []
+        checks = 0
+        budget_ends = time.monotonic() + cfg.check_budget_seconds
+        for path, bundle in sorted(scan.bundles.items()):
+            before = stored.get(path)
+            summary = bundle.summary()
+            replaced = bool(
+                before is not None
+                and before.get("bundle_id")
+                and summary["bundle_id"]
+                and before["bundle_id"] != summary["bundle_id"]
+            )
+            if baseline or (before is not None and not replaced):
+                current[path] = summary  # known bundle (a version update is not an install)
+                continue
+            waited = int(waited_before.get(path, 0)) if isinstance(waited_before, dict) else 0
+            may_defer = waited < cfg.max_defer_scans
+            signature: software_mod.Signature | None = None
+            hold = may_defer and not software_mod.settled(
+                bundle, now.timestamp(), cfg.settle_seconds
+            )
+            if not hold and checks < cfg.max_signature_checks and time.monotonic() < budget_ends:
+                checks += 1
+                signature = software_mod.check_signature(
+                    self.runner, path, timeout=cfg.codesign_timeout_seconds
+                )
+                hold = may_defer and signature.retry
+            elif not hold:
+                hold = may_defer  # check budget spent this scan: check it next scan
+            if hold:
+                deferred[path] = waited + 1
+                if before is not None:
+                    current[path] = before  # replaced bundle: keep the old state until done
+                continue
+            current[path] = summary
+            change = software_mod.Change("installed", path, bundle, before, replaced=replaced)
+            pending.append((change, signature))
+        # Unreadable folders and a truncated scan must never look like removals.
+        unreliable = [e.split(":", 1)[0] for e in scan.errors]
+        for path, before in stored.items():
+            if path in current or path in scan.bundles:
+                continue
+            if scan.truncated or any(path.startswith(d.rstrip("/") + "/") for d in unreliable):
+                current[path] = before
+        diff = ctx.diff_snapshot(name, current)
+        snap = snapshot_id(ctx.collector_id, "software", now)
+        records: list[Any] = []
+        if not diff.baseline:
+            for change, signature in pending:
+                records.append(
+                    software_mod.event_for(
+                        change, src, observed_at=observed, snapshot=snap, signature=signature
+                    )
+                )
+            for path, previous in sorted(diff.removed.items()):
+                records.append(
+                    software_mod.event_for(
+                        software_mod.Change("removed", path, None, previous),
+                        src,
+                        observed_at=observed,
+                        snapshot=snap,
+                    )
+                )
+        ctx.emit(records)
+        ctx.state.set(KV_SOFTWARE_DEFERRED, deferred)
+        self._set_stats(
+            "software",
+            bundles=len(scan.bundles),
+            baseline=diff.baseline,
+            installed=sum(1 for c, _ in pending if c.kind == "installed"),
+            removed=len(diff.removed) if not diff.baseline else 0,
+            signature_checks=checks,
+            deferred=len(deferred) or None,
+            errors=scan.errors[:4] or None,
+            truncated=scan.truncated or None,
+        )
+
     # ── asset ─────────────────────────────────────────────────────────
 
     def _run_asset(self, ctx: CollectorContext, settings: MacOSSettings, now: datetime) -> None:
@@ -1149,7 +1330,16 @@ class MacOSCollector(Collector):
             "gaps": gaps,
             "unified_log_producers": list(settings.unified_log.producers),
         }
-        for name in ("unified_log", "launchd", "inventory", "services", "posture", "applications"):
+        for name in (
+            "unified_log",
+            "launchd",
+            "listeners",
+            "inventory",
+            "services",
+            "posture",
+            "applications",
+            "software",
+        ):
             stats = self._stats.get(name)
             if stats:
                 details[f"{name}_last_run"] = [

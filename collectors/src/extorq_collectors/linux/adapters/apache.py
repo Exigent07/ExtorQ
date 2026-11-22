@@ -1,8 +1,9 @@
 """Apache HTTP Server adapter: access log (Common/Combined Log Format) and error log.
 
 IMPLEMENTED and unit-tested against the formats documented by the Apache HTTP
-Server project (https://httpd.apache.org/docs/2.4/logs.html), but NOT deployed in
-the ExtorQ lab (the lab VM runs nginx). Expected routing when Apache is deployed:
+Server project (https://httpd.apache.org/docs/2.4/logs.html); no monitored host runs
+Apache today (the Ubuntu VM serves HTTP with nginx), so ``validated_live`` is False.
+Expected routing when Apache is deployed:
 
 * access: ``CustomLog "|/usr/bin/logger -t apache_access -p local6.info" combined``
   (the logger child runs inside ``apache2.service``, so journald's ``_SYSTEMD_UNIT``
@@ -190,7 +191,6 @@ def parse_apache_access(entry: JournalEntry, ctx: ParseContext) -> list[Security
             message=f"{method or '?'} {route or '?'} -> {status if status is not None else '?'}",
             raw=safe_line,
             attributes=attrs,
-            sim_texts=(agent, route),
         )
     ]
 
@@ -249,7 +249,6 @@ def parse_apache_error(entry: JournalEntry, ctx: ParseContext) -> list[SecurityE
             message=f"apache {level}: {safe_text}",
             raw=re.sub(r"(\S)\?\S*", r"\1", entry.message),
             attributes=attrs,
-            sim_texts=(route,),
         )
     ]
 
@@ -266,10 +265,10 @@ class ApacheAdapter(LinuxJournalAdapter):
     source_types = (SourceType.LINUX_APACHE,)
     syslog_identifiers = ACCESS_TAGS | ERROR_TAGS
     packages = ("apache2", "apache2-bin")
-    deployed_in_lab = False
+    validated_live = False
     description = (
         "Apache HTTP Server: access log (Common/Combined Log Format) and error log via journald "
-        "(implemented and tested on documented formats; not deployed in the lab)"
+        "(implemented and tested on documented formats; no Apache runs on the monitored hosts)"
     )
     collects = (
         "HTTP requests: method, path without query, status, bytes, user agent, client, "

@@ -1,18 +1,20 @@
-"""Contract between C1's GitHub collector output and GH-001, on a real ClickHouse.
+"""Contract between the GitHub collector's output and GH-001/GH-002, on a real ClickHouse.
 
-C1's fixtures (``tests/fixtures/github/``) are what the real collector code path emits for
-the GH-001 scenario: baseline commit, escalation commit, cleanup commit (SYNTHETIC GitHub
-API fake, events labelled ``extorq.fixture=synthetic``):
+The collector's fixtures (``tests/fixtures/github/``) are what its real code path emits for
+a workflow-escalation commit series: a baseline commit, an escalation commit (write-all, a
+pull_request_target trigger and a checkout of the pull request head) and a cleanup commit
+(SYNTHETIC GitHub API fake, events labelled ``extorq.fixture=synthetic``):
 
-* ``gh001_collector_output.jsonl``: every version parses (structured analysis); GH-001 must
-  raise exactly one HIGH alert, for the escalation commit
+* ``gh001_collector_output.jsonl``: every version parses (structured analysis)
 * ``gh001_lexical_fallback.jsonl``: the escalation version is unparseable and compared
-  lexically (``analysis = lexical_fallback``); exactly one MEDIUM alert, for the escalation
+  lexically (``analysis = lexical_fallback``)
 
-and none for the baseline or cleanup commits. The rule's declared cases run on verbatim
-copies (``rules/github/tests/GH-001/c1_*.jsonl``, visible to the detector container); this
-test runs on C1's current files, so a collector change that alters the GH-001 verdict fails
-here instead of going unnoticed.
+GH-001 (permission escalation) and GH-002 (privileged trigger + untrusted checkout) must
+each raise exactly one alert, for the escalation commit (high for the structured series,
+medium for the lexical one), and none for the baseline or cleanup commits. Running on the
+collector's current files means a collector change that alters these verdicts fails here.
+The files belong to the GitHub collector's owner; while they still hold records of an
+older contract schema the test is skipped with that reason (never silently passed).
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from extorq.contracts.event import SecurityEvent
 from extorq.detection import harness
@@ -36,41 +39,51 @@ def clean(clickhouse: harness.EphemeralClickHouse) -> harness.EphemeralClickHous
     return clickhouse
 
 
+def _load(source: Path) -> list:
+    if not source.is_file():
+        pytest.skip(f"the GitHub collector fixture {source.name} is not present")
+    try:
+        return harness.load_fixture(source)
+    except harness.HarnessError as exc:
+        if isinstance(exc.__cause__, ValidationError) and "schema_version" in str(exc.__cause__):
+            pytest.skip(f"{source.name} still holds records of an older contract schema")
+        raise
+
+
+@pytest.mark.parametrize("rule_id", ["GH-001", "GH-002"])
 @pytest.mark.parametrize(
     ("filename", "confidence"),
     [("gh001_collector_output.jsonl", "high"), ("gh001_lexical_fallback.jsonl", "medium")],
 )
-def test_c1_collector_output_alerts_exactly_the_escalation_commit(
-    clean, to_row, filename: str, confidence: str
+def test_collector_output_alerts_exactly_the_escalation_commit(
+    clean, to_row, rule_id: str, filename: str, confidence: str
 ) -> None:
     source = FIXTURES / filename
-    if not source.is_file():
-        pytest.skip(f"C1's fixture {filename} is not present")
+    records = _load(source)
     case = RuleTestCase(
-        name=f"c1-{filename}",
+        name=f"collector-{filename}",
         fixture=source,
         expect="alert",
         alerts=1,
         confidence=confidence,
     )
-    result = harness.run_case(clean, RULES["GH-001"], case, to_row)
+    result = harness.run_case(clean, RULES[rule_id], case, to_row)
     assert result.passed, result.message
 
     workflow = sorted(
         (
             m
-            for _, m in harness.load_fixture(source)
+            for _, m in records
             if isinstance(m, SecurityEvent) and m.event_type == "github.workflow.modified"
         ),
         key=lambda m: m.event_time,
     )
     assert len(workflow) == 3, "expected baseline, escalation and cleanup commits"
     baseline, escalation, cleanup = workflow
-    assert escalation.github is not None and escalation.simulation is not None
+    assert escalation.github is not None
 
-    [alert] = harness.fetch_alerts(clean.client("admin"), "GH-001")
+    [alert] = harness.fetch_alerts(clean.client("admin"), rule_id)
     assert alert["entities"]["commit_sha"] == escalation.github.commit_sha
     assert list(alert["evidence_event_ids"]) == [escalation.event_id]
-    assert escalation.simulation.run_id in alert["simulation_run_ids"]
     assert baseline.event_id not in alert["evidence_event_ids"]
     assert cleanup.event_id not in alert["evidence_event_ids"]

@@ -1,0 +1,1 @@
+/Applications/ExtorQ Test.app: invalid signature (code or signature have been modified)

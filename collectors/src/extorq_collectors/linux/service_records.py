@@ -17,12 +17,12 @@ the service (kept in collector state), independent of coverage.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from extorq.common.redaction import redact_text, sanitize_untrusted
+from extorq.common.redaction import sanitize_untrusted
 from extorq.contracts import (
     AdapterSupport,
     InstanceKind,
@@ -145,7 +145,9 @@ def service_record(
     if version_source:
         attributes["version_source"] = version_source
     if service.adapter is not None and isinstance(service.adapter, LinuxJournalAdapter):
-        attributes["adapter_deployed_in_lab"] = service.adapter.deployed_in_lab
+        attributes["adapter_validation"] = (
+            "live_telemetry" if service.adapter.validated_live else "documented_formats"
+        )
     return record.model_copy(update={"attributes": _bounded(attributes)})
 
 
@@ -175,7 +177,6 @@ def instance_records(
                         "unit": service.unit,
                         "ppid": proc.ppid,
                         "uid": proc.uid,
-                        "args": sanitize_untrusted(redact_text(proc.args)[0], 256),
                         "boot_id": result.boot_id,
                     }
                 ),
@@ -367,7 +368,6 @@ def _service_event(
         resource=resource,
         message=message,
         attributes=dict(attributes),
-        sim_texts=(str(item.get("service_key") or ""),),
     )
 
 
@@ -392,15 +392,3 @@ def tombstone(previous: Mapping[str, Any], *, now: datetime) -> Service | None:
             "endpoints": [],
         }
     )
-
-
-def iter_refs(records: Iterable[Service]) -> dict[str, ServiceRef]:
-    """unit -> ServiceRef for every present host service."""
-    refs: dict[str, ServiceRef] = {}
-    for record in records:
-        unit = record.attributes.get("unit")
-        if isinstance(unit, str) and record.present:
-            refs[unit] = ServiceRef(
-                service_id=record.service_id, name=record.name, adapter_id=record.adapter_id
-            )
-    return refs

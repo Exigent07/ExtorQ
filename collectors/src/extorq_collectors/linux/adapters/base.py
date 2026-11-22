@@ -33,8 +33,10 @@ class LinuxJournalAdapter(ServiceAdapter):
     #: dpkg packages whose installed version is reported as the service version
     #: (``attributes.version_source`` names the package; never guessed otherwise).
     packages: ClassVar[tuple[str, ...]] = ()
-    #: False for adapters that are implemented and tested but have no instance in the lab.
-    deployed_in_lab: ClassVar[bool] = True
+    #: True when the parsers were verified against telemetry of a running instance; False
+    #: when they are tested on the product's documented log formats only (reported on the
+    #: service as ``adapter_validation`` so an analyst knows how much to trust coverage).
+    validated_live: ClassVar[bool] = True
 
     def infer_product(self, candidate: ServiceCandidate) -> str | None:
         if candidate.product:

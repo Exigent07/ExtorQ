@@ -1,4 +1,4 @@
--- VM-002 v1.2.0: new or modified systemd unit (persistence) on a Linux host.
+-- VM-002: new or modified systemd unit (persistence) on a Linux host.
 --
 -- Trigger: persistence.systemd.unit_created / unit_modified inventory diffs (snapshot
 -- comparison over SSH) for unit files not in {allowlist_paths}. Baseline snapshots are
@@ -13,7 +13,8 @@
 --     (allowlist, not denylist: an unrecognised syscall fails closed).
 --   * persistence.systemd.unit_enabled for the same unit name
 -- Confidence: high when an auditd create/modify hit corroborates the inventory diff on
--- the exact path, medium otherwise. A unit that is only *enabled* (existing file, no
+-- the exact path shortly before the inventory observation, medium otherwise.
+-- A unit that is only *enabled* (existing file, no
 -- content change in the window) produces its own row, confidence medium.
 -- Identity (PLAN 5.3): asset, unit path, content sha256 (enable-only rows: asset, unit,
 -- 'enabled:<wanted_by>'). Duplicate-safe via LIMIT 1 BY event_id; joins only feed
@@ -32,8 +33,7 @@ WITH
             JSONExtractString(attributes, 'sha256') AS sha256,
             JSONExtractString(attributes, 'previous_sha256') AS previous_sha256,
             JSONExtractString(attributes, 'exec_start') AS exec_start,
-            JSONExtractBool(attributes, 'vendor_unit') AS vendor_unit,
-            simulation_run_id
+            JSONExtractBool(attributes, 'vendor_unit') AS vendor_unit
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -51,8 +51,7 @@ WITH
             asset_id,
             asset_type,
             ifNull(resource_name, '') AS unit,
-            JSONExtractString(attributes, 'wanted_by') AS wanted_by,
-            simulation_run_id
+            JSONExtractString(attributes, 'wanted_by') AS wanted_by
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -66,6 +65,7 @@ WITH
     watched AS (
         SELECT
             event_id,
+            event_time,
             asset_id,
             if(JSONExtractString(attributes, 'nametype') IN ('CREATE', 'NORMAL')
                    AND ifNull(resource_path, '') != '',
@@ -73,8 +73,7 @@ WITH
                substring(arrayFirst(p -> startsWith(p, 'CREATE:/'),
                                     JSONExtract(attributes, 'paths', 'Array(String)')), 8)) AS path,
             ifNull(process_executable, '') AS executable,
-            JSONExtractString(attributes, 'syscall') AS syscall,
-            simulation_run_id
+            JSONExtractString(attributes, 'syscall') AS syscall
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -115,11 +114,11 @@ SELECT
               'vendor_unit Bool, audit_corroborated Bool, writer_executables Array(String), ',
               'writer_syscalls Array(String), wanted_by Array(String))'))) AS features,
     if(i.sha256 != '', i.sha256, 'sha256-unknown') AS signature,
-    if(uniqExactIf(w.event_id, w.event_id != '') > 0, 'high', 'medium') AS confidence,
-    arrayDistinct(arrayConcat(groupUniqArray(16)(i.simulation_run_id),
-                              groupUniqArray(16)(w.simulation_run_id))) AS simulation_run_ids
+    if(uniqExactIf(w.event_id, w.event_id != '') > 0, 'high', 'medium') AS confidence
 FROM inv AS i
 LEFT JOIN watched AS w ON w.asset_id = i.asset_id AND w.path = i.unit_path
+    AND w.event_time <= i.event_time
+    AND w.event_time >= i.event_time - toIntervalSecond({corroboration_seconds:UInt32})
 LEFT JOIN enabled AS en ON en.asset_id = i.asset_id AND en.unit = i.unit
 GROUP BY i.asset_id, i.unit_path, i.sha256
 
@@ -148,8 +147,7 @@ SELECT
               'vendor_unit Bool, audit_corroborated Bool, writer_executables Array(String), ',
               'writer_syscalls Array(String), wanted_by Array(String))'))) AS features,
     concat('enabled:', arrayStringConcat(arraySort(groupUniqArray(4)(e.wanted_by)), ',')) AS signature,
-    'medium' AS confidence,
-    groupUniqArray(16)(e.simulation_run_id) AS simulation_run_ids
+    'medium' AS confidence
 FROM enabled AS e
 WHERE (e.asset_id, e.unit) NOT IN (SELECT asset_id, unit FROM inv)
 GROUP BY e.asset_id, e.unit

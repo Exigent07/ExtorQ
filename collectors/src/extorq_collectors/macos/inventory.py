@@ -61,6 +61,7 @@ from extorq_collectors.macos.common import (
     make_event,
     to_ms,
 )
+from extorq_collectors.services.base import exposure_of
 
 PARSER = "macos-inventory"
 SOURCE = SourceType.MACOS_INVENTORY
@@ -152,6 +153,15 @@ def split_endpoint(endpoint: str) -> tuple[str, str]:
 
 @dataclass(slots=True)
 class Listener:
+    """One listening socket (TCP LISTEN or unconnected UDP), keyed by protocol/address/port.
+
+    ``bind_scope`` is the collector's internal classification of the bind address (it also
+    separates link-local and specific addresses, which posture needs). Events and inventory
+    report ``exposure`` with the contract's ServiceEndpoint vocabulary instead
+    (:func:`extorq_collectors.services.base.exposure_of`: ``any`` = all interfaces,
+    ``loopback``, ``private``, ``unknown``) so listener events and service endpoints agree.
+    """
+
     protocol: str  # tcp | udp
     family: str  # ipv4 | ipv6 | dual
     address: str  # normalised textual address, or the raw (truncated) token
@@ -177,14 +187,18 @@ class Listener:
     def fingerprint(self) -> str:
         return sha256_hex(canonical_json(sorted(self.processes)))
 
+    @property
+    def exposure(self) -> str:
+        return exposure_of(self.address) if self.address_valid else "unknown"
+
     def attributes(self) -> dict[str, Any]:
         return bounded_attributes(
             {
                 "protocol": self.protocol,
                 "family": self.family,
-                "address": self.address,
+                "bind_address": self.address,
                 "port": self.port,
-                "bind_scope": self.bind_scope,
+                "exposure": self.exposure,
                 "address_truncated": None if self.address_valid else True,
                 "processes": sorted(self.processes) or None,
                 "pids": sorted(self.pids) or None,
@@ -700,9 +714,11 @@ def listener_event(
         attrs = bounded_attributes(
             {
                 "protocol": protocol,
-                "address": address,
+                "bind_address": address,
                 "port": port,
+                "exposure": exposure_of(address) if valid else "unknown",
                 "family": prev.get("family"),
+                # Owners last seen while the socket was open (the socket is gone now).
                 "processes": names or None,
             }
         )

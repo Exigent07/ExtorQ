@@ -1,8 +1,13 @@
 # ExtorQ Analyst API
 
-Read API over ExtorQ's ClickHouse store plus two audited analyst mutations. Package
-`backend/src/extorq/api` (owner: D1). Machine-readable contract: [`openapi.json`](openapi.json)
-(generated from the code; the console's TypeScript types are generated from it).
+Read API over ExtorQ's ClickHouse store plus one audited analyst mutation (the workflow state
+of an alert). Package `backend/src/extorq/api` (owner: D1). Machine-readable contract:
+[`openapi.json`](openapi.json) (generated from the code; the console's TypeScript types are
+generated from it). Contract schema **2.0**: there is no simulation category (no simulation
+fields, filters or tags; detection tests are real activity verified by asset, rule and time
+window) and Jev is the only AI provider (the on-demand Gemini summary endpoint was removed).
+The API never calls an AI provider: it only reads the advisory Jev assessments the ai-worker
+stores.
 
 * Served by `extorq api` (compose service `api`, `127.0.0.1:8000`, profile `full`).
 * Development server: `uv run python -m extorq.api --port 8100` (loopback; port 8000 is
@@ -74,20 +79,21 @@ return `page` = `{limit, offset, returned, has_more, next_offset, total}`. Time 
 | `GET /services/{service_id}` | Service detail: endpoints (exposure + attribution), instances, telemetry per source, authentication activity, recent events, findings, alerts | `since`/`until` (default 24 h, max 31 d) |
 | `GET /findings` | Posture findings | `asset_id`, `severity`, `scanner`, `category`, `state` (lifecycle only, else 400), `service_id` |
 | `GET /rules`, `GET /rules/{rule_id}` | Rules with latest run, staleness, alert counts; detail with versions and recent runs | `severity`, `status`, `enabled`; `runs_limit`, `run_status` |
-| `GET /alerts` | Alerts with analyst state | `asset_id`, `rule_id`, `severity`, `status`, `open_only`, `simulation_run_id`, `service_id`, `sort`; default 30 d, max 400 d |
-| `GET /alerts/{alert_id}` | Alert, analyst state, rule brief, asset, evidence resolved through `alert_evidence` (trigger first) with **unresolved evidence ids listed explicitly**, analyst actions | evidence capped at 500 (`evidence_capped`) |
-| `GET /alerts/{alert_id}/context` | Latest InvestigationContext (C2); built on demand when missing. Only analysts persist an on-demand build (audited); viewers get an ephemeral build | 503 with a clear message when correlation is not installed |
-| `GET /alerts/{alert_id}/assessments` | AI assessments (advisory), via E's store or a direct query | invalid stored rows are counted, not shown |
-| `POST /alerts/{alert_id}/summary` | Gemini summary via E's `AIService` (analyst only, per-user rate limit, one in flight per alert) | 503 when AI is unavailable or disabled; 409/429 |
+| `GET /alerts` | Alerts with analyst state | `asset_id`, `rule_id`, `severity`, `status`, `open_only`, `service_id`, `sort`; default 30 d, max 400 d |
+| `GET /alerts/{alert_id}` | Alert, analyst state, rule brief for the alert's exact rule version if available, asset, evidence resolved through `alert_evidence` (trigger first), analyst actions | Evidence is capped at 500 (`evidence_capped`). `unresolved_evidence_ids` lists missing event references. `expired_evidence_ids` identifies the subset whose known event time is outside retention. |
+| `GET /alerts/{alert_id}/context` | Latest InvestigationContext (C2); built on demand when missing **or unreadable** (a stored context that no longer validates, for example one written before the schema 2.0 reset, is logged and rebuilt, never shown). Only analysts persist an on-demand build (audited); viewers get an ephemeral build | 503 with a clear message when correlation is not installed; 500 `stored investigation context failed its integrity check` when a stored body does not match its input hash (never rebuilt over) |
+| `GET /alerts/{alert_id}/assessments` | Advisory Jev triage assessments (written by the ai-worker), newest first, via the AI module's store or a direct `ai_assessments` query | rows that fail contract 2.0 validation (for example of a removed provider) are counted in `invalid_records`, never shown |
 | `POST /alerts/{alert_id}/state` | Analyst workflow state (analyst only) | body `{status, assignee?, note?, expected_updated_at?}`; 409 on concurrent change |
-| `GET /events` | Bounded event search (default 24 h, max 31 d) | `asset_id`, `event_type`, `event_type_prefix`, `source_type`, `category`, `outcome`, `actor`, `src_ip`, `simulation_run_id`, `service_id` |
-| `GET /events/{event_id}` | Stored SecurityEvent (schema 1.0/1.1), ingest metadata, alerts citing it | — |
-| `GET /health` | Collectors (stale = now - last_success_at > 3 x interval, or never succeeded; `lifecycle_state`, `self_test`), pipeline (`v_pipeline_latest`), rule health, AI provider health (recent `ai_assessments` statuses + configured/enabled flags, presence only), ingestion boundary (quarantine, audit decisions); `collectors_retired` + a note when retired collectors are not listed | `include_retired` (default false) |
+| `GET /events` | Bounded event search (default 24 h, max 31 d) | `asset_id`, `event_type`, `event_type_prefix`, `source_type`, `category`, `outcome`, `actor`, `src_ip`, `service_id` |
+| `GET /events/{event_id}` | Stored SecurityEvent (contract schema 2.0), ingest metadata, alerts citing it | a stored payload that fails 2.0 validation (an event written before the schema 2.0 reset) is a 500 `stored event failed contract validation`, never a guessed event |
+| `GET /health` | Collectors (stale = now - last_success_at > 3 x interval, or never succeeded; `lifecycle_state`, `self_test`), pipeline (`v_pipeline_latest`), rule health, Jev triage health (recent `ai_assessments` statuses; **`runtime_status`** / `runtime_reported_at` = the ai-worker's own state from its newest fresh `pipeline_health` report, `disabled` when Jev is off or has no key there, `null` when it is not reporting; `configured` / `enabled` = the API process's view, presence only, never the key; another provider is listed only if stored rows name it), ingestion boundary (quarantine, audit decisions); `collectors_retired` + a note when retired collectors are not listed | `include_retired` (default false) |
 | `GET /timeseries/alerts`, `GET /timeseries/events` | Distinct alerts/events per bucket (sparse: missing buckets mean "no stored rows") | `bucket_seconds` (60..86400), `group_by`, filters |
 
-**Mutations are audited first.** `POST /alerts/{id}/state` and `POST /alerts/{id}/summary`
-write an `analyst_actions` row (actor, role, action, details) *before* acting; if the audit
-write fails nothing changes (503). A failed state write is itself audited.
+**Mutations are audited first.** `POST /alerts/{id}/state` (and the persistence of an
+investigation context an analyst built on demand) writes an `analyst_actions` row (actor,
+role, action, details) *before* acting; if the audit write fails nothing changes (503). A
+failed state write is itself audited. Audited actions: `alert_state_changed`,
+`alert_state_change_failed`, `context_built`.
 
 **Asset ids in paths** contain `:` and often `/` (`github:owner/repo`,
 `k8s:<cluster>/node/<name>`). Send them percent-encoded as one segment:
@@ -95,7 +101,7 @@ write fails nothing changes (503). A failed state write is itself audited.
 The services sub-route matches only a *literal* `/services` suffix in the raw path, so an
 asset whose id ends in `/services` is never confused with the sub-resource.
 
-## Service coverage (schema 1.1)
+## Service coverage
 
 Hierarchy: **Asset -> Service -> ServiceInstance -> telemetry (events), findings, alerts**.
 `service_kind` keeps host OS services (`host_service`), applications, Kubernetes workloads
@@ -146,6 +152,9 @@ Every view that reports service coverage (`GET /assets/{id}` `services_summary`,
 `service_coverage`) evaluates it with the same function against **all** collector health
 reports, so a service (for example on a Kubernetes node, covered by the cluster's
 collectors) has the same `coverage_state` in every view at the same instant.
+Kubernetes workloads with a configured log adapter use node-scoped OTel health for
+the nodes hosting their running Pods. Every known hosting node must report fresh
+delivery for the required log source for effective coverage to be monitored.
 
 Per-service views only contain what the adapters attributed (`events.service_id`,
 `v_findings_current.service_id`, `alerts.service_ids`): an empty list means "nothing
@@ -157,6 +166,13 @@ filter), `GET /assets/{id}` and `GET /services/{id}` all apply this one rule; wi
 lifecycle view the observation fallback reproduces it.
 
 ## Asset and collector lifecycle
+
+`GET /health` exposes OTel delivery in `collectors[].details.delivery_state`
+with node and source attribution. An OTel report expires after three missed
+scrape intervals. `last_success_at` is the latest corroborated native timestamp
+and `lag_seconds` is its age when acknowledged by the gateway. Queue fields
+`queue_requests` and `queue_capacity_requests` use requests as their unit.
+See [Kubernetes delivery health](../telemetry/kubernetes.md#31-delivery-health).
 
 Every asset carries `lifecycle_state` (`active` | `stale` | `retired`), `last_observed_at`
 (the newer of the asset record's `last_seen` and its newest event) and `lifecycle_reason`
@@ -207,9 +223,8 @@ Aggregate GET responses are computed once and reused for `EXTORQ_API_CACHE_TTL_S
 `GET /rules`, `GET /rules/{id}`. Keys are the route plus its validated parameters (the
 responses do not depend on the caller's role; authentication still runs on every request).
 Concurrent misses of one key compute once; errors are never cached; the cache holds at most
-`EXTORQ_API_CACHE_MAX_ENTRIES` responses. A successful `POST /alerts/{id}/state` or
-`POST /alerts/{id}/summary` clears it, and a computation that started before such a mutation
-is not stored. Responses say `X-ExtorQ-Cache: hit|miss|off` and, on hits,
+`EXTORQ_API_CACHE_MAX_ENTRIES` responses. A successful `POST /alerts/{id}/state` clears it,
+and a computation that started before such a mutation is not stored. Responses say `X-ExtorQ-Cache: hit|miss|off` and, on hits,
 `X-ExtorQ-Cache-Age: <seconds>`; `generated_at` (overview, health) is the computation time.
 Alert, event, finding, context, assessment and time-series reads are never cached.
 
@@ -230,8 +245,7 @@ Alert, event, finding, context, assessment and time-series reads are never cache
 | `ENABLE_DOCS` | `false` | serve `/api/v1/openapi.json` and `/api/v1/docs` |
 | `MAX_BODY_BYTES` | 65536 | request body cap |
 | `PIPELINE_STALE_SECONDS` | 300 | pipeline report staleness |
-| `SUMMARY_REQUESTS_PER_MINUTE` | 6 | per-user AI summary limit |
-| `AI_HEALTH_WINDOW_HOURS` | 24 | AI health statistics window |
+| `AI_HEALTH_WINDOW_HOURS` | 24 | window of the Jev status counts in `GET /health` |
 | `SERVICE_STALE_SECONDS` | 3600 | service/instance record staleness |
 | `ASSET_STALE_SECONDS` | 3600 | asset lifecycle `stale` threshold (or 3 x the shortest reporting interval) |
 | `ASSET_RETIRE_SECONDS` | 86400 | retirement window (no reporting collector and not observed) |
@@ -246,6 +260,6 @@ ClickHouse connection settings and password files are owned by the platform
 | Command | What it proves |
 |---|---|
 | `uv run pytest tests/unit/api -q` | routes, auth/roles, derivations, coverage, lifecycle, response cache, routing, OpenAPI freshness, static SQL safety (fake repository, no infrastructure) |
-| `uv run pytest tests/integration/api/test_api_sql_clickhouse.py -m integration -q` | every SQL statement on a throwaway ClickHouse 26.8 with the real migrations 0001-0006 and the real 0002 roles/profiles; synthetic rows only; container removed afterwards |
+| `uv run pytest tests/integration/api/test_api_sql_clickhouse.py -m integration -q` | Executes every SQL statement on an isolated ClickHouse 26.8 instance with the current migrations, the real 0002 roles and profiles, and synthetic rows. Removes the container afterwards. |
 | `uv run pytest tests/integration/api/test_api_lifecycle_clickhouse.py -m integration -q` | lifecycle SQL inputs and endpoints on real rows (a synthetic repository retired 3 days ago), cache hit on real SQL, and migration 0007 (quota 1200 -> 6000, other limits unchanged, idempotent) on a throwaway ClickHouse |
 | `uv run pytest tests/integration/api/test_api_live.py -m integration -q` | read-only checks against the live stack (requires `STACK READY`): every endpoint on real telemetry, consistency with direct SQL |

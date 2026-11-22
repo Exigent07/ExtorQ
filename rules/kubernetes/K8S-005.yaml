@@ -1,0 +1,114 @@
+rule_id: K8S-005
+version: 1.0.0
+title: Privileged or host-access pod admitted
+description: >-
+  The API server admitted a pod (or an ephemeral debug container) that runs privileged, shares
+  a host namespace (hostPID, hostNetwork, hostIPC), mounts a hostPath volume or adds a
+  dangerous capability. Such a pod can reach the node and is the usual first step of a
+  container escape. This happens in namespaces whose Pod Security level allows it (no
+  enforcement, or privileged); K8S-001 covers the same request when it is denied. Platform
+  pods are exempt only when BOTH the namespace is a configured platform namespace AND the
+  creator is a kubelet or a kube-system controller. Confidence: high when the inventory's view
+  of the same named pod carries the same kind of flag (two sources agree); medium for the
+  audit record alone (always the case for controller-created pods, whose audit record has no
+  pod name).
+severity: high
+status: stable
+mitre_techniques: [T1610, T1611]
+asset_types: [kubernetes_cluster]
+requires:
+  - source_type: k8s.audit
+    event_types: [k8s.api.request]
+  - source_type: k8s.api_inventory
+    event_types: [k8s.resource.created, k8s.resource.updated]
+    optional: true
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 3600
+group_by: [cluster, namespace, user, privileged_flags]
+params:
+  # Same vocabulary as K8S-001 (risk_flags of the OTLP audit normaliser).
+  privileged_flags:
+    [privileged, host_pid, host_network, host_ipc, host_path, host_path_root, dangerous_capabilities]
+  # Namespaces whose controller-created privileged pods are platform components (CNI,
+  # kube-proxy, storage provisioner, the telemetry collector DaemonSet). Write access to
+  # these namespaces must be restricted, which is why the exemption also requires a
+  # kubelet or kube-system controller as the creator.
+  platform_namespaces: [kube-system, local-path-storage, extorq-system]
+false_positives:
+  - >-
+    Platform DaemonSets and static pods (kube-proxy, CNI, CSI drivers, log collectors) need
+    host access. Handling: exempt only when the namespace is in platform_namespaces AND the
+    creator is a kubelet (system:node:*) or a kube-system controller service account; both
+    require control-plane credentials, and a person creating a privileged pod in the same
+    namespace is still alerted.
+  - >-
+    Node agents installed in another namespace (monitoring, security agents). Handling: add
+    that namespace to platform_namespaces after reviewing who can write to it; controller-created
+    pods there are then exempt, everything else still alerts.
+  - >-
+    An administrator using kubectl debug node/<node> (a privileged pod with the host's
+    namespaces and root filesystem). Handling: alerted by design; it is full node access.
+blind_spots:
+  - >-
+    Workload templates (Deployment, DaemonSet) are audited at Metadata level, so the
+    privileged spec is seen when the controller creates the pods; a privileged workload in a
+    platform namespace created through its controller is exempt.
+  - >-
+    Pods admitted while the audit pipeline was down, static pods placed directly in a node's
+    manifest directory outside kube-system, and server-side dry runs (nothing is admitted).
+  - >-
+    run_as_root, allowPrivilegeEscalation and non-dangerous added capabilities alone are
+    posture findings, not this rule.
+references:
+  - https://attack.mitre.org/techniques/T1611/
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+query: K8S-005.sql
+summary_template: >-
+  {admissions} privileged pod admission(s) in namespace {namespace} by {user} on {asset_id}:
+  flags {privileged_flags}; pods {pods} (+{unnamed_pods} unnamed); policy
+  {enforce_policies}; inventory corroborated: {state_corroborated}
+tests:
+  - name: matrix-hostpath-pod-admitted
+    description: >-
+      Matrix positive: a hostPath pod created (201) by the administrator in a namespace
+      without Pod Security enforcement (a captured admitted hostPath pod create, renamed into
+      the test namespace), plus the inventory's view of the same pod with the host_path flag:
+      high.
+    fixture: tests/K8S-005/positive_matrix_hostpath_pod_admitted.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {user: kubernetes-admin}
+    features:
+      privileged_flags: [host_path]
+      state_corroborated: true
+  - name: privileged-pod-by-person-in-platform-namespace
+    description: >-
+      Captured shape: the administrator created a hostPath capture pod in extorq-system (a
+      platform namespace). The creator is a person, so the exemption does not apply: medium
+      (no inventory row).
+    fixture: tests/K8S-005/positive_person_in_platform_namespace.jsonl
+    expect: alert
+    alerts: 1
+    confidence: medium
+    features:
+      platform_namespace: true
+      system_identity: false
+  - name: matrix-control-unprivileged-pod
+    description: >-
+      Matrix negative control: an unprivileged pod (capabilities dropped) admitted in the same
+      namespace.
+    fixture: tests/K8S-005/negative_matrix_unprivileged_pod.jsonl
+    expect: no_alert
+  - name: platform-daemonset-and-mirror-pods
+    description: >-
+      Controller-created privileged pods in kube-system and extorq-system (DaemonSet
+      controller), a kubelet mirror pod of etcd, a server-side dry run and a denied (403)
+      privileged pod: none alerts here.
+    fixture: tests/K8S-005/negative_platform_and_dry_run.jsonl
+    expect: no_alert

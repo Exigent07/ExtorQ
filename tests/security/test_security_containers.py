@@ -10,7 +10,7 @@ compose.yaml (skipped until it exists; owner A)
 * The ``data`` network is ``internal: true`` and ClickHouse is attached to it only.
 * No ``privileged``, host namespaces, Docker socket mounts or dangerous capabilities.
 * Images are pinned (explicit tag that is not ``latest``, or a digest).
-* AI provider secrets reach only ``ai-worker`` and ``api``; secret-looking
+* The optional Jev key reaches only ``ai-worker``; secret-looking
   environment variables never carry literal values.
 
 Dockerfiles (every ``Dockerfile``/``*.Dockerfile`` in the repository)
@@ -41,8 +41,7 @@ DOCUMENTED_HOST_PORTS = {
     3001: "grafana",
     18123: "clickhouse-debug",
 }
-AI_SERVICES = frozenset({"ai-worker", "api"})
-AI_SECRET_HINT = re.compile(r"(jev|gemini|typesafe)", re.IGNORECASE)
+AI_SECRET_HINT = re.compile(r"(jev|typesafe)", re.IGNORECASE)
 SECRET_ENV_NAME = re.compile(r"(PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)$", re.IGNORECASE)
 DANGEROUS_CAPS = frozenset(
     {"ALL", "SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYS_MODULE", "DAC_READ_SEARCH"}
@@ -207,8 +206,6 @@ def _service_secret_names(service: dict[str, Any]) -> list[str]:
 def test_ai_secrets_reach_only_ai_services() -> None:
     problems: list[str] = []
     for name, service in _services().items():
-        if name in AI_SERVICES:
-            continue
         for secret in _service_secret_names(service):
             if AI_SECRET_HINT.search(secret):
                 problems.append(f"{name}: receives AI provider secret {secret!r}")
@@ -218,6 +215,21 @@ def test_ai_secrets_reach_only_ai_services() -> None:
             if AI_SECRET_HINT.search(str(key)) and "API_KEY" in str(key).upper():
                 problems.append(f"{name}: environment carries AI key variable {key}")
     assert not problems, format_findings(problems)
+
+
+@requires_compose
+def test_jev_is_opt_in_budgeted_and_file_scoped() -> None:
+    base = _services()["ai-worker"]
+    assert base["environment"]["EXTORQ_JEV_ENABLED"] == "false"
+    assert base["networks"] == ["data"]
+    assert base["read_only"] is True
+    document = yaml.safe_load(read_text(REPO_ROOT / "compose.jev.yaml"))
+    assert set(document["services"]) == {"ai-worker"}
+    worker = document["services"]["ai-worker"]
+    assert _service_secret_names(worker) == ["jev_api_key"]
+    assert worker["environment"]["JEV_API_KEY_FILE"] == "/run/secrets/jev_api_key"
+    assert worker["environment"]["EXTORQ_JEV_DAILY_CAP"].startswith("${EXTORQ_JEV_DAILY_CAP:?")
+    assert set(document["secrets"]["jev_api_key"]) == {"file"}
 
 
 @requires_compose

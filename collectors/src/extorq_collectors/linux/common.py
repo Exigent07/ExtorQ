@@ -1,6 +1,6 @@
 """Shared building blocks for the Linux (agentless SSH) collector.
 
-Every parser in this package turns an untrusted observation from the lab VM into
+Every parser in this package turns an untrusted observation from the Linux host into
 contract records through :func:`build_event`, so the same rules apply everywhere:
 
 * identity comes from :func:`extorq.contracts.identity.event_id` over a
@@ -14,14 +14,16 @@ contract records through :func:`build_event`, so the same rules apply everywhere
   original record;
 * ``None`` attributes are dropped (absent means unknown), attribute values are
   bounded to the contract limits;
-* the ``extorq-sim-<run_id>`` marker sets ``simulation`` (telemetry stays
-  genuine) and the collector's own activity is labelled ``extorq.self=true``.
+* the collector's own activity (its SSH logins, the dispatcher it runs) is labelled
+  ``extorq.self=true`` so analysts and rules can tell it from everything else. Nothing
+  else is labelled: detection tests are real activity on the host and their telemetry is
+  indistinguishable from any other (contract schema 2.0 has no simulation marker).
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -41,7 +43,6 @@ from extorq.contracts import (
     SecurityEvent,
     ServiceRef,
     Severity,
-    SimulationTag,
     SourceInfo,
     SourceType,
 )
@@ -67,8 +68,8 @@ MAX_ATTR_LIST_ITEM = 512
 MAX_SHORT = 256
 MAX_MEDIUM = 2048
 
-_SIM_MARKER = re.compile(r"extorq-sim-([a-z0-9]{8,32})(?![a-z0-9])")
 _ATTR_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+_UNIT_EXEC_PATH = re.compile(r"/[A-Za-z0-9._%+@/-]{1,511}")
 
 #: syslog PRIORITY -> severity hint (source-reported severity, not a verdict).
 _PRIORITY_SEVERITY = {
@@ -97,6 +98,20 @@ class ParseContext:
     observed_time: datetime | None = None
     #: Service the parsed records belong to (set by the owning service adapter only).
     service: ServiceRef | None = None
+
+
+def unit_exec_paths(values: Any) -> list[str]:
+    """Accept simple absolute executable paths and discard legacy ExecStart arguments."""
+    if not isinstance(values, list):
+        return []
+    paths = []
+    for value in values[:4]:
+        if not isinstance(value, str):
+            continue
+        parts = value.lstrip().lstrip("-@:+!").split(maxsplit=1)
+        if parts and _UNIT_EXEC_PATH.fullmatch(parts[0]):
+            paths.append(sanitize_untrusted(redact_text(parts[0])[0], 512))
+    return paths
 
 
 def utc_now_ms() -> datetime:
@@ -156,17 +171,6 @@ def severity_from_priority(priority: int | None) -> Severity | None:
     return _PRIORITY_SEVERITY.get(priority)
 
 
-def find_simulation(texts: Iterable[str | None]) -> SimulationTag | None:
-    """Return the simulation tag if any text carries ``extorq-sim-<run_id>``."""
-    for text in texts:
-        if not text:
-            continue
-        match = _SIM_MARKER.search(text)
-        if match:
-            return SimulationTag(run_id=match.group(1))
-    return None
-
-
 def bound_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
     """Drop unknown (None) values and bound keys/values to the contract limits."""
     bounded: dict[str, Any] = {}
@@ -212,9 +216,9 @@ def build_event(
     http: HttpInfo | None = None,
     message: str | None = None,
     raw: str | None = None,
+    raw_sha256: str | None = None,
     attributes: Mapping[str, Any] | None = None,
     labels: Mapping[str, str] | None = None,
-    sim_texts: Iterable[str | None] = (),
     is_self: bool = False,
     extra_redactions: int = 0,
     attach_service: bool = True,
@@ -266,9 +270,8 @@ def build_event(
         provenance=Provenance(
             parser=parser,
             parser_version=PARSER_VERSION,
-            raw_sha256=sha256_hex(raw) if raw else None,
+            raw_sha256=raw_sha256 or (sha256_hex(raw) if raw else None),
             truncated=truncated,
             redaction_count=msg_redactions + raw_redactions + extra_redactions,
         ),
-        simulation=find_simulation([*sim_texts, message, raw]),
     )

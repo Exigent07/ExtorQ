@@ -1,0 +1,71 @@
+rule_id: GH-004
+version: 1.0.0
+title: Workflow script injection through an untrusted context
+description: >-
+  A commit made a GitHub Actions workflow interpolate an attacker-controllable expression
+  (issue or pull request title/body, comment body, head branch name, commit message, ...)
+  directly into a run script or an actions/github-script script. The runner substitutes the
+  expression into the script text before the shell runs it, so anyone who can open an issue
+  or pull request can execute commands in the workflow with its token and secrets. Passing
+  the value through env: and quoting the shell variable is the safe pattern and does not
+  alert. Only expressions that are new in this commit alert. Confidence: high (the attribute
+  is produced only by a structured analysis of both workflow versions).
+severity: high
+status: stable
+mitre_techniques: [T1059.004, T1195.002]
+asset_types: [github_repository]
+requires:
+  - source_type: github.api
+    event_types: [github.workflow.modified]
+schedule:
+  interval_seconds: 120
+  lookback_seconds: 7200
+  late_tolerance_seconds: 3600
+dedup:
+  strategy: event
+group_by: [repository, workflow_path, commit_sha]
+params: {}
+false_positives:
+  - >-
+    The value is only echoed for debugging or written to a file with no shell evaluation.
+    Handling: alerted anyway: the substitution happens before the shell parses the line, so
+    quoting inside the script does not help; the fix is env: plus a quoted variable.
+  - >-
+    The trigger cannot be reached by outsiders (for example workflow_dispatch with an
+    issue title supplied by a maintainer). Handling: reported; the triggers are listed in
+    the features so the reviewer can judge who controls the value.
+blind_spots:
+  - >-
+    Workflows that cannot be parsed (lexical fallback) are not analysed for injection (the
+    attribute is null).
+  - >-
+    Untrusted values passed through intermediate outputs (steps.x.outputs, artifacts) or
+    environment files before reaching a script, and injection inside composite actions.
+  - Expressions outside the analyser's list of untrusted contexts.
+references:
+  - https://securitylab.github.com/resources/github-actions-untrusted-input/
+  - https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections
+query: GH-004.sql
+summary_template: >-
+  Workflow {workflow_path} in {repository} interpolates untrusted input into a script at
+  commit {commit_sha} by {actor}: {injected_expressions} (triggers {triggers})
+tests:
+  - name: matrix-run-interpolates-issue-title
+    description: >-
+      Matrix positive: an issues-triggered workflow whose run step contains
+      `echo "${{ github.event.issue.title }}"` (analysed by the collector's workflow analyser).
+    fixture: tests/GH-004/positive_matrix_issue_title_in_run.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+  - name: matrix-control-env-and-quoted-variable
+    description: >-
+      Matrix negative control: the same value passed through env: TITLE and used as "$TITLE".
+    fixture: tests/GH-004/negative_matrix_env_quoted_variable.jsonl
+    expect: no_alert
+  - name: trusted-expressions-only
+    description: >-
+      A run step that interpolates only trusted contexts (github.sha, github.repository,
+      inputs of workflow_dispatch are not on the list): no alert.
+    fixture: tests/GH-004/negative_trusted_expressions.jsonl
+    expect: no_alert

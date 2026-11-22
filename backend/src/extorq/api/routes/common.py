@@ -18,7 +18,6 @@ from extorq.api.integrations import Integrations
 from extorq.api.lifecycle import Estate, last_event_map
 from extorq.api.logs import get_logger
 from extorq.api.repository import Repository, Row
-from extorq.api.service import SummaryGate
 from extorq.api.settings import ApiSettings
 from extorq.contracts.identity import canonical_json
 
@@ -30,7 +29,6 @@ ASSET_ID_PATTERN = r"^[a-z0-9][a-z0-9._:/-]{2,199}$"
 EVENT_TYPE_PATTERN = r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+){1,5}$"
 EVENT_TYPE_PREFIX_PATTERN = r"^[a-z][a-z0-9_.]{0,127}$"
 IDENTIFIER_PATTERN = r"^[a-z0-9][a-z0-9._-]{1,127}$"
-SIM_RUN_PATTERN = r"^[a-z0-9]{8,32}$"
 
 MAX_PAGE = 200
 MAX_OFFSET = 10_000
@@ -56,16 +54,10 @@ def get_clock(request: Request) -> Callable[[], datetime]:
     return clock
 
 
-def get_summary_gate(request: Request) -> SummaryGate:
-    gate: SummaryGate = request.app.state.summary_gate
-    return gate
-
-
 Repo = Annotated[Repository, Depends(get_repo)]
 Integr = Annotated[Integrations, Depends(get_integrations)]
 Settings = Annotated[ApiSettings, Depends(get_settings)]
 Clock = Annotated[Callable[[], datetime], Depends(get_clock)]
-Gate = Annotated[SummaryGate, Depends(get_summary_gate)]
 
 Limit = Annotated[int, Query(ge=1, le=MAX_PAGE, description="Page size (1-200).")]
 Offset = Annotated[int, Query(ge=0, le=MAX_OFFSET, description="Rows to skip (0-10000).")]
@@ -87,7 +79,7 @@ AssetIdQuery = Annotated[
 ]
 ServiceIdQuery = Annotated[
     str | None,
-    Query(pattern=HEX_ID_PATTERN, description="Filter by service id (32 hex, schema 1.1)."),
+    Query(pattern=HEX_ID_PATTERN, description="Filter by service id (32 hex)."),
 ]
 IncludeRetired = Annotated[
     bool,

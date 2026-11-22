@@ -1,8 +1,14 @@
-"""Alert endpoints: list, detail, context, assessments, AI summary, analyst state."""
+"""Alert endpoints: list, detail, investigation context, Jev assessments, analyst state.
+
+Alerts are written only by the detector. The API reads them, builds (and, for analysts,
+persists) the deterministic InvestigationContext on demand, lists the advisory Jev triage
+assessments the ai-worker stored, and records the analyst workflow state with an audit row
+written before the change.
+"""
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request
@@ -17,11 +23,9 @@ from extorq.api.logs import get_logger
 from extorq.api.repository import AlertFilters, Row
 from extorq.api.routes.common import (
     RULE_ID_PATTERN,
-    SIM_RUN_PATTERN,
     AlertIdPath,
     AssetIdQuery,
     Clock,
-    Gate,
     Integr,
     Limit,
     Offset,
@@ -32,7 +36,8 @@ from extorq.api.routes.common import (
     now_ms,
     write_audit,
 )
-from extorq.contracts import AIAssessment, AIStatus, AnalystState, AnalystStatus, Severity
+from extorq.common.config import EVENT_RETENTION_DAYS
+from extorq.contracts import AIAssessment, AnalystState, AnalystStatus, Severity
 
 log = get_logger("extorq.api.alerts")
 
@@ -70,7 +75,6 @@ def list_alerts(
     severity: Annotated[list[Severity] | None, Query(max_length=5)] = None,
     status: Annotated[list[AnalystStatus] | None, Query(max_length=6)] = None,
     open_only: Annotated[bool, Query(description="Exclude closed_* analyst statuses.")] = False,
-    simulation_run_id: Annotated[str | None, Query(pattern=SIM_RUN_PATTERN)] = None,
     sort: Literal["last_seen", "first_seen", "severity"] = "last_seen",
     service_id: ServiceIdQuery = None,
 ) -> s.AlertListResponse:
@@ -91,7 +95,6 @@ def list_alerts(
         severities=tuple(sev.value for sev in severity or ()),
         statuses=tuple(st.value for st in status or ()),
         open_only=open_only,
-        simulation_run_id=simulation_run_id or "",
         service_id=service_id or "",
         sort=sort,
     )
@@ -112,7 +115,7 @@ def list_alerts(
     summary="Alert detail with analyst state and resolved evidence events",
 )
 def get_alert(
-    alert_id: AlertIdPath, principal: CurrentPrincipal, repo: Repo
+    alert_id: AlertIdPath, principal: CurrentPrincipal, repo: Repo, clock: Clock
 ) -> s.AlertDetailResponse:
     row = _require_alert(repo, alert_id)
     record = service.alert_record(row)
@@ -127,11 +130,21 @@ def get_alert(
         if event_id in events
     ]
     unresolved = [event_id for event_id in ordered if event_id not in events]
+    cutoff = clock() - timedelta(days=EVENT_RETENTION_DAYS)
+    expired = []
+    for event_id in unresolved:
+        event_time = ref_by_id.get(event_id, {}).get("event_time")
+        # ClickHouse evaluates the TTL at whole-second precision.
+        if (
+            isinstance(event_time, datetime)
+            and event_time.tzinfo is not None
+            and event_time.replace(microsecond=0) <= cutoff
+        ):
+            expired.append(event_id)
     total = repo.evidence_total(alert_id, record.evidence_event_ids)
 
     versions = repo.rule_versions(record.rule_id)
     rule_row = next((v for v in versions if str(v["version"]) == record.rule_version), None)
-    rule_row = rule_row or (versions[0] if versions else None)
     asset_row = repo.get_asset(record.asset_id)
     return s.AlertDetailResponse(
         alert=record,
@@ -140,6 +153,7 @@ def get_alert(
         asset=service.asset_brief(asset_row) if asset_row else None,
         evidence=evidence,
         unresolved_evidence_ids=unresolved,
+        expired_evidence_ids=expired,
         evidence_total=max(total, len(ordered)),
         evidence_capped=max(total, len(ordered)) > len(ordered),
         actions=[service.action_item(a) for a in repo.alert_actions(alert_id, ACTIONS_LIMIT)],
@@ -196,6 +210,13 @@ def get_alert_context(
 
 
 def _assessment_from_row(row: Row) -> AIAssessment:
+    """Rebuild an assessment from a stored ``ai_assessments`` row (fallback path).
+
+    Used only when the AI module's store is not importable. The flattened columns carry the
+    record; ``output`` holds the canonical JSON of the typed triage result. Any other key in
+    ``output`` (for example from a removed provider) is ignored, so a row validates only when
+    it is a well-formed Jev assessment of contract schema 2.0.
+    """
     output = service.parse_json(row.get("output"))
     if isinstance(output, dict) and "assessment_id" in output:
         return AIAssessment.model_validate(output)
@@ -221,8 +242,7 @@ def _assessment_from_row(row: Row) -> AIAssessment:
             "requested_by",
         )
     }
-    for key in ("triage", "summary", "validation"):
-        data[key] = parts.get(key)
+    data["triage"] = parts.get("triage")
     return AIAssessment.model_validate(data)
 
 
@@ -230,7 +250,7 @@ def _assessment_from_row(row: Row) -> AIAssessment:
     "/alerts/{alert_id}/assessments",
     response_model=s.AssessmentListResponse,
     responses=_ERRORS,
-    summary="AI assessments (advisory) recorded for an alert",
+    summary="Advisory Jev triage assessments recorded for an alert (newest first)",
 )
 def list_alert_assessments(
     alert_id: AlertIdPath, principal: CurrentPrincipal, repo: Repo, integrations: Integr
@@ -260,55 +280,6 @@ def list_alert_assessments(
     return s.AssessmentListResponse(
         alert_id=alert_id, items=items, invalid_records=invalid, source="direct"
     )
-
-
-@router.post(
-    "/alerts/{alert_id}/summary",
-    response_model=s.SummaryResponse,
-    responses={
-        **_ERRORS,
-        403: {"model": s.ErrorResponse, "description": "Viewer role"},
-        409: {"model": s.ErrorResponse, "description": "Summary already in progress"},
-        429: {"model": s.ErrorResponse, "description": "Per-user rate limit"},
-        503: {"model": s.ErrorResponse, "description": "AI unavailable or disabled"},
-    },
-    summary="Request an evidence-grounded AI summary (analyst only, advisory)",
-)
-def request_alert_summary(
-    alert_id: AlertIdPath,
-    principal: AnalystPrincipal,
-    request: Request,
-    repo: Repo,
-    integrations: Integr,
-    gate: Gate,
-    clock: Clock,
-) -> s.SummaryResponse:
-    _require_alert(repo, alert_id)
-    gate.acquire(principal.user, alert_id)
-    try:
-        write_audit(
-            repo,
-            principal,
-            action="ai_summary_requested",
-            alert_id=alert_id,
-            details={"task": "summary"},
-            occurred_at=now_ms(clock),
-        )
-        assessment = integrations.request_summary(repo, alert_id, principal.requested_by)
-    except ApiError:
-        raise
-    except Exception as exc:
-        log.error("ai_summary_failed", alert_id=alert_id, error_type=type(exc).__name__)
-        raise ServiceUnavailable("AI summary request failed") from exc
-    finally:
-        gate.release(alert_id)
-    # A stored assessment changes the AI provider counts of GET /health.
-    invalidate(request)
-    if assessment.status == AIStatus.DISABLED:
-        # E's refusal reason names the flag/variable only (never a value).
-        reason = (assessment.error or "provider disabled")[:200]
-        raise ServiceUnavailable(f"AI summaries are unavailable: {reason}")
-    return s.SummaryResponse(alert_id=alert_id, assessment=assessment)
 
 
 @router.post(

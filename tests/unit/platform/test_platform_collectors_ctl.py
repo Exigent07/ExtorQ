@@ -41,7 +41,7 @@ ctl = _load()
         ("/opt/homebrew/bin/uv run --frozen extorq-collect run", True),
         ("/repo/.venv/bin/python /repo/.venv/bin/extorq-collect run --only a,b", True),
         ("uv run --frozen extorq-collect status", False),
-        ("uv run extorq-collect sim-record --scenario VM-001", False),
+        ("uv run extorq-collect flush --only macos-workstation-01", False),
         ("uv run extorq-collect flush", False),
         ("vim extorq-collect", False),
         ("", False),
@@ -80,6 +80,8 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_start_is_idempotent_and_stop_terminates_the_group(
     sandbox: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    if ctl._command_of(os.getpid()) is None:
+        pytest.skip("process inspection with ps is unavailable in this environment")
     assert ctl.start(None, force=False) == 0
     pid = ctl.read_pid()
     assert pid is not None and ctl.running_pid() == pid

@@ -70,9 +70,8 @@ from extorq_collectors.github.records import (
     parse_time,
     redact,
     repo_asset,
-    simulation_run_id,
 )
-from extorq_collectors.github.state import MAX_COMMIT_RETRIES, RepoState
+from extorq_collectors.github.state import MAX_COMMIT_RETRIES, MAX_RUNS_TRACKED, RepoState
 from extorq_collectors.github.workflow import (
     MAX_LEXICAL_BYTES,
     MAX_WORKFLOW_BYTES,
@@ -104,11 +103,14 @@ ACTIONS_PERMISSION_KEYS = (
     "actions.sha_pinning_required",
 )
 _RUN_FAILURE = {"failure", "timed_out", "startup_failure"}
+_RUN_STATE_VALUE = re.compile(r"[a-z][a-z0-9_]{0,31}")
 #: Re-run attempts keep the run's original created_at; runs created this recently are
 #: re-listed every poll so new attempts are observed (older re-runs are a documented gap).
 RUNS_RERUN_WINDOW = timedelta(hours=6)
 #: Allowance for clock skew / API eventual consistency when advancing the runs window.
 RUNS_SKEW_MARGIN = timedelta(minutes=10)
+MAX_LATE_RUN_LOOKUPS = 10
+GITHUB_FILTERED_RUN_LIMIT = 1000
 
 
 @dataclass
@@ -606,7 +608,6 @@ class RepoPoller:
                                 "protection_status": snapshot.get("protection_status"),
                             },
                             raw_source=canonical_json({"before": previous, "after": snapshot}),
-                            sim_run_id=simulation_run_id(branch),
                         )
                     )
                 )
@@ -1072,7 +1073,6 @@ class RepoPoller:
         first_line, _, _ = message_raw.partition("\n")
         summary, red1, _ = clean_redacted(first_line, 200)
         full_message, red2, truncated = clean_redacted(message_raw, 4000, single_line=False)
-        sim = simulation_run_id(message_raw, branch)
         workflow_paths = sorted(
             {
                 str(f.get("filename"))
@@ -1141,7 +1141,6 @@ class RepoPoller:
                 raw_source=message_raw,
                 truncated=truncated,
                 redactions=red1 + red2,
-                sim_run_id=sim,
             )
         except ValueError as exc:
             return [self._record_failure("commit", sha, exc, ref=f"refs/heads/{branch}")]
@@ -1169,7 +1168,6 @@ class RepoPoller:
                     actor,
                     event_time,
                     time_basis,
-                    sim,
                     initial_backfill=bool(flags.get("initial_backfill")),
                 )
             except ValueError as exc:
@@ -1227,7 +1225,6 @@ class RepoPoller:
         actor: Any,
         event_time: datetime,
         time_basis: str,
-        sim: str | None,
         *,
         initial_backfill: bool = False,
     ) -> SecurityEvent | None:
@@ -1339,7 +1336,6 @@ class RepoPoller:
             raw_source=after_text if after_text is not None else (before_text or ""),
             truncated=len(redacted_diff) > MAX_RAW_DIFF_CHARS,
             redactions=redactions,
-            sim_run_id=sim,
         )
 
     # ── phase 4: workflow runs ──────────────────────────────────────────────
@@ -1347,11 +1343,9 @@ class RepoPoller:
     def _phase_runs(self) -> None:
         """List workflow runs created inside a bounded window and emit state changes.
 
-        Window start = the earliest of: last listing time minus a skew margin (new runs),
-        the oldest run still open at the last listing (status transitions) and
-        ``now - RUNS_RERUN_WINDOW`` (re-run attempts keep their original ``created_at``),
-        never earlier than ``now - runs_lookback_hours``. The start is hour-aligned when
-        possible so the conditional request (ETag) can be reused between polls.
+        Re-scan recent runs for re-runs and active runs for status changes. Poll known
+        open runs missing from the listing separately. Each listing page must be
+        fetched because a later page may change while the first page stays unchanged.
         """
         st = self.state
         lookback = timedelta(hours=self.cfg.runs_lookback_hours)
@@ -1360,7 +1354,7 @@ class RepoPoller:
         open_since = parse_time(st.runs_cursor)
         candidates = [self.now - min(RUNS_RERUN_WINDOW, lookback)]
         candidates.append(listed_at - RUNS_SKEW_MARGIN if listed_at is not None else floor)
-        if open_since is not None:
+        if open_since is not None and open_since >= floor:
             candidates.append(open_since)
         window_start = max(floor, min(candidates))
         aligned = window_start.replace(minute=0, second=0, microsecond=0)
@@ -1368,8 +1362,7 @@ class RepoPoller:
             aligned if aligned >= floor else window_start.replace(second=0, microsecond=0)
         )
         cursor = iso(window_start).replace(".000Z", "Z")
-        key = f"runs:{cursor}"
-        etag = st.etags.get(key)
+        records: list[IngestRecord] = []
         try:
             page = self.client.paginate(
                 f"{self.api}/actions/runs",
@@ -1378,25 +1371,23 @@ class RepoPoller:
                     "created": f">={cursor}",
                     "exclude_pull_requests": True,
                 },
-                etag=etag,
                 max_pages=self.cfg.max_pages,
                 items_key="workflow_runs",
             )
         except (GitHubUnauthorized, GitHubRateLimited):
             raise
         except GitHubApiError as exc:
-            st.forget_etag(key)
             self._gap("workflow_runs", exc)
+            self._poll_unlisted_runs(set(), records)
+            self.emit(records)
             return
-        if page.not_modified:
-            st.runs_listed_at = iso(self.now)  # unchanged listing: open runs unchanged too
-            return
-        for old in [k for k in st.etags if k.startswith("runs:") and k != key]:
+        for old in [k for k in st.etags if k.startswith("runs:")]:
             st.forget_etag(old)
-        st.remember_etag(key, page.etag)
-        records: list[IngestRecord] = []
         if listed_at is not None and listed_at - RUNS_SKEW_MARGIN < floor:
             gap_start = iso(listed_at - RUNS_SKEW_MARGIN)
+            self.report.gaps["workflow_runs_history"] = (
+                f"workflow run listing missed {gap_start} to {iso(floor)}"
+            )
             records.append(
                 self._gap_event(
                     "workflow_runs_outside_lookback",
@@ -1407,45 +1398,136 @@ class RepoPoller:
                     attributes={"gap_start": gap_start, "gap_end": iso(floor)},
                 )
             )
-        open_created: list[str] = []
+        listed_run_ids: set[str] = set()
         for run in page.items:
-            if not isinstance(run, dict) or not isinstance(run.get("id"), int):
-                continue
-            created = run.get("created_at") if isinstance(run.get("created_at"), str) else ""
-            status = clean_text(run.get("status"), 32) or "unknown"
-            conclusion = clean_text(run.get("conclusion"), 32) if run.get("conclusion") else None
-            raw_attempt = run.get("run_attempt")
-            attempt = raw_attempt if isinstance(raw_attempt, int) else 1
-            if status != "completed" and created:
-                open_created.append(created)
-            seen_value = f"{attempt}:{status}:{conclusion}|{created}"
-            if st.runs_seen.get(str(run["id"])) == seen_value:
-                continue
-            try:
-                records.append(EventRecord(data=self._run_event(run, status, conclusion, attempt)))
-            except ValueError as exc:
-                records.append(self._record_failure("workflow_run", f"{run['id']}:{attempt}", exc))
-            st.runs_seen[str(run["id"])] = seen_value
-        if page.truncated:
+            run_id = self._record_run(as_dict(run), records)
+            if run_id is not None:
+                listed_run_ids.add(run_id)
+        total_count = as_dict(page.first).get("total_count")
+        incomplete = page.truncated or len(listed_run_ids) >= GITHUB_FILTERED_RUN_LIMIT
+        incomplete |= isinstance(total_count, int) and total_count > len(listed_run_ids)
+        open_since = parse_time(st.runs_cursor)
+        if incomplete:
             created_values: list[str] = [
                 str(r["created_at"])
                 for r in page.items
                 if isinstance(r, dict) and isinstance(r.get("created_at"), str)
             ]
             oldest = min(created_values, default=None)
+            self.report.gaps["workflow_runs_listing"] = (
+                "workflow run listing did not cover its full window"
+            )
             records.append(
                 self._gap_event(
                     "workflow_runs_truncated",
-                    f"workflow runs listing exceeded max_pages={self.cfg.max_pages}: runs "
-                    f"created between {cursor} and {oldest} were not read",
+                    f"workflow runs listing incomplete (max_pages={self.cfg.max_pages}, "
+                    f"known IDs={len(listed_run_ids)}). The window starting at {cursor} may "
+                    f"have omissions (oldest listed creation time: {oldest}).",
                     key=f"{cursor}:{oldest}",
                     attributes={"gap_start": cursor, "gap_end": oldest},
                 )
             )
-        st.runs_cursor = min(open_created) if open_created else None
-        st.runs_listed_at = iso(self.now)
+        else:
+            st.runs_listed_at = iso(self.now)
+            open_since = None
+        self._poll_unlisted_runs(listed_run_ids, records)
+        if len(st.runs_open) > MAX_RUNS_TRACKED:
+            ordered = sorted(st.runs_open, key=lambda key: st.runs_open[key].rpartition("|")[2])
+            skipped = len(ordered) - MAX_RUNS_TRACKED
+            for run_id in ordered[:skipped]:
+                del st.runs_open[run_id]
+            self.report.gaps["workflow_runs_tracking"] = (
+                f"open-run state limit dropped {skipped} run IDs"
+            )
+        open_times = [parse_time(v.rpartition("|")[2]) for v in st.runs_open.values()]
+        if open_since is not None:
+            open_times.append(open_since)
+        oldest_recent = min((t for t in open_times if t is not None and t >= floor), default=None)
+        st.runs_cursor = iso(oldest_recent) if oldest_recent is not None else None
         st.prune_runs(iso(floor))
         self.emit(records)
+
+    def _poll_unlisted_runs(self, listed_run_ids: set[str], records: list[IngestRecord]) -> None:
+        st = self.state
+        # A tracked open run may disappear from a saturated listing even when young.
+        overdue = [int(run_id) for run_id in st.runs_open if run_id not in listed_run_ids]
+        overdue.sort(key=lambda run_id: (run_id <= st.runs_open_after, run_id))
+        if len(overdue) > MAX_LATE_RUN_LOOKUPS:
+            self.report.gaps["workflow_runs_late_backlog"] = (
+                f"{len(overdue)} open runs need periodic detail polls"
+            )
+        for run_id in overdue[:MAX_LATE_RUN_LOOKUPS]:
+            fetched = self._fetch(None, f"{self.api}/actions/runs/{run_id}")
+            st.runs_open_after = run_id
+            if fetched.error is not None:
+                self._gap("workflow_runs_late_detail", fetched.error)
+                continue
+            run = as_dict(fetched.data)
+            if run.get("id") == run_id and self._record_run(run, records) is not None:
+                continue
+            self.report.errors.append("workflow run detail returned an invalid or mismatched ID")
+
+    def _record_run(self, run: Mapping[str, Any], records: list[IngestRecord]) -> str | None:
+        raw_id = run.get("id")
+        if type(raw_id) is not int or not 0 < raw_id < 10**19:
+            return None
+        run_id = str(raw_id)
+        st = self.state
+        created = parse_time(run.get("created_at"))
+        updated = parse_time(run.get("updated_at"))
+        raw_status = run.get("status")
+        raw_conclusion = run.get("conclusion")
+        status = (
+            raw_status
+            if isinstance(raw_status, str) and _RUN_STATE_VALUE.fullmatch(raw_status)
+            else "unknown"
+        )
+        conclusion = (
+            raw_conclusion
+            if isinstance(raw_conclusion, str) and _RUN_STATE_VALUE.fullmatch(raw_conclusion)
+            else None
+        )
+        raw_attempt = run.get("run_attempt")
+        attempt = raw_attempt if type(raw_attempt) is int else 1
+        signature = f"{attempt}:{status}:{conclusion}"
+        previous = st.runs_seen.get(run_id) or st.runs_open.get(run_id)
+        same_state = False
+        prior_updated = None
+        if previous is not None:
+            # Legacy checkpoints contain the same state signature followed by created_at only.
+            prior_state, *prior_times = previous.split("|")
+            prior_attempt, _, prior_status = prior_state.partition(":")
+            prior_updated = parse_time(prior_times[0]) if len(prior_times) == 2 else None
+            if re.fullmatch(r"[0-9]{1,20}", prior_attempt) and (
+                int(prior_attempt) > attempt
+                or (
+                    int(prior_attempt) == attempt
+                    and (
+                        (
+                            prior_updated is not None
+                            and updated is not None
+                            and prior_updated > updated
+                        )
+                        or (prior_status.startswith("completed:") and status != "completed")
+                    )
+                )
+            ):
+                return run_id
+            same_state = prior_state == signature
+        if not same_state:
+            try:
+                records.append(EventRecord(data=self._run_event(run, status, conclusion, attempt)))
+            except ValueError as exc:
+                records.append(self._record_failure("workflow_run", f"{run_id}:{attempt}", exc))
+        revision = updated or (prior_updated if same_state else None)
+        seen_times = (iso(revision) if revision else "", iso(created) if created else "")
+        seen_value = "|".join((signature, *seen_times))
+        st.runs_seen[run_id] = seen_value
+        if status != "completed" and created:
+            st.runs_open[run_id] = seen_value
+        else:
+            st.runs_open.pop(run_id, None)
+        return run_id
 
     def _run_event(
         self, run: Mapping[str, Any], status: str, conclusion: str | None, attempt: int
@@ -1454,12 +1536,13 @@ class RepoPoller:
         created = parse_time(run.get("created_at"))
         started = parse_time(run.get("run_started_at"))
         updated = parse_time(run.get("updated_at"))
+        revision = updated or started or created
         if status == "completed":
             event_time = updated or started or created or self.now
         elif status == "in_progress":
             event_time = started or updated or created or self.now
         else:
-            event_time = created or updated or self.now
+            event_time = updated or created or self.now
         triggering = as_dict(run.get("triggering_actor"))
         actor_data = as_dict(run.get("actor"))
         source = triggering or actor_data
@@ -1478,7 +1561,6 @@ class RepoPoller:
         path = clean_text(raw_path.split("@", 1)[0], 256) if raw_path else None
         name = clean_text(run.get("name"), 200) if isinstance(run.get("name"), str) else None
         event_name = clean_text(run.get("event"), 64) if isinstance(run.get("event"), str) else None
-        head_commit = as_dict(run.get("head_commit"))
         head_repo = as_dict(run.get("head_repository"))
         head_repo_name = (
             clean_text(head_repo.get("full_name"), 200) if head_repo.get("full_name") else None
@@ -1490,13 +1572,13 @@ class RepoPoller:
             outcome = Outcome.FAILURE
         else:
             outcome = Outcome.UNKNOWN
-        sim = simulation_run_id(
-            head_commit.get("message"), run.get("head_branch"), run.get("display_title")
-        )
         run_number = run.get("run_number") if isinstance(run.get("run_number"), int) else None
         return self.builder.build(
             event_type="github.workflow_run.observed",
-            native_key=f"{run_id}:{attempt}:{status}",
+            native_key=(
+                f"workflow-run.v2:{run_id}:{attempt}:{status}:{conclusion or ''}:"
+                f"{iso(revision) if revision else ''}"
+            ),
             event_time=event_time,
             observed_time=self.now,
             action=f"workflow_run_{status}",
@@ -1549,7 +1631,6 @@ class RepoPoller:
                 }
             ),
             redactions=redactions,
-            sim_run_id=sim,
         )
 
     # ── phase 5: posture ────────────────────────────────────────────────────

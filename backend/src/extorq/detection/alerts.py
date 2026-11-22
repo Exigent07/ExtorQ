@@ -1,8 +1,18 @@
 """Pure alert logic: validate rule output rows, create alerts, merge late evidence.
 
+Row contract (every rule query returns these columns, see :data:`COMMON_COLUMNS`):
+``group_key`` (String), ``asset_id``/``asset_type``, ``first_seen``/``last_seen``
+(DateTime64(3, 'UTC')), ``event_count``, ``evidence_event_ids`` (Array(String), earliest
+first), ``entities`` (Map(String, String)), ``features`` (JSON object text),
+``confidence`` ('high' | 'medium' | 'low') plus ``bucket_start`` (window_bucket rules)
+or ``signature`` (event rules). ``supporting_event_ids`` is optional: evidence ids that
+corroborate rather than trigger (stored with role ``supporting``). Everything a row
+carries is untrusted telemetry and is validated, bounded and sanitised here.
+
 Identity (contracts.identity.alert_id): ``(rule_id, group_key, bucket)`` where
 ``bucket`` is the row's ``bucket_start`` (window_bucket rules) or ``signature``
-(event rules). The rule *version* is deliberately excluded.
+(event rules). The rule *version* is deliberately excluded, so a rule upgrade extends
+open alerts instead of duplicating them.
 
 Merging a row into an existing alert (late events, overlapping windows):
 
@@ -10,10 +20,11 @@ Merging a row into an existing alert (late events, overlapping windows):
   row's ids; only ids not stored before become new ``alert_evidence`` rows
 * ``created_at`` is preserved, ``updated_at`` strictly increases
 * ``first_seen``/``last_seen`` widen, ``event_count`` never decreases
-* confidence is monotone (evidence only grows, so completeness only grows)
+* confidence is monotone within a rule version; a different rule version reevaluates
+  confidence and features from its own result
 * numeric features take the max, boolean features OR, lists are unioned (bounded)
-* a row that adds nothing (no new evidence, confidence or simulation tag) produces
-  no new version: re-running a window is idempotent
+* a row that adds nothing (no new evidence, no higher confidence) produces no new
+  version: re-running a window is idempotent
 """
 
 from __future__ import annotations
@@ -46,7 +57,6 @@ if TYPE_CHECKING:
 DETECTOR_VERSION = f"extorq-detector/{__version__}"
 MAX_ALERT_EVIDENCE = 500
 MAX_ENTITIES = 16
-MAX_SIM_IDS = 16
 MAX_SERVICE_IDS = 16
 MAX_FEATURE_KEYS = 64
 MAX_FEATURE_LIST = 64
@@ -61,7 +71,6 @@ COMMON_COLUMNS = (
     "entities",
     "features",
     "confidence",
-    "simulation_run_ids",
 )
 CONFIDENCE_RANK = {
     EvidenceConfidence.LOW: 0,
@@ -69,14 +78,13 @@ CONFIDENCE_RANK = {
     EvidenceConfidence.HIGH: 2,
 }
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
-_SIM_ID = re.compile(r"^[a-z0-9]{8,32}$")
 _ASSET_ID = re.compile(r"^[a-z0-9][a-z0-9._:/-]{2,199}$")
 _ATTR_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 _ASSET_TYPES = {a.value for a in AssetType}
 
 
 class RowError(ValueError):
-    pass
+    """A rule result row violates the row contract (the row, or the run, is rejected)."""
 
 
 @dataclass
@@ -93,7 +101,6 @@ class RuleRow:
     entities: dict[str, str]
     features: dict[str, Any]
     confidence: EvidenceConfidence
-    simulation_run_ids: list[str]
     bucket_start: datetime | None = None
     signature: str | None = None
     supporting_event_ids: set[str] = field(default_factory=set)
@@ -202,10 +209,6 @@ def parse_row(rule: LoadedRule, record: dict[str, Any]) -> RuleRow:
     confidence = record.get("confidence")
     if confidence not in {"high", "medium", "low"}:
         raise RowError("confidence must be 'high', 'medium' or 'low'")
-    raw_sims = record.get("simulation_run_ids") or []
-    if not isinstance(raw_sims, list):
-        raise RowError("simulation_run_ids must be Array(String)")
-    sims = sorted({s for s in raw_sims if isinstance(s, str) and _SIM_ID.match(s)})[:MAX_SIM_IDS]
     supporting_raw = record.get("supporting_event_ids") or []
     supporting = (
         {s for s in supporting_raw if isinstance(s, str) and s in seen}
@@ -223,7 +226,6 @@ def parse_row(rule: LoadedRule, record: dict[str, Any]) -> RuleRow:
         entities=entities,
         features=coerce_attributes(raw_features),
         confidence=EvidenceConfidence(confidence),
-        simulation_run_ids=sims,
         supporting_event_ids=supporting,
     )
     if rule.metadata.dedup.strategy is DedupStrategy.WINDOW_BUCKET:
@@ -329,36 +331,39 @@ def decide(
     alert_id: str,
     *,
     existing: DetectionAlert | None,
-    stored_evidence: dict[str, str],
+    stored_evidence: dict[str, datetime],
     window_start: datetime,
     window_end: datetime,
     now: datetime,
     detector_version: str = DETECTOR_VERSION,
 ) -> AlertDecision | None:
     """Create a new alert or a new version of ``existing``; ``None`` if nothing changed."""
-    known = set(stored_evidence)
+    known = {
+        eid
+        for eid, added_at in stored_evidence.items()
+        if existing is not None and added_at <= existing.updated_at
+    }
     if existing is not None:
         known.update(existing.evidence_event_ids)
     new_ids = [eid for eid in row.evidence_event_ids if eid not in known]
     full_set = known | set(row.evidence_event_ids)
 
     if existing is not None:
-        sims = sorted(set(existing.simulation_run_ids) | set(row.simulation_run_ids))[:MAX_SIM_IDS]
-        confidence = max_confidence(existing.confidence, row.confidence)
-        if (
-            not new_ids
-            and confidence == existing.confidence
-            and sims == sorted(existing.simulation_run_ids)
-        ):
+        version_changed = existing.rule_version != rule.version
+        confidence = (
+            row.confidence
+            if version_changed
+            else max_confidence(existing.confidence, row.confidence)
+        )
+        if not new_ids and not version_changed and confidence == existing.confidence:
             return None
-        array = list(existing.evidence_event_ids)
-        in_array = set(array)
-        for eid in new_ids:
-            if len(array) >= MAX_ALERT_EVIDENCE:
-                break
-            if eid not in in_array:
-                array.append(eid)
-                in_array.add(eid)
+        array = list(
+            dict.fromkeys(
+                row.evidence_event_ids + existing.evidence_event_ids
+                if version_changed
+                else existing.evidence_event_ids + new_ids
+            )
+        )[:MAX_ALERT_EVIDENCE]
         fields: dict[str, Any] = {
             "first_seen": min(existing.first_seen, row.first_seen),
             "last_seen": max(existing.last_seen, row.last_seen),
@@ -366,10 +371,13 @@ def decide(
             "evidence_truncated": existing.evidence_truncated
             or len(full_set) > len(array)
             or row.event_count > len(row.evidence_event_ids),
-            "features": merge_features(existing.features, row.features),
-            "entities": dict(list({**existing.entities, **row.entities}.items())[:MAX_ENTITIES]),
+            "features": dict(row.features)
+            if version_changed
+            else merge_features(existing.features, row.features),
+            "entities": dict(row.entities)
+            if version_changed
+            else dict(list({**existing.entities, **row.entities}.items())[:MAX_ENTITIES]),
             "service_ids": list(existing.service_ids),
-            "simulation_run_ids": sims,
             "confidence": confidence,
             "created_at": existing.created_at,
             "updated_at": max(now, existing.updated_at + timedelta(milliseconds=1)),
@@ -389,7 +397,6 @@ def decide(
             "features": dict(row.features),
             "entities": dict(row.entities),
             "service_ids": [],
-            "simulation_run_ids": list(row.simulation_run_ids),
             "confidence": row.confidence,
             "created_at": now,
             "updated_at": now,
@@ -424,13 +431,12 @@ def decide(
         evidence_truncated=fields["evidence_truncated"],
         features=fields["features"],
         mitre_techniques=list(rule.metadata.mitre_techniques),
-        simulation_run_ids=fields["simulation_run_ids"],
         created_at=fields["created_at"],
         updated_at=fields["updated_at"],
         detector_version=detector_version,
     )
-    # Only ids never stored before get an alert_evidence row (stored rows, including
-    # orphans left by an interrupted earlier write, are already part of the full set).
+    # A write interrupted before publishing the alert can leave evidence ahead of its
+    # published version. Reuse the association when the same rule result returns.
     new_evidence = [
         AlertEvidence(
             alert_id=alert_id,
@@ -438,9 +444,10 @@ def decide(
             role=EvidenceRole.SUPPORTING
             if eid in row.supporting_event_ids
             else EvidenceRole.TRIGGER,
-            added_at=now,
+            added_at=alert.updated_at,
         )
         for eid in new_ids
+        if eid not in stored_evidence
     ]
     return AlertDecision(alert=alert, new_evidence=new_evidence, created=created)
 
@@ -472,6 +479,8 @@ def find_continuation(
     """
     matches: list[DetectionAlert] = []
     for alert in candidates:
+        if row.asset_id != alert.asset_id:
+            continue
         if (row.first_seen - alert.last_seen).total_seconds() > gap_seconds:
             continue
         if (alert.first_seen - row.last_seen).total_seconds() > gap_seconds:

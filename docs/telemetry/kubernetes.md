@@ -88,28 +88,37 @@ RequestReceived stage, no lease or system-read records).
 Image `otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f1...` (stable release,
 verified on Docker Hub). Config `infra/kind/otel/collector.yaml` (ConfigMap
 `extorq-system/extorq-otel-config`; the pod template carries its SHA-256, so a config
-change rolls the pods). Validated with the pinned binary
-(`otelcol-contrib validate`, plus a negative control that rejects an unknown key).
+change rolls the pods). The earlier configuration passed `otelcol-contrib validate`
+and a negative control that rejected an unknown key. The current configuration
+requires the pinned-binary and fault checks below before rollout.
 
-* Receivers: `file_log/containers` (`/var/log/pods/*/*/*.log`, CRI `container` parser,
-  partial-line recombination, 16 KiB max line, the collector's own logs excluded) and
+* Receivers: `file_log/containers` (active `*.log` and retained `*.log.*` files,
+  including gzip-compressed backups, CRI `container` parser, 16 KiB line and
+  partial-recombination limits, excluding temporary compression files and the Collector's logs) and
   `file_log/audit` (`kube-apiserver-audit*.log`, active file + rotated backups, 256 KiB max).
 * Processors: `memory_limiter` (200 MiB), `k8s_attributes` (pod name/uid, namespace, node,
   Deployment/ReplicaSet/DaemonSet/StatefulSet/Job/CronJob, `container.id`,
   `container.image.name/tags`; `wait_for_metadata: true`, node-local filter), a `resource`
-  processor setting `extorq.source = container | audit`, cluster and node names, `batch`
-  (100 records: the gateway allows 1000 records / 4 MiB per request).
+  processor setting `extorq.source = container | audit`, cluster and node names.
 * Exporter: `otlp_http`, `encoding: json`, gzip, `logs_endpoint
   https://host.docker.internal:8443/v1/otlp/v1/logs`, TLS 1.2+ verified against the ExtorQ CA
   (ConfigMap `extorq-gateway-ca` built from `var/tls/ca.crt`), bearer token from the Secret
   `extorq-otel-token` built at deploy time from `var/secrets/tokens/k8s-otel-extorq-lab.token`
   by file path (server-side apply, never printed or committed).
-* Durability: `file_storage` in the hostPath `/var/lib/extorq-otel` keeps the file offsets AND
-  the exporter's persistent sending queue (`retry_on_failure` up to 2 h, then the batch is
-  dropped and counted in `otelcol_exporter_send_failed_log_records`). Verified: after deleting
-  the collector pod, the new pod logged "Resuming from previously known offset(s)", five marker
-  requests sent before/during/after the restart each arrived exactly once, and the
-  post-restart batches contained 0 duplicates.
+* Durability: `file_storage` in the hostPath `/var/lib/extorq-otel` stores file
+  offsets and the exporter's queue with `fsync`. Each pipeline calls the queue
+  without a memory batch processor. The queue blocks on overflow and the receivers
+  retry downstream rejection without a timer-driven discard. Exporter-side
+  batching caps an outbound request at two records to fit the gateway's 4 MiB
+  decompressed JSON limit even with worst-case escaping of two 256 KiB lines.
+  The gateway acknowledges after its SQLite spool transaction commits.
+* When the exporter exhausts its two-hour retry budget or receives a permanent
+  response, it emits a terminal drop diagnostic. The failed-send counter can
+  include retried attempts. Use the Collector's own terminal diagnostics to
+  establish drops after retry exhaustion.
+  Queue pressure can also outlast the kubelet's or API server's log retention.
+  Unread files removed by rotation and unflushed CRI partial records cannot be
+  counted from exported counters. These are unobservable coverage gaps.
 * Connectivity (verified, `kind.sh netcheck`): pods resolve `host.docker.internal` to Docker
   Desktop's host gateway (192.168.65.254) and reach the gateway on 8443 with the certificate
   verified against the ExtorQ CA (the gateway certificate carries `DNS:host.docker.internal`).
@@ -125,7 +134,67 @@ UID 0 because the audit log is `root:root 0600`; all capabilities are dropped,
 read-only except the checkpoint directory. This is a documented accepted risk
 (`extorq.io/accepted-risk` on the DaemonSet, pod template and namespace).
 
-## 4. Normalisation (`otlp_k8s.py`, PARSER_VERSION 1.1.x)
+### 3.1 Delivery health
+
+The Collector scrapes its own loopback Prometheus listener every 30 seconds.
+The health exporter sends only allow-listed receive, export and queue metrics to
+`POST /v1/otlp/v1/metrics` via the same authenticated TLS gateway and a separate
+exporter. The endpoint is scoped to `k8s-otel-extorq-lab` with a 64 KiB body cap.
+The gateway stores health through the normal spool and writer as node-scoped
+`CollectorHealth` reports for the matching source types. Audit records name the
+emitting API server's node when the OTLP resource supplies a valid node name.
+
+`GET /api/v1/health` returns the last report, source timestamp and delivery lag.
+`details.delivery_state` distinguishes delivering, running with delivery
+unconfirmed, degraded, backlogged, dropping records, unavailable and unknown.
+Only a recent native record from the same source and node accepted into the
+gateway spool confirms delivery. An expired metrics report is unavailable after
+three scrape intervals. A quiet source can show no delivery even when the
+Collector is functioning. The gateway's recent native acknowledgements are
+process-local and must be observed anew after it restarts.
+
+The two log sources share the node exporter. Counter totals describe that
+Collector's lifetime, queue depth and capacity are requests, and receiver
+counters are reported separately where available. Permanent-send failures are
+shown as drops when the Collector supplies the permanent error label. The
+dashboard's historical counters and the Collector diagnostic logs are needed to
+review losses across Collector restarts and retry exhaustion. A shared gateway
+outage can stop health reports as well as logs. Pod readiness remains separately
+visible from the inventory collector. A workload's effective delivery coverage
+requires a current report for every attributed hosting node and source.
+
+### 3.2 Isolated validation and rollout
+
+Validate the exact image and current config before deploying:
+
+```sh
+docker run --rm --name extorq-b2-otel-validate --network none \
+  --tmpfs /var/lib/extorq-otel -e POD_IP=127.0.0.1 \
+  -e K8S_NODE_NAME=extorq-lab-validation \
+  -v "$PWD/infra/kind/otel/collector.yaml:/conf/collector.yaml:ro" \
+  otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea \
+  validate --config=/conf/collector.yaml
+```
+
+On a disposable ExtorQ cluster, refresh the producer registry with `make bootstrap`,
+then deploy the matching gateway and Collector revisions. Use a numbered benign
+native event stream to reconcile retained file records with unique gateway and
+stored event IDs through rotation, multiple Collector restarts, backpressure, a
+gateway restart and a bounded exporter outage. Compare both sources independently.
+Check a permanently rejected request and the terminal diagnostic from an outage
+longer than the configured retry budget. Confirm that queue and Collector health
+change as expected. Validate the pinned binary and native fault behavior
+separately from the synthetic SQLite health API regression tests.
+
+On an existing deployment, drain the outgoing queue and back up the node's
+queue, checkpoints, config and retained files before rolling a node. Preserve
+the `otlp_http/extorq` queue identity. A rollback must stop the replacement
+before opening the same state with the previous Collector. Verify compatibility
+using an isolated restore of both queue and checkpoints. Restoring just one can
+skip or replay native records. A historical normalized audit record replayed with
+new emitter-node attribution can produce a visible event identity conflict.
+
+## 4. Normalisation (`otlp_k8s.py`, PARSER_VERSION 2.0.1)
 
 All telemetry is untrusted: strings are sanitised (control characters removed), redacted
 (`redact_text`) and bounded; nothing is used to build queries or commands; unknown values
@@ -357,6 +426,9 @@ kube-apiserver service.
 
 ## 9. What is NOT monitored (limitations)
 
+* Typed portal logs require the expected Deployment metadata, Pod UID, container and stdout.
+  Rows lacking the required metadata remain generic container logs. Successful RBAC responses
+  and inventory diffs carry object UID and resource version when observed.
 * **No runtime security telemetry**: process execution, file access and network connections
   inside containers or on the node are not observed (that needs eBPF / Falco- or
   Tetragon-class instrumentation). Only logs that containers write and API activity are seen.

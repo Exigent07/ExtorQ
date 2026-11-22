@@ -90,7 +90,6 @@ def test_producer_registry_matches_plan_and_token_hashes(tmp_path: Path) -> None
         "k8s-otel-extorq-lab",
         "github-collector",
         "scanner-runner",
-        "simulation-runner",
         "extorq-selftest",
     }
     for producer_id, entry in entries.items():
@@ -100,7 +99,9 @@ def test_producer_registry_matches_plan_and_token_hashes(tmp_path: Path) -> None
     for producer_id in ("macos-workstation-01", "linux-ssh-lab-vm-01", "k8s-inventory-extorq-lab"):
         assert {"service", "service_instance"} <= set(entries[producer_id]["allowed_kinds"])
     assert "service" not in entries["github-collector"]["allowed_kinds"]
-    assert entries["k8s-otel-extorq-lab"]["allowed_kinds"] == ["event"]
+    otel = entries["k8s-otel-extorq-lab"]
+    assert otel["allowed_kinds"] == ["event", "collector_health"]
+    assert otel["allowed_asset_patterns"] == ["k8s:extorq-lab", "k8s:extorq-lab/node/*"]
     assert entries["extorq-selftest"] == {
         **entries["extorq-selftest"],
         "allowed_kinds": ["collector_health"],
@@ -109,7 +110,34 @@ def test_producer_registry_matches_plan_and_token_hashes(tmp_path: Path) -> None
     # the registry validates with the gateway's own model
     from extorq.ingest.registry import ProducerRegistry
 
-    assert len(ProducerRegistry(secrets_dir / "producers.json").producer_ids) == 8
+    assert len(ProducerRegistry(secrets_dir / "producers.json").producer_ids) == 7
+
+
+@needs_openssl
+def test_retired_producer_is_never_authorized_even_with_a_token_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Schema 2.0 retired ``simulation-runner``: a leftover token stays unauthorized."""
+    assert bootstrap.bootstrap(tmp_path, rotate=False, rotate_ca=False) == 0
+    tokens = tmp_path / "var" / "secrets" / "tokens"
+    stale = tokens / "simulation-runner.token"
+    stale.write_text("xtq_p_synthetic-stale-token-value\n", encoding="utf-8")
+    stale.chmod(0o600)
+    capsys.readouterr()
+    assert bootstrap.bootstrap(tmp_path, rotate=False, rotate_ca=False) == 0  # idempotent
+    out = capsys.readouterr().out
+    assert "stale producer tokens" in out and "simulation-runner" in out
+    assert "synthetic-stale-token-value" not in out  # ids only, never values
+    assert stale.is_file()  # never deleted automatically
+    registry = json.loads((tmp_path / "var/secrets/producers.json").read_text())
+    ids = {e["producer_id"] for e in registry["producers"]}
+    assert "simulation-runner" not in ids
+    assert all("simulation_run" not in e["allowed_kinds"] for e in registry["producers"])
+    assert all("extorq.simulation" not in e["allowed_source_types"] for e in registry["producers"])
+    from extorq.ingest.registry import ProducerRegistry
+
+    loaded = ProducerRegistry(tmp_path / "var/secrets/producers.json")
+    assert loaded.authenticate("xtq_p_synthetic-stale-token-value") is None
 
 
 @needs_openssl

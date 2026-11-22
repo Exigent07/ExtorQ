@@ -1,5 +1,5 @@
 """Collector SDK: atomic emit + checkpoints + snapshots, sender delivery semantics,
-runner failure isolation, health sanitisation, sim-record and asset upserts.
+runner failure isolation, health sanitisation and asset upserts.
 
 Everything runs against the in-process FakeGateway (no network) with SYNTHETIC
 records from platform_samples.py.
@@ -35,7 +35,6 @@ from extorq_collectors.sdk import (
 from extorq_collectors.sdk.config import ConfigLoadError, load_collector_files
 from extorq_collectors.sdk.runner import CollectorWorker, Runner, sanitize_details
 from extorq_collectors.sdk.sender import MAX_BATCH_RECORDS, Sender
-from extorq_collectors.sdk.simulation import SimulationRecordError, record_simulation
 from extorq_collectors.sdk.state import read_status
 
 HEARTBEAT = "extorq_collectors.sdk.examples.heartbeat:HeartbeatCollector"
@@ -422,84 +421,6 @@ def test_shipped_heartbeat_example_config_is_valid() -> None:
     assert config.module == HEARTBEAT
 
 
-# ── sim-record ────────────────────────────────────────────────────────
-
-
-def test_sim_record_started_then_completed_reuses_started_at(tmp_path: Path) -> None:
-    gw = FakeGateway()
-    settings = _settings(tmp_path)
-    common = {"scenario": "VM-001", "asset": LINUX_ASSET, "run_id": "synthrun01"}
-    started = record_simulation(
-        settings,
-        client_factory=gw.client,
-        status="started",
-        description="SYNTHETIC run",
-        expected_rules=["VM-001"],
-        **common,
-    )
-    assert started.buffered == 0 and started.report.accepted == 1
-    done = record_simulation(settings, client_factory=gw.client, status="completed", **common)
-    assert done.run.started_at == started.run.started_at
-    assert done.run.finished_at is not None
-    assert done.run.description == "SYNTHETIC run"
-    assert done.run.expected_rule_ids == ["VM-001"]
-    assert [r["data"]["status"] for r in gw.accepted_records] == ["started", "completed"]
-
-
-def test_sim_record_refuses_unknown_start_and_mismatched_reuse(tmp_path: Path) -> None:
-    gw = FakeGateway()
-    settings = _settings(tmp_path)
-    with pytest.raises(SimulationRecordError, match="started"):
-        record_simulation(
-            settings,
-            client_factory=gw.client,
-            status="completed",
-            scenario="VM-002",
-            asset=LINUX_ASSET,
-            run_id="synthrun02",
-        )
-    record_simulation(
-        settings,
-        client_factory=gw.client,
-        status="started",
-        scenario="VM-002",
-        asset=LINUX_ASSET,
-        run_id="synthrun03",
-    )
-    with pytest.raises(SimulationRecordError, match="refusing"):
-        record_simulation(
-            settings,
-            client_factory=gw.client,
-            status="completed",
-            scenario="K8S-001",
-            asset="k8s:extorq-lab",
-            run_id="synthrun03",
-        )
-    with pytest.raises(SimulationRecordError, match="status"):
-        record_simulation(
-            settings,
-            client_factory=gw.client,
-            status="bogus",
-            scenario="VM-002",
-            asset=LINUX_ASSET,
-            run_id="synthrun04",
-        )
-
-
-def test_sim_record_stays_buffered_when_gateway_is_down(tmp_path: Path) -> None:
-    gw = FakeGateway(script=[("status", 503, {"Retry-After": "300"})])
-    result = record_simulation(
-        _settings(tmp_path),
-        client_factory=gw.client,
-        delivery_seconds=0.5,
-        status="started",
-        scenario="VM-001",
-        asset=LINUX_ASSET,
-        run_id="synthrun05",
-    )
-    assert result.buffered == 1  # durable locally, delivered by the next flush/sim-record
-
-
 # ── asset upsert ──────────────────────────────────────────────────────
 
 
@@ -532,7 +453,8 @@ def test_asset_upsert_sends_on_change_only_and_commits_with_emit(
 def test_systemic_422_keeps_records_buffered_then_delivers(
     ctx: CollectorContext, store: StateStore
 ) -> None:
-    # e.g. a gateway that does not accept schema 1.1 yet: version skew, not bad records
+    # e.g. collector and gateway built from different contract schemas: version skew,
+    # not bad records
     _fill(ctx, 3)
     gw = FakeGateway(script=[("status", 422)])
     clock = FakeClock()

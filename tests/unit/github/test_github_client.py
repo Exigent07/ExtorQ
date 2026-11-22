@@ -183,6 +183,13 @@ def test_paginate_with_etag_304_returns_unchanged_listing() -> None:
     assert result.not_modified and result.items == [] and result.etag == 'W/"list"'
 
 
+def test_unconditional_304_is_not_a_complete_empty_listing() -> None:
+    client = make_client(lambda _request: httpx.Response(304))
+    with pytest.raises(GitHubResponseError, match="unexpected 304"):
+        client.paginate("/runs", items_key="workflow_runs")
+    assert client.not_modified_count == 0
+
+
 def test_primary_rate_limit_waits_until_reset_then_retries() -> None:
     clock = Clock()
     calls: list[int] = []

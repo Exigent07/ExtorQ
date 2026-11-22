@@ -26,8 +26,10 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+#: Telemetry tables a rule may read (the grants of ``extorq_rules_ro`` in 0002). Detection
+#: tables (alerts, rule runs, contexts) are deliberately absent: a rule never reads alerts.
 ALLOWED_TABLES: frozenset[str] = frozenset(
-    {"events", "assets", "inventory_items", "finding_observations", "scan_runs", "simulation_runs"}
+    {"events", "assets", "inventory_items", "finding_observations", "scan_runs"}
 )
 ALLOWED_DATABASE = "extorq"
 WINDOW_PARAMS: tuple[str, str] = ("window_start", "window_end")
@@ -201,7 +203,8 @@ RESERVED_NAMES: frozenset[str] = frozenset(
         "pipeline_health",
         "ingest_quarantine",
         "ingest_audit",
-        "simulation_runs",
+        "services",
+        "service_instances",
         "v_assets",
         "v_alerts",
         "v_analyst_state",
@@ -211,6 +214,8 @@ RESERVED_NAMES: frozenset[str] = frozenset(
         "v_rule_latest_run",
         "v_findings_current",
         "v_scan_runs_current",
+        "v_services",
+        "v_service_instances_current",
         "system",
         "default",
         "extorq",
@@ -441,6 +446,8 @@ def check_rule_sql(
         context = paren_stack[-1] if paren_stack else "query"
         if context == "func":
             continue  # e.g. EXTRACT(HOUR FROM ts) / substring(x FROM 1): not a table reference
+        if not paren_stack and upper in {"LIMIT", "OFFSET", "FETCH"}:
+            result.errors.append(f"top-level {upper} hides rule output from the detector")
         if tok.kind == "symbol" and tok.value == "," and in_from[-1]:
             result.errors.append(
                 f"comma joins are not allowed; use explicit JOIN (position {tok.pos})"

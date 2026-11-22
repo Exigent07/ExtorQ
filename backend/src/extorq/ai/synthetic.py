@@ -6,16 +6,16 @@ context built here is synthetic by construction and says so:
 * ``builder_version`` is :data:`SYNTHETIC_BUILDER_VERSION`;
 * ``limitations`` starts with :data:`SYNTHETIC_NOTICE`;
 * timestamps are fixed (2026-11-20 UTC), identities are deterministic, IPs come
-  from documentation ranges (RFC 5737) or the lab's private ranges, and actor
+  from documentation ranges (RFC 5737) or private ranges (RFC 1918), and actor
   names are invented.
 
 Event shapes follow the event catalog (``extorq.contracts.catalog``) key fields
-so the provider sees the same structure real contexts will have. Nothing here
+so Jev sees the same structure real contexts have. Nothing here
 is collected telemetry, and it must never be written to ClickHouse.
 
-Service model (contract 1.1): for Linux-host cases the involved services are
+Service model: for Linux-host cases the involved services are
 derived deterministically from the events (sshd for ``auth.ssh.*``, nginx for
-``linux.nginx``, the lab web app for ``app.auth*``, systemd for
+``linux.nginx``, the ``lab-portal`` web application for ``app.auth*``, systemd for
 ``persistence.systemd.*``), with ``monitoring_status`` derived from the case's
 source coverage (failed/stale/gap -> degraded). Cases can also list services
 and related assets explicitly.
@@ -497,7 +497,6 @@ def make_context(spec: CaseSpec) -> InvestigationContext:
         "coverage": spec.coverage,
         "missing_telemetry": spec.missing,
         "limitations": [SYNTHETIC_NOTICE, *spec.limitations],
-        "simulation_run_ids": [],
         "truncated": {"evidence": spec.evidence_truncated},
     }
     digest = input_hash(body)

@@ -1,4 +1,4 @@
--- K8S-002 v1.1.0: risky RBAC grant observed in the audit log and/or the object state.
+-- K8S-002 v1.3.0: risky RBAC grant observed in the audit log and/or the object state.
 --
 -- Two independent sources share one risk vocabulary (otlp_k8s.risk_flags_for_summary is
 -- used by both the audit normaliser and the inventory collector):
@@ -26,7 +26,7 @@
 -- alerts, including later writes to the same objects and look-alike names ('kubeadm:x').
 --
 -- Only flags in {risky_flags} count. Identity (PLAN 5.3): cluster, kind/namespace/name and
--- the risk signature (sorted risky flags). Confidence is high when audit and state agree.
+-- the risk signature (sorted risky flags). High confidence requires a shared object revision.
 -- Duplicate-safe: LIMIT 1 BY event_id per source before grouping.
 WITH
     births AS (
@@ -61,8 +61,9 @@ WITH
             ifNull(k8s_verb, '') AS verb,
             JSONExtract(attributes, 'risk_flags', 'Array(String)') AS all_flags,
             JSONExtractString(attributes, 'request_summary') AS summary,
-            'audit' AS origin,
-            simulation_run_id
+            JSONExtractString(attributes, 'object_uid') AS object_uid,
+            JSONExtractString(attributes, 'resource_version') AS object_revision,
+            'audit' AS origin
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -92,8 +93,9 @@ WITH
             if(event_type = 'k8s.resource.created', 'state_created', 'state_updated') AS verb,
             JSONExtract(attributes, 'risk_flags', 'Array(String)') AS all_flags,
             JSONExtractString(attributes, 'object_summary') AS summary,
-            'state' AS origin,
-            simulation_run_id
+            JSONExtractString(attributes, 'object_uid') AS object_uid,
+            JSONExtractString(attributes, 'resource_version') AS object_revision,
+            'state' AS origin
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -128,7 +130,8 @@ WITH
             u.verb AS verb,
             u.summary AS summary,
             u.origin AS origin,
-            u.simulation_run_id AS simulation_run_id,
+            u.object_uid AS object_uid,
+            u.object_revision AS object_revision,
             u.kind AS kind,
             u.flags AS flags,
             u.cluster AS cluster,
@@ -190,10 +193,13 @@ SELECT
               'verbs Array(String), role_ref String, subjects Array(String), object_ref String, ',
               'scope String, documented_bootstrap_object Bool)'))) AS features,
     arrayStringConcat(e.flags, ',') AS signature,
-    if(uniqExact(e.origin) = 2, 'high', 'medium') AS confidence,
-    groupUniqArray(16)(e.simulation_run_id) AS simulation_run_ids
+    if(notEmpty(arrayIntersect(
+        groupUniqArrayIf(tuple(e.object_uid, e.object_revision),
+            e.origin = 'audit' AND e.object_uid != '' AND e.object_revision != ''),
+        groupUniqArrayIf(tuple(e.object_uid, e.object_revision),
+            e.origin = 'state' AND e.object_uid != '' AND e.object_revision != '')
+    )), 'high', 'medium') AS confidence
 FROM ev AS e
 WHERE e.kind != '' AND e.name != '' AND length(e.flags) > 0
 GROUP BY e.cluster, e.kind, e.namespace, e.name, e.flags
 ORDER BY first_seen
-LIMIT 1000

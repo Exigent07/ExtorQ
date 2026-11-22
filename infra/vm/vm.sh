@@ -11,6 +11,7 @@
 #   ssh [cmd...]      SSH as the lab operator extorq-admin (sudo)
 #   redeploy          push the dispatcher, lab-portal and config files from the repo
 #                     into the running VM and reload services (keeps all telemetry)
+#   redeploy-dispatcher  replace only the dispatcher, without reloading services
 #   console [-n]      follow the serial console log (-n: print the tail and exit)
 #   destroy --yes     stop and delete the VM disk/seed/state (keeps image + keys)
 #   destroy --yes --purge   also delete the downloaded image and all keys
@@ -488,6 +489,21 @@ EOF_FILES
   log "redeploy complete"
 }
 
+cmd_redeploy_dispatcher() {
+  vm_pid >/dev/null || die "${VM_NAME} is not running; run: infra/vm/vm.sh up"
+  # Validate the candidate before the same-directory rename commits the update.
+  admin_ssh 'sudo -n /bin/bash -ceu '\''
+    candidate=$(mktemp /usr/local/sbin/.extorq-collect-dispatch.XXXXXXXX)
+    trap "rm -f -- \$candidate" EXIT
+    cat > "$candidate"
+    SSH_ORIGINAL_COMMAND=version /usr/bin/python3 -I "$candidate" >/dev/null
+    chown root:root "$candidate"
+    chmod 0755 "$candidate"
+    mv -fT -- "$candidate" /usr/local/sbin/extorq-collect-dispatch
+  '\''' <"${SCRIPT_DIR}/files/extorq-collect-dispatch" || die "dispatcher update failed"
+  log "dispatcher updated without reloading services"
+}
+
 cmd_console() {
   [ -f "${CONSOLE_LOG}" ] || die "no console log yet (${CONSOLE_LOG})"
   if [ "${1:-}" = "-n" ] || [ "${1:-}" = "--no-follow" ]; then
@@ -530,6 +546,7 @@ main() {
     status) cmd_status ;;
     ssh) cmd_ssh "$@" ;;
     redeploy) cmd_redeploy ;;
+    redeploy-dispatcher) cmd_redeploy_dispatcher ;;
     console) cmd_console "$@" ;;
     destroy) cmd_destroy "$@" ;;
     -h|--help|help) usage ;;

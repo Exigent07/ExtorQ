@@ -9,7 +9,7 @@ no network calls besides ClickHouse) and returns an :class:`InvestigationContext
 3. a rule-family context window ``[first_seen - before, last_seen + after]``
 4. related events: (a) events sharing an identifier or attribute with the evidence on
    any asset (request id, pod uid, audit id, commit, workflow run, resource, source IP,
-   principal, simulation run, service), (b) the nearest other events on the alert's
+   principal, service), (b) the nearest other events on the alert's
    asset (temporal proximity only); each classified DIRECT / CANDIDATE / UNESTABLISHED
    (classify.py) with bases, strength and explanation
 5. services involved (evidence vs related), related assets, aggregated features,
@@ -89,6 +89,7 @@ ALERT_SQL = (
 )
 EVIDENCE_IDS_SQL = (
     "SELECT event_id FROM alert_evidence WHERE alert_id = {alert_id:String} "
+    "AND added_at <= {version_at:DateTime64(3, 'UTC')} "
     "GROUP BY event_id ORDER BY event_id LIMIT 100000"
 )
 EVENTS_BY_ID_SQL = (
@@ -114,7 +115,6 @@ WHERE event_time >= {ws:DateTime64(3, 'UTC')} AND event_time <= {we:DateTime64(3
      OR (gh_workflow_run_id IS NOT NULL AND gh_workflow_run_id IN {run_ids:Array(UInt64)})
      OR (src_ip IS NOT NULL AND src_ip IN {ips:Array(String)})
      OR hasAny(k8s_source_ips, {ips:Array(String)})
-     OR (simulation_run_id IS NOT NULL AND simulation_run_id IN {sim_ids:Array(String)})
      OR (k8s_user IS NOT NULL AND k8s_user IN {auth_principals:Array(String)})
      OR (gh_actor_login IS NOT NULL AND gh_actor_login IN {auth_principals:Array(String)})
      OR (actor_name IS NOT NULL AND actor_name IN {auth_principals:Array(String)})
@@ -193,18 +193,21 @@ FINDINGS_RAW_SQL = (
 )
 COLLECTORS_SQL = (
     "SELECT collector_id, asset_id, source_types, status, last_success_at, lag_seconds, "
-    "interval_seconds FROM v_collector_latest ORDER BY collector_id LIMIT 500"
+    "interval_seconds FROM v_collector_latest WHERE asset_id IN {assets:Array(String)} "
+    "AND hasAny(source_types, {sources:Array(String)}) ORDER BY collector_id LIMIT 500"
 )
 COLLECTOR_WINDOW_SQL = (
-    "SELECT collector_id, countIf(status IN ('failed', 'degraded')) AS bad, count() AS reports "
+    "SELECT collector_id, asset_id, countIf(status IN ('failed', 'degraded')) AS bad, "
+    "count() AS reports "
     "FROM collector_health WHERE collector_id IN {ids:Array(String)} "
+    "AND asset_id IN {assets:Array(String)} "
     "AND reported_at >= {ws:DateTime64(3, 'UTC')} AND reported_at <= {we:DateTime64(3, 'UTC')} "
-    "GROUP BY collector_id"
+    "GROUP BY collector_id, asset_id"
 )
 GAP_EVENTS_SQL = (
-    "SELECT DISTINCT if(JSONExtractString(attributes, 'source_type') != '', "
-    "JSONExtractString(attributes, 'source_type'), source_type) AS gap_source "
+    "SELECT DISTINCT asset_id, source_type "
     "FROM events WHERE event_type = 'extorq.collector.gap_detected' "
+    "AND asset_id IN {assets:Array(String)} AND source_type IN {sources:Array(String)} "
     "AND event_time >= {ws:DateTime64(3, 'UTC')} AND event_time <= {we:DateTime64(3, 'UTC')} "
     "LIMIT 100"
 )
@@ -217,6 +220,7 @@ SOURCES_PRESENT_SQL = (
 RULE_RUN_MISSING_SQL = (
     "SELECT s, count() AS runs FROM rule_runs ARRAY JOIN missing_sources AS s "
     "WHERE rule_id = {rule_id:String} AND status = {status:String} "
+    "AND rule_version = {version:String} "
     "AND window_end >= {ws:DateTime64(3, 'UTC')} AND window_start <= {we:DateTime64(3, 'UTC')} "
     "GROUP BY s ORDER BY s LIMIT 32"
 )
@@ -277,11 +281,7 @@ class ContextBuilder:
             notes.limit("No evidence event of this alert could be read from the events table.")
         nat = frozenset(self.settings.shared_nat_ips)
         profile = EvidenceProfile.from_events(
-            alert.asset_id,
-            alert.first_seen,
-            evidence,
-            nat_ips=nat,
-            simulation_run_ids=alert.simulation_run_ids,
+            alert.asset_id, alert.first_seen, evidence, nat_ips=nat
         )
         related, relationships, related_truncated = self._related(alert, profile, evidence, ws, we)
 
@@ -304,12 +304,18 @@ class ContextBuilder:
         self._missing(rule, alert, ws, we, notes)
         timeline, timeline_truncated = _timeline(shown, related, relationships)
         truncated["timeline"] = timeline_truncated
-        features = compute_features(alert, evidence, related, relationships)
+        interval = rule.params.get("corroboration_seconds", 120)
+        features = compute_features(
+            alert,
+            evidence,
+            related,
+            relationships,
+            nat_ips=nat,
+            corroboration_seconds=interval if type(interval) is int and interval > 0 else 120,
+        )
         features["findings_on_evidence_services"] = service_findings
-        self._limitations(alert, rule, evidence, evidence_total, shown, profile, coverage, notes)
+        self._limitations(evidence, evidence_total, shown, profile, coverage, notes)
 
-        tagged = {e.simulation_run_id for e in evidence if e.simulation_run_id}
-        sims = sorted({*alert.simulation_run_ids, *tagged})[:16]
         draft = InvestigationContext(
             context_id="0" * 32,
             alert_id=alert.alert_id,
@@ -331,7 +337,6 @@ class ContextBuilder:
             coverage=coverage,
             missing_telemetry=notes.missing[:MAX_NOTES],
             limitations=notes.limitations[:MAX_NOTES],
-            simulation_run_ids=sims,
             truncated=dict(sorted(truncated.items())),
         )
         digest = context_input_hash(draft)
@@ -387,7 +392,9 @@ class ContextBuilder:
         ids: list[str] = list(alert.evidence_event_ids)
         seen = set(ids)
         try:
-            result = self.db.select(EVIDENCE_IDS_SQL, {"alert_id": alert.alert_id})
+            result = self.db.select(
+                EVIDENCE_IDS_SQL, {"alert_id": alert.alert_id, "version_at": alert.updated_at}
+            )
             stored = [str(r[0]) for r in result.rows]
         except Exception as exc:  # noqa: BLE001 - the alert array is still authoritative
             log.warning(
@@ -439,12 +446,11 @@ class ContextBuilder:
             "asset": alert.asset_id,
             "evidence": evidence_ids,
             "request_ids": sorted(profile.request_ids)[:200],
-            "pod_uids": sorted(profile.pod_uids)[:200],
-            "audit_ids": sorted(profile.audit_ids)[:200],
+            "pod_uids": sorted({uid for _, uid in profile.pod_uids})[:200],
+            "audit_ids": sorted({aid for _, aid in profile.audit_ids})[:200],
             "commit_shas": sorted({sha for _, sha in profile.commit_shas})[:200],
-            "run_ids": sorted(profile.run_ids)[:200],
+            "run_ids": sorted({rid for _, rid in profile.run_ids})[:200],
             "ips": sorted(profile.source_ips)[:100],
-            "sim_ids": sorted(profile.simulation_run_ids)[:16],
             "auth_principals": sorted(profile.authenticated_principals)[:50],
             "principals": sorted(profile.principals)[:100],
             "paths": sorted(paths)[:100],
@@ -595,9 +601,11 @@ class ContextBuilder:
             log.warning("asset_read_failed", error=sanitize_error(exc))
             row = None
         if row is None:
+            # The contract requires both values; the defaults are named, never presented as
+            # observed inventory.
             notes.limit(
-                "No asset inventory record for the alert asset; criticality and environment are "
-                "the contract defaults (medium, lab)."
+                "No asset inventory record for the alert asset: criticality and environment "
+                "are unknown and shown as the contract defaults."
             )
             return AssetSummary(
                 asset_id=alert.asset_id,
@@ -729,8 +737,11 @@ class ContextBuilder:
             {r.source_type.value for r in rule.requires}
             | {e.source_type for e in evidence if e.source_type in _SOURCE_TYPES}
         )
+        scoped_assets = _coverage_assets(alert.asset_id, evidence)
+        assets = sorted({alert.asset_id} | {a for group in scoped_assets.values() for a in group})
+        scope = {"assets": assets, "sources": sources}
         try:
-            collectors = self.db.select(COLLECTORS_SQL).dicts()
+            collectors = self.db.select(COLLECTORS_SQL, scope).dicts()
         except Exception as exc:  # noqa: BLE001 - coverage is optional context
             log.warning("coverage_read_failed", error=sanitize_error(exc))
             notes.limit("Collector health could not be read; telemetry coverage is unknown.")
@@ -738,23 +749,30 @@ class ContextBuilder:
         check_end = min(we, now)
         chosen: list[tuple[str, dict[str, Any] | None]] = []
         for source in sources:
-            matching = [c for c in collectors if source in (c.get("source_types") or [])]
-            local = [c for c in matching if _asset_related(str(c.get("asset_id")), alert.asset_id)]
-            picked = local or matching
-            if not picked:
-                chosen.append((source, None))
-            chosen.extend((source, c) for c in picked[:4])
+            source_assets = scoped_assets.get(source, {alert.asset_id})
+            for asset in sorted(source_assets):
+                matching = [
+                    c
+                    for c in collectors
+                    if c.get("asset_id") == asset and source in (c.get("source_types") or [])
+                ]
+                if not matching:
+                    chosen.append((source, None))
+                chosen.extend((source, c) for c in matching[:4])
         ids = sorted({str(c["collector_id"]) for _, c in chosen if c is not None})
-        window_stats: dict[str, tuple[int, int]] = {}
-        gap_sources: set[str] = set()
+        window_stats: dict[tuple[str, str], tuple[int, int]] = {}
+        gap_sources: set[tuple[str, str]] = set()
         try:
             if ids:
-                for row in self.db.select(
-                    COLLECTOR_WINDOW_SQL, {"ids": ids, "ws": ws, "we": check_end}
+                for cid, asset, bad, reports in self.db.select(
+                    COLLECTOR_WINDOW_SQL, {"ids": ids, "assets": assets, "ws": ws, "we": check_end}
                 ).rows:
-                    window_stats[str(row[0])] = (int(row[1]), int(row[2]))
+                    window_stats[(str(cid), str(asset))] = (int(bad), int(reports))
             gap_sources = {
-                str(r[0]) for r in self.db.select(GAP_EVENTS_SQL, {"ws": ws, "we": check_end}).rows
+                (str(asset), str(source))
+                for asset, source in self.db.select(
+                    GAP_EVENTS_SQL, {**scope, "ws": ws, "we": check_end}
+                ).rows
             }
         except Exception as exc:  # noqa: BLE001 - partial coverage is still useful
             log.warning("coverage_window_read_failed", error=sanitize_error(exc))
@@ -769,12 +787,12 @@ class ContextBuilder:
                         status=HealthStatus.UNKNOWN,
                         stale=True,
                         gap_during_window=True,
-                        note="No collector has reported health for this source type.",
+                        note="No collector health report for this source and asset.",
                     )
                 )
                 continue
             entry = _coverage_entry(
-                source, collector, alert, ws, check_end, now, window_stats, gap_sources
+                source, collector, ws, check_end, now, window_stats, gap_sources
             )
             out.append(entry)
         out.sort(key=lambda c: (c.source_type, c.collector_id or ""))
@@ -808,6 +826,7 @@ class ContextBuilder:
                 RULE_RUN_MISSING_SQL,
                 {
                     "rule_id": alert.rule_id,
+                    "version": alert.rule_version,
                     "status": RuleRunStatus.SUCCEEDED.value,
                     "ws": alert.window_start,
                     "we": alert.window_end,
@@ -817,15 +836,13 @@ class ContextBuilder:
                 if str(source) in _SOURCE_TYPES:
                     notes.miss(
                         f"{int(runs)} evaluation(s) of {rule.rule_id} overlapping the alert found "
-                        f"no {source} events in their window."
+                        f"no {source} events across monitored assets in their window."
                     )
         except Exception as exc:  # noqa: BLE001 - optional context
             log.warning("rule_run_read_failed", error=sanitize_error(exc))
 
     def _limitations(
         self,
-        alert: DetectionAlert,
-        rule: RuleMetadata,
         evidence: Sequence[EventRecord],
         evidence_total: int,
         shown: Sequence[EventRecord],
@@ -857,11 +874,6 @@ class ContextBuilder:
             notes.limit(
                 "At least one telemetry source is stale or had a gap during the window: absence "
                 "of related events is not evidence of absence."
-            )
-        if alert.simulation_run_ids:
-            notes.limit(
-                "Simulation-tagged telemetry: genuine lab telemetry produced by an ExtorQ "
-                "scenario (run " + ", ".join(alert.simulation_run_ids[:4]) + ")."
             )
 
 
@@ -937,13 +949,22 @@ def _timeline(
     return entries, len(related) > budget
 
 
-def _asset_related(collector_asset: str, alert_asset: str) -> bool:
-    """Same asset, or one is the parent of the other (cluster vs node / namespace)."""
-    return (
-        collector_asset == alert_asset
-        or alert_asset.startswith(collector_asset + "/")
-        or collector_asset.startswith(alert_asset + "/")
-    )
+def _coverage_assets(alert_asset: str, evidence: Sequence[EventRecord]) -> dict[str, set[str]]:
+    """An OTel report covers only the node an event was observed on."""
+    scopes: dict[str, set[str]] = {}
+    for event in evidence:
+        if event.source_type not in {"k8s.audit", "k8s.container_log"}:
+            continue
+        if not alert_asset.startswith("k8s:") or not assets_related(alert_asset, event.asset_id):
+            continue
+        scope = scopes.setdefault(event.source_type, set())
+        node = event.k8s_node
+        cluster = event.asset_id.split("/node/", 1)[0]
+        if node and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,252}", node):
+            scope.add(f"{cluster}/node/{node}")
+        else:
+            scope.add(event.asset_id)
+    return scopes
 
 
 def _asset_summary(row: Mapping[str, Any], fallback_type: AssetType) -> AssetSummary:
@@ -959,34 +980,33 @@ def _asset_summary(row: Mapping[str, Any], fallback_type: AssetType) -> AssetSum
 def _coverage_entry(
     source: str,
     collector: Mapping[str, Any],
-    alert: DetectionAlert,
     ws: datetime,
     check_end: datetime,
     now: datetime,
-    window_stats: Mapping[str, tuple[int, int]],
-    gap_sources: set[str],
+    window_stats: Mapping[tuple[str, str], tuple[int, int]],
+    gap_sources: set[tuple[str, str]],
 ) -> SourceCoverage:
     cid = str(collector["collector_id"])
+    asset = str(collector["asset_id"])
     interval = max(1, int(collector.get("interval_seconds") or 0))
     last_success = collector.get("last_success_at")
     if not isinstance(last_success, datetime):
         last_success = None
     stale = last_success is None or (now - last_success).total_seconds() > 3 * interval
-    bad, reports = window_stats.get(cid, (0, 0))
+    bad, reports = window_stats.get((cid, asset), (0, 0))
     span = (check_end - ws).total_seconds()
     no_reports = reports == 0 and span > 3 * interval
-    gap = bad > 0 or source in gap_sources or no_reports
+    reported_gap = (asset, source) in gap_sources
+    gap = bad > 0 or reported_gap or no_reports
     reasons: list[str] = []
     if stale:
         reasons.append("stale: no successful collection within 3 x interval")
     if bad:
         reasons.append("collector reported failed/degraded status during the window")
-    if source in gap_sources:
+    if reported_gap:
         reasons.append("a telemetry gap was reported during the window")
     if no_reports:
         reasons.append("no health report during the window")
-    if not _asset_related(str(collector.get("asset_id")), alert.asset_id):
-        reasons.append("health reported by a collector of another asset")
     lag = collector.get("lag_seconds")
     return SourceCoverage(
         source_type=source,

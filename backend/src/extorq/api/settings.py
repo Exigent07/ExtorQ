@@ -8,10 +8,13 @@ Environment variables (prefix ``EXTORQ_API_``):
 * ``EXTORQ_API_SERVICE_TOKEN``: the token itself (discouraged; use the file).
 * ``EXTORQ_API_ENABLE_DOCS``: serve ``/api/v1/openapi.json`` and ``/api/v1/docs`` (default off).
 * ``EXTORQ_API_MAX_BODY_BYTES``, ``EXTORQ_API_PIPELINE_STALE_SECONDS``,
-  ``EXTORQ_API_SUMMARY_REQUESTS_PER_MINUTE``, ``EXTORQ_API_SERVICE_STALE_SECONDS``,
+  ``EXTORQ_API_AI_HEALTH_WINDOW_HOURS``, ``EXTORQ_API_SERVICE_STALE_SECONDS``,
   ``EXTORQ_API_ASSET_STALE_SECONDS``, ``EXTORQ_API_ASSET_RETIRE_SECONDS``,
   ``EXTORQ_API_CACHE_TTL_SECONDS``, ``EXTORQ_API_CACHE_MAX_ENTRIES``: operational bounds
   (see field docs).
+
+Unknown ``EXTORQ_API_*`` variables are ignored (``extra="ignore"``), so a deployment that
+still sets a removed setting keeps starting.
 
 ClickHouse credentials are not read here: :func:`extorq.storage.clickhouse.get_client`
 (owned by the platform layer) resolves the ``api_ro`` / ``api_writer`` identities and
@@ -49,9 +52,7 @@ class ApiSettings(BaseSettings):
     max_body_bytes: int = Field(default=64 * 1024, ge=1024, le=1024 * 1024)
     #: A pipeline component whose latest health report is older than this is "stale".
     pipeline_stale_seconds: int = Field(default=300, ge=30, le=86400)
-    #: Per-user bound on POST /alerts/{id}/summary (protects the paid AI budget from UI loops).
-    summary_requests_per_minute: int = Field(default=6, ge=1, le=120)
-    #: Window used for AI provider health statistics.
+    #: Window of the Jev assessment statistics in GET /health (``status_counts``).
     ai_health_window_hours: int = Field(default=24, ge=1, le=24 * 30)
     #: A service/instance record not refreshed by discovery for longer than this is
     #: reported as stale, and a service reported ``monitored`` is then shown as

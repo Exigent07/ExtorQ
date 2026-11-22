@@ -1,12 +1,12 @@
 """AI storage path against a real, throwaway ClickHouse (Docker; skipped without it).
 
-Starts ``clickhouse/clickhouse-server:26.8.42.13`` as container ``extorq-e-store-ch``
-(label ``extorq.owner=e``) on a random 127.0.0.1 port, applies migrations 0001 and 0004,
-and exercises, with fake AI providers (no network beyond the local container):
+Starts ``clickhouse/clickhouse-server:26.8.42.13`` as container ``extorq-ai-store-ch``
+(label ``extorq.owner=ai``) on a random 127.0.0.1 port, applies migrations 0001 and 0004,
+and exercises, with a fake Jev client (no network beyond the local container):
 
 * C2's ``extorq.correlation.store`` (save + hash-verified load) via ``extorq.ai.context_source``;
 * ``extorq.ai.store`` SQL (insert, list, reuse lookup, attempt counting, pending queue, health);
-* ``AIService.request_summary`` and ``TriageWorker.run_cycle`` end to end.
+* ``AIService.request_triage`` and ``TriageWorker.run_cycle`` end to end.
 
 All rows are SYNTHETIC (dataset contexts) and live only in the throwaway container,
 which is removed afterwards. The admin password is random, passed through a 0600
@@ -31,21 +31,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from ai_fakes import (
-    FakeGeminiClient,
-    FakeGeminiResponse,
-    answering_client,
-    enabled_settings,
-    gemini_key,
-    jev_key,
-    load_dataset_records,
-    summary_json,
-)
+from ai_fakes import answering_client, enabled_settings, jev_key, load_dataset_records
 
 from extorq.ai import store
-from extorq.ai.budget import BudgetGuard, CooldownTracker
+from extorq.ai.budget import BudgetGuard
 from extorq.ai.context_source import load_latest_context
-from extorq.ai.gemini import GeminiSummaryProvider
 from extorq.ai.jev import TRIAGE_PROMPT_VERSION, JevTriageProvider
 from extorq.ai.service import AIService
 from extorq.ai.worker import TriageWorker
@@ -57,8 +47,9 @@ from extorq.contracts.identity import context_id as make_context_id
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 IMAGE = "clickhouse/clickhouse-server:26.8.42.13"
-CONTAINER = "extorq-e-store-ch"
-OWNER_LABEL = "extorq.owner=e"
+CONTAINER = "extorq-ai-store-ch"
+OWNER = "ai"
+OWNER_LABEL = f"extorq.owner={OWNER}"
 MIGRATIONS = ("0001_core_tables.sql", "0004_services.sql")
 ROLE_RE = re.compile(r"\bTO\s+(extorq_role_[a-z_]+)")
 
@@ -92,8 +83,8 @@ def _remove_own_stale(docker: str) -> None:
     for line in out.splitlines():
         parts = line.split()
         if parts and parts[0] == CONTAINER:
-            if parts[1:] != ["e"]:
-                raise RuntimeError(f"{CONTAINER} exists but is not owned by agent E")
+            if parts[1:] != [OWNER]:
+                raise RuntimeError(f"{CONTAINER} exists but is not owned by agent {OWNER}")
             _run([docker, "rm", "-f", CONTAINER])
 
 
@@ -106,11 +97,11 @@ def clickhouse() -> Iterator[Any]:
 
     _remove_own_stale(docker)
     password = secrets.token_urlsafe(24)
-    with tempfile.TemporaryDirectory(prefix="extorq-e-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="extorq-ai-") as tmp:
         env_file = Path(tmp) / "ch.env"
         fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as handle:
-            handle.write("CLICKHOUSE_USER=eadmin\n")
+            handle.write("CLICKHOUSE_USER=aiadmin\n")
             handle.write(f"CLICKHOUSE_PASSWORD={password}\n")
             handle.write("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1\n")
         _run(
@@ -144,7 +135,7 @@ def clickhouse() -> Iterator[Any]:
         client = clickhouse_connect.get_client(
             host="127.0.0.1",
             port=port,
-            username="eadmin",
+            username="aiadmin",
             password=password,
             database="extorq",
             connect_timeout=10,
@@ -209,11 +200,7 @@ def test_assessment_sql_round_trip(clickhouse: Any) -> None:
     listed = store.list_assessments(clickhouse, ctx.alert_id)
     assert listed == [first], "FINAL collapses the duplicate; rows round-trip exactly"
     assert store.count_attempts_since(clickhouse, AIProvider.JEV, now - timedelta(hours=1)) == 1
-    assert store.count_attempts_since(clickhouse, AIProvider.GEMINI, now - timedelta(hours=1)) == 0
-    last = store.last_attempt_at(
-        clickhouse, alert_id=ctx.alert_id, provider=AIProvider.JEV, task=AITask.TRIAGE
-    )
-    assert last == now
+    assert store.count_attempts_since(clickhouse, AIProvider.JEV, now + timedelta(seconds=1)) == 0
     reuse = dict(
         alert_id=ctx.alert_id, provider=AIProvider.JEV, task=AITask.TRIAGE,
         prompt_version=TRIAGE_PROMPT_VERSION, context_input_hash=ctx.input_hash,
@@ -286,32 +273,24 @@ def test_pipeline_health_insert(clickhouse: Any) -> None:
     assert json.loads(rows[0][3])["cycle_processed"] == 1
 
 
-def test_summary_service_end_to_end(clickhouse: Any) -> None:
+def test_triage_service_end_to_end(clickhouse: Any) -> None:
+    """``extorq ai triage``: one paid call, stored, then reused from storage."""
     from extorq.correlation.store import save_context
 
     _truncate(clickhouse)
     ctx = _store_ready("SSH-S3")
     save_context(clickhouse, ctx)
-
-    def respond(contents: Any, config: Any) -> FakeGeminiResponse:
-        line = contents.split("ALLOWED_EVIDENCE_IDS (cite only these): ")[1].split("\n")[0]
-        return FakeGeminiResponse(summary_json(json.loads(line)))
-
-    client = FakeGeminiClient(respond)
+    client = answering_client()
     settings = enabled_settings()
     service = AIService(
         settings,
         read_client=clickhouse,
         write_client=clickhouse,
-        gemini=GeminiSummaryProvider(
-            settings, key=gemini_key(), client_factory=lambda k, s: client
-        ),
-        cooldowns=CooldownTracker(),
+        jev=JevTriageProvider(settings, key=jev_key(), client_factory=lambda k, s: client),
     )
-    first = service.request_summary(ctx.alert_id, "analyst:alice")
-    assert first.status is AIStatus.OK
-    assert first.validation is not None and first.validation.evidence_ids_rejected == 0
-    second = service.request_summary(ctx.alert_id, "analyst:bob")
+    first = service.request_triage(ctx.alert_id, "analyst:alice")
+    assert first.status is AIStatus.OK and first.triage is not None
+    second = service.request_triage(ctx.alert_id, "analyst:bob")
     assert second.assessment_id == first.assessment_id, "reused from storage"
     assert len(client.calls) == 1
     assert store.list_assessments(clickhouse, ctx.alert_id) == [first]

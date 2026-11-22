@@ -6,9 +6,8 @@
 #   logs/audit:      kube-apiserver audit log (raw JSON line kept as the body)
 #   -> otlp_http (JSON) -> ExtorQ ingest gateway /v1/otlp/v1/logs (TLS, bearer token)
 #
-# Durability: file_log read offsets AND the exporter's sending queue are persisted
-# by the file_storage extension in /var/lib/extorq-otel (node hostPath), so a pod
-# restart resumes from the last checkpoint and queued batches survive.
+# File offsets and the sending queue share node-persistent file_storage. Batching
+# runs at the exporter queue, downstream of the durable enqueue boundary.
 extensions:
   health_check:
     endpoint: ${env:POD_IP}:13133
@@ -30,9 +29,13 @@ receivers:
   file_log/containers:
     include:
       - /var/log/pods/*/*/*.log
+      - /var/log/pods/*/*/*.log.*
     exclude:
       # Never read our own output (feedback loop).
-      - /var/log/pods/extorq-system_extorq-otel-collector-*/*/*.log
+      - /var/log/pods/extorq-system_extorq-otel-collector-*/*/*.log*
+      # The kubelet writes temporary files during compression.
+      - /var/log/pods/*/*/*.tmp
+    compression: auto
     start_at: beginning
     include_file_path: true
     include_file_name: false
@@ -45,13 +48,15 @@ receivers:
       enabled: true
       initial_interval: 1s
       max_interval: 30s
-      max_elapsed_time: 5m
+      # Pause on downstream rejection instead of advancing a failed read offset.
+      max_elapsed_time: 0s
     operators:
       # CRI log format parser: timestamp, stream (log.iostream), partial-line
       # recombination, and k8s.{namespace,pod,container}.* from the file path.
       - type: container
         id: container-parser
         add_metadata_from_filepath: true
+        max_log_size: 16384
 
   file_log/audit:
     include:
@@ -70,7 +75,20 @@ receivers:
       enabled: true
       initial_interval: 1s
       max_interval: 30s
-      max_elapsed_time: 5m
+      max_elapsed_time: 0s
+
+  prometheus/health:
+    config:
+      scrape_configs:
+        - job_name: extorq-otel-health
+          scrape_interval: 30s
+          scrape_timeout: 5s
+          static_configs:
+            - targets: ["127.0.0.1:8888"]
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: otelcol_(receiver_(accepted|refused)_log_records|exporter_(sent_log_records|send_failed_log_records|enqueue_failed_log_records|queue_(size|capacity)))(_total)?
+              action: keep
 
 processors:
   memory_limiter:
@@ -145,13 +163,14 @@ processors:
         value: otelcol-contrib/0.165.0
         action: upsert
 
-  batch:
-    # Gateway limits: 1000 records and 4 MiB (decompressed) per request; a 413 is a
-    # permanent error for the exporter, so batches stay small: 100 records x typical
-    # 1-10 KB audit lines, container lines <= 16 KiB.
-    send_batch_size: 100
-    send_batch_max_size: 100
-    timeout: 2s
+  resource/health:
+    attributes:
+      - key: k8s.node.name
+        value: ${env:K8S_NODE_NAME}
+        action: upsert
+      - key: k8s.cluster.name
+        value: extorq-lab
+        action: upsert
 
 exporters:
   otlp_http/extorq:
@@ -170,14 +189,39 @@ exporters:
       randomization_factor: 0.5
       multiplier: 2
       max_interval: 60s
-      # Bounded: a batch that still fails after 2 h is dropped and counted in
-      # otelcol_exporter_send_failed_log_records; later batches stay queued on disk.
+      # The Collector logs a terminal drop if the retry budget is exhausted.
       max_elapsed_time: 2h
     sending_queue:
       enabled: true
       storage: file_storage
       num_consumers: 2
+      sizer: requests
       queue_size: 2000
+      block_on_overflow: true
+      batch:
+        sizer: items
+        # Two 256 KiB audit lines fit within the 4 MiB JSON gateway limit even
+        # at the worst case of six output bytes per input byte, plus metadata.
+        min_size: 2
+        max_size: 2
+        flush_timeout: 250ms
+
+  otlp_http/health:
+    metrics_endpoint: https://host.docker.internal:8443/v1/otlp/v1/metrics
+    encoding: json
+    compression: gzip
+    timeout: 5s
+    auth:
+      authenticator: bearertokenauth/extorq
+    tls:
+      ca_file: /etc/extorq/gateway-ca/ca.crt
+      min_version: "1.2"
+    # A sample only describes the current process. A later scrape replaces a
+    # failed one, independently of log queue progress.
+    retry_on_failure:
+      enabled: false
+    sending_queue:
+      enabled: false
 
 service:
   extensions: [health_check, file_storage, bearertokenauth/extorq]
@@ -186,7 +230,7 @@ service:
       level: info
       encoding: json
     metrics:
-      level: normal
+      level: detailed
       readers:
         - pull:
             exporter:
@@ -196,9 +240,13 @@ service:
   pipelines:
     logs/containers:
       receivers: [file_log/containers]
-      processors: [memory_limiter, k8s_attributes, resource/containers, batch]
+      processors: [memory_limiter, k8s_attributes, resource/containers]
       exporters: [otlp_http/extorq]
     logs/audit:
       receivers: [file_log/audit]
-      processors: [memory_limiter, resource/audit, batch]
+      processors: [memory_limiter, resource/audit]
       exporters: [otlp_http/extorq]
+    metrics/health:
+      receivers: [prometheus/health]
+      processors: [resource/health]
+      exporters: [otlp_http/health]

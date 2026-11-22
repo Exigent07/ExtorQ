@@ -15,7 +15,7 @@ its own thread) as ONE detached background process:
 * ``status`` runner state (pid, uptime) plus ``extorq-collect status`` (outbox depth,
   dead letters, last health per collector). Exit 0 running, 3 not running (LSB).
 
-This is a lab convenience, not a service manager: it never installs launchd jobs or any
+This is an operator convenience, not a service manager: it never installs launchd jobs or any
 other persistence and restarts nothing on its own. Standard library only; prints pids,
 paths and states, never tokens or telemetry.
 """
@@ -74,7 +74,7 @@ def _elapsed_of(pid: int) -> str | None:
 
 
 def _is_runner(command: str | None) -> bool:
-    """True for ``... extorq-collect run ...`` (not ``status``/``flush``/``sim-record``)."""
+    """True for ``... extorq-collect run ...`` (not ``status`` or ``flush``)."""
     tokens = (command or "").split()
     return any(
         token.endswith("extorq-collect") and tokens[index + 1] == "run"

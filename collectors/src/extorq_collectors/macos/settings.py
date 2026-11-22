@@ -72,10 +72,23 @@ class PostureSettings(_Strict):
     command_timeout_seconds: float = Field(default=20.0, gt=0, le=300)
 
 
+class ListenerSettings(_Strict):
+    """Listening sockets (netstat, lsof fallback): their own fast source.
+
+    Listeners open and close quickly and an all-interfaces listener is security relevant
+    (MAC-003), so they are diffed every minute instead of with the slower inventory.
+    """
+
+    enabled: bool = True
+    interval_seconds: int = Field(default=60, ge=10, le=3600)
+    include_udp: bool = True
+    full_inventory_seconds: int = Field(default=3600, ge=300, le=86400)
+    command_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+
+
 class InventorySettings(_Strict):
     enabled: bool = True
     interval_seconds: int = Field(default=300, ge=60, le=86400)
-    include_udp: bool = True
     #: Full process arguments are a privacy risk (tokens on command lines); off by default.
     include_process_args: bool = False
     #: Kernel-reported executable paths (proc_pidpath) instead of argv[0] only.
@@ -87,9 +100,30 @@ class InventorySettings(_Strict):
 
 
 class ApplicationsSettings(_Strict):
+    """Hourly full application inventory (system_profiler; slow, whole disk)."""
+
     enabled: bool = True
     interval_seconds: int = Field(default=3600, ge=300, le=86400)
     command_timeout_seconds: float = Field(default=180.0, gt=0, le=600)
+
+
+class SoftwareSettings(_Strict):
+    """Application-folder scan for ``software.installed`` / ``software.removed`` (MAC-005)."""
+
+    enabled: bool = True
+    interval_seconds: int = Field(default=60, ge=10, le=3600)
+    #: Also scan ~/Applications (scope "user") besides /Applications.
+    include_user_applications: bool = True
+    #: A new bundle is reported once its entries were quiet this long (half-copied bundles
+    #: would otherwise fail signature verification: a false positive).
+    settle_seconds: int = Field(default=30, ge=0, le=600)
+    #: Upper bound on scans a new bundle can be deferred (settling or retried verification).
+    max_defer_scans: int = Field(default=5, ge=0, le=60)
+    #: codesign runs only for new bundles: at most this many per scan, within this much
+    #: wall-clock time (the rest wait for the next scan), each call bounded by the timeout.
+    max_signature_checks: int = Field(default=4, ge=1, le=100)
+    check_budget_seconds: float = Field(default=60.0, gt=0, le=600)
+    codesign_timeout_seconds: float = Field(default=20.0, gt=0, le=300)
 
 
 class ServicesSettings(_Strict):
@@ -114,10 +148,12 @@ class AssetSettings(_Strict):
 class MacOSSettings(_Strict):
     unified_log: UnifiedLogSettings = UnifiedLogSettings()
     launchd: LaunchdSettings = LaunchdSettings()
+    listeners: ListenerSettings = ListenerSettings()
     inventory: InventorySettings = InventorySettings()
     services: ServicesSettings = ServicesSettings()
     posture: PostureSettings = PostureSettings()
     applications: ApplicationsSettings = ApplicationsSettings()
+    software: SoftwareSettings = SoftwareSettings()
     asset: AssetSettings = AssetSettings()
 
     @classmethod

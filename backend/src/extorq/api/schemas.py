@@ -157,15 +157,14 @@ class AlertListItem(ApiModel):
     event_count: int
     entities: dict[str, str]
     mitre_techniques: list[str]
-    simulation_run_ids: list[str]
     created_at: datetime
     updated_at: datetime
     #: ``new`` when no analyst has acted on the alert yet (see ``analyst_state_recorded``).
     analyst_status: AnalystStatus
     analyst_state_recorded: bool
     assignee: str | None = None
-    #: Services whose telemetry is evidence for the alert (schema 1.1; empty when the
-    #: detector could not attribute the evidence to a service).
+    #: Services whose telemetry is evidence for the alert (empty when the detector could not
+    #: attribute the evidence to a service).
     service_ids: list[str] = Field(default_factory=list)
 
 
@@ -207,11 +206,10 @@ class AlertRecord(ApiModel):
     evidence_truncated: bool
     features: JsonObject | None = None
     mitre_techniques: list[str]
-    simulation_run_ids: list[str]
     created_at: datetime
     updated_at: datetime
     detector_version: str
-    #: Services whose telemetry is evidence for the alert (schema 1.1).
+    #: Services whose telemetry is evidence for the alert.
     service_ids: list[str] = Field(default_factory=list)
 
 
@@ -266,14 +264,12 @@ class EventListItem(ApiModel):
     gh_workflow_path: str | None = None
     gh_workflow_run_id: int | None = None
     gh_actor_login: str | None = None
-    #: Service attribution set by the producing adapter (schema 1.1; ``null`` when the
-    #: record could not be attributed to a service).
+    #: Service attribution set by the producing adapter (``null`` when the record could not
+    #: be attributed to a service).
     service_id: str | None = None
     service_name: str | None = None
     service_instance_id: str | None = None
     adapter_id: str | None = None
-    simulation_run_id: str | None = None
-    scenario_id: str | None = None
     #: Sanitized one-line message from the source (attacker-controllable text).
     message: str | None = None
 
@@ -326,6 +322,8 @@ class AlertDetailResponse(ApiModel):
     #: Evidence ids referenced by the alert that have no stored event (expired by TTL,
     #: not yet written, or lost). Shown explicitly, never silently dropped.
     unresolved_evidence_ids: list[str]
+    #: Unresolved ids whose known source event time is outside the events retention window.
+    expired_evidence_ids: list[str] = Field(default_factory=list)
     #: Distinct evidence ids known for the alert (``alert_evidence`` plus the alert array).
     evidence_total: int
     #: True when this response lists fewer evidence ids than ``evidence_total``.
@@ -370,17 +368,19 @@ class ContextResponse(ApiModel):
 
 
 class AssessmentListResponse(ApiModel):
+    """Advisory Jev triage assessments of one alert, newest first.
+
+    Jev never changes severity, suppresses, closes or counts anything: these records sit
+    next to the deterministic alert and cite the ``context_input_hash`` they were computed
+    from.
+    """
+
     alert_id: str
     items: list[AIAssessment]
     #: Stored assessment rows that failed contract validation (not shown).
     invalid_records: int
     #: ``ai.store`` when E's store module served the data, else ``direct`` (API query).
     source: Literal["ai.store", "direct"]
-
-
-class SummaryResponse(ApiModel):
-    alert_id: str
-    assessment: AIAssessment
 
 
 # ── Events ────────────────────────────────────────────────────────────────────────
@@ -399,14 +399,14 @@ class EventIngestInfo(ApiModel):
 
 
 class EventDetailResponse(ApiModel):
-    #: The validated SecurityEvent (contract schema 1.0 or 1.1) exactly as stored.
+    #: The validated SecurityEvent (contract schema 2.0) exactly as stored.
     event: SecurityEvent
     ingest: EventIngestInfo
     #: Alerts that cite this event as evidence.
     alert_ids: list[str]
 
 
-# ── Services (schema 1.1: Asset -> Service -> ServiceInstance) ─────────────────────
+# ── Services (Asset -> Service -> ServiceInstance) ────────────────────────────────
 
 #: Effective coverage of a service at request time:
 #: ``unsupported`` (no adapter exists), ``planned`` (extension point only, no telemetry),
@@ -720,7 +720,7 @@ class FindingItem(ApiModel):
     cvss_score: float | None = None
     remediation: str | None = None
     accepted_risk_reason: str | None = None
-    #: Service the finding applies to (schema 1.1): the attribution of the finding's LATEST
+    #: Service the finding applies to: the attribution of the finding's LATEST
     #: observation (``v_findings_current.service_id``). ``null`` when that observation
     #: carries none: an older attribution is cleared, never carried forward.
     service_id: str | None = None
@@ -753,7 +753,7 @@ class AssetDetailResponse(ApiModel):
     findings_summary: FindingsSummary
     findings: list[FindingItem]
     recent_alerts: list[AlertListItem]
-    #: Services discovered on this asset by coverage state and kind (schema 1.1). Full
+    #: Services discovered on this asset by coverage state and kind. Full
     #: list: ``GET /assets/{asset_id}/services``.
     services_summary: ServicesSummary
     #: Assets whose ``parent_asset_id`` is this asset, e.g. the Kubernetes nodes
@@ -937,12 +937,22 @@ class RuleHealthItem(ApiModel):
 
 
 class AIProviderHealth(ApiModel):
+    """One AI provider/task: configuration as the API process sees it, the state of the
+    component that actually runs it (the ai-worker for Jev triage) and recent outcomes."""
+
     provider: str
     task: str
-    #: Provider credential present (presence only; ``null`` when it cannot be determined).
+    #: Provider credential present *in the API process* (presence only; ``null`` when it
+    #: cannot be determined). The ai-worker may be configured differently.
     configured: bool | None = None
-    #: Feature flag state (``null`` when it cannot be determined).
+    #: Feature flag *in the API process* (``null`` when it cannot be determined).
     enabled: bool | None = None
+    #: Status of the newest fresh report of the component that runs the provider (the
+    #: ai-worker's ``pipeline_health`` row): ``disabled`` when the provider is turned off or
+    #: has no key there, else ``ok`` / ``degraded`` / ``failed``. ``null`` when no fresh report
+    #: exists. This, not ``enabled``, says whether assessments are being produced.
+    runtime_status: HealthStatus | None = None
+    runtime_reported_at: datetime | None = None
     window_hours: int
     status_counts: dict[str, int]
     last_assessment_at: datetime | None = None
@@ -1036,7 +1046,7 @@ class OverviewResponse(ApiModel):
     alerts_over_time: TimeSeriesResponse
     collection_health: CollectionHealthSummary
     recent_important_alerts: list[AlertListItem]
-    #: Service coverage across all assets (schema 1.1).
+    #: Service coverage across all assets.
     service_coverage: ServicesSummary
     #: Asset lifecycle and the retired assets left out of the rollups above.
     lifecycle: AssetLifecycleSummary

@@ -139,6 +139,8 @@ class AlertEvidence(ContractModel):
     event_id: HexId
     role: EvidenceRole
     added_at: UtcDatetime
+    #: Stored source event time verified by the detector. Legacy references may omit it.
+    event_time: UtcDatetime | None = None
 
 
 class RuleRunStatus(StrEnum):

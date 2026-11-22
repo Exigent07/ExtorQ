@@ -19,7 +19,7 @@ from github_fakes import FakeGitHub
 from extorq.contracts import INGEST_RECORD_ADAPTER
 from extorq_collectors.github.collector import GitHubCollector, GitHubCollectorError
 from extorq_collectors.github.state import RepoState, checkpoint_key
-from extorq_collectors.github.token import TOKEN_ENV, TOKEN_FILE_ENV, TokenUnavailable
+from extorq_collectors.github.token import TOKEN_FILE_ENV, TokenUnavailable
 from extorq_collectors.sdk.base import CollectorContext
 from extorq_collectors.sdk.config import CollectorConfig
 from extorq_collectors.sdk.state import StateStore
@@ -57,7 +57,6 @@ def token_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path.write_text(TOKEN, encoding="utf-8")
     path.chmod(0o600)
     monkeypatch.setenv(TOKEN_FILE_ENV, str(path))
-    monkeypatch.delenv(TOKEN_ENV, raising=False)
     return path
 
 
@@ -106,25 +105,12 @@ def test_collect_writes_validated_records_and_checkpoint_atomically(
     store.close()
 
 
-def test_gh_cli_fallback_is_flagged_in_health(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv(TOKEN_FILE_ENV, raising=False)
-    monkeypatch.delenv(TOKEN_ENV, raising=False)
-    from extorq_collectors.github import collector as collector_mod
-    from extorq_collectors.github.token import GH_CLI_WARNING, GitHubToken
-
-    monkeypatch.setattr(
-        collector_mod,
-        "resolve_token",
-        lambda **_kw: GitHubToken("gho_" + "C" * 36, "gh_cli", "oauth", (GH_CLI_WARNING,)),
-    )
+def test_gh_cli_fallback_cannot_be_enabled(tmp_path: Path) -> None:
     fake = lab_fake()
     ctx, store = make_context(tmp_path, {"repos": [fake.full_name], "gh_cli_token_fallback": True})
-    ctx.begin_cycle()
-    GitHubCollector(transport=fake.transport()).collect(ctx)
-    assert ctx.health_details["token_source"] == "gh_cli"
-    assert GH_CLI_WARNING in ctx.health_details["warnings"]
+    with pytest.raises(ValueError):
+        GitHubCollector(transport=fake.transport()).setup(ctx)
+    assert fake.requests == []
     store.close()
 
 
@@ -132,7 +118,6 @@ def test_no_repositories_is_reported_without_token_lookup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv(TOKEN_FILE_ENV, raising=False)
-    monkeypatch.delenv(TOKEN_ENV, raising=False)
     ctx, store = make_context(tmp_path, {"repos": []})
     ctx.begin_cycle()
     GitHubCollector().collect(ctx)
@@ -145,7 +130,6 @@ def test_missing_token_fails_cycle_naming_settings_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv(TOKEN_FILE_ENV, raising=False)
-    monkeypatch.delenv(TOKEN_ENV, raising=False)
     ctx, store = make_context(tmp_path, {"repos": ["Example-Org/extorq-lab"]})
     ctx.begin_cycle()
     with pytest.raises(TokenUnavailable) as info:

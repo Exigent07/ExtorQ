@@ -1,0 +1,16 @@
+Executable=/System/Applications/Calculator.app/Contents/MacOS/Calculator
+Identifier=com.apple.calculator
+Format=app bundle with Mach-O universal (arm64e arm64e.x1)
+CodeDirectory v=20400 size=3629 flags=0x0(none) hashes=103+7 location=embedded
+Platform identifier=26
+Signature size=4202
+Authority=macOS Software Signing
+Authority=Apple Code Signing Certification Authority
+Authority=Apple Root CA
+Signed Time=9 Aug 2026 at 9:20:01 AM
+Info.plist entries=35
+TeamIdentifier=not set
+Sealed Resources version=2 rules=2 files=0
+Internal requirements count=1 size=68
+Total signatures=1
+Chosen signature=1

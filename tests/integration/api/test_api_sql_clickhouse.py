@@ -166,12 +166,14 @@ def test_evidence_resolution(repo: ClickHouseRepository, dataset: Dataset) -> No
     refs = repo.evidence_refs(a1, 100)
     assert refs[0]["role"] == "trigger"
     assert refs[0]["event_id"] == dataset.event_ids["e1"]
+    assert dataset.event_ids["planted"] not in {ref["event_id"] for ref in refs}
     alert = repo.get_alert(a1)
     assert alert is not None
     assert repo.evidence_total(a1, alert["evidence_event_ids"]) == 3
     events = repo.events_by_ids([dataset.event_ids["e1"], dataset.event_ids["missing"]])
     assert [e["event_id"] for e in events] == [dataset.event_ids["e1"]]  # duplicate collapsed
     assert repo.alerts_citing_event(dataset.event_ids["e1"], 10) == [a1]
+    assert repo.alerts_citing_event(dataset.event_ids["planted"], 10) == []
     stored = repo.get_event(dataset.event_ids["e1"])
     assert stored is not None and '"event_id"' in stored["payload"]
 
@@ -203,7 +205,7 @@ def test_health_views(repo: ClickHouseRepository, dataset: Dataset) -> None:
     assert pipeline == {("writer", "synthetic-w1"), ("ingest", "synthetic-old")}
     since = dataset.now - timedelta(days=1)
     assert repo.ai_status_counts(since) == [
-        {"provider": "google-gemini", "task": "summary", "status": "timeout", "assessments": 1}
+        {"provider": "typesafe-jev", "task": "triage", "status": "timeout", "assessments": 1}
     ]
     last = repo.ai_latest()[0]
     assert last["last_status"] == "timeout" and last["last_ok_at"] is None

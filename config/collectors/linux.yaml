@@ -1,4 +1,4 @@
-# ExtorQ Linux collector (owner B1): agentless SSH collection from the lab VM through the
+# ExtorQ Linux collector: agentless SSH collection from the Ubuntu VM through the
 # read-only dispatch boundary (/usr/local/sbin/extorq-collect-dispatch on the VM).
 # No secrets here: the SSH key and the pinned known_hosts file are referenced by path
 # (relative paths resolve against the repository root). The gateway token is read by the

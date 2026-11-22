@@ -39,19 +39,20 @@ investigation context).
   and `{window_end:DateTime64(3, 'UTC')}` are mandatory; `{bucket_seconds:UInt32}` is
   available to `window_bucket` rules; every other placeholder must be declared in `params`
   with a value of the matching type (`String`, `(U)Int*`, `Float*`, `Bool`, `Array(...)`).
-* Tables: `events`, `assets`, `inventory_items`, `finding_observations`, `scan_runs`,
-  `simulation_runs` (optionally `extorq.`-qualified) and CTEs defined in the query.
+* Tables include `events`, `assets`, `inventory_items`, `finding_observations`,
+  `scan_runs` (optionally `extorq.`-qualified) and CTEs defined in the query.
 * Output columns: `group_key String`, `asset_id String`, `asset_type String`,
   `first_seen`/`last_seen DateTime64(3, 'UTC')`, `event_count UInt64`,
   `evidence_event_ids Array(String)` (bounded, earliest first), `entities Map(String, String)`,
   `features String` (JSON object), `confidence` (`high|medium|low`, from evidence
-  completeness), `simulation_run_ids Array(String)`, plus `bucket_start DateTime64(3, 'UTC')`
+  completeness), plus `bucket_start DateTime64(3, 'UTC')`
   (window_bucket) or `signature String` (event). Optional `supporting_event_ids` marks
   evidence with role `supporting` instead of `trigger`.
 * Duplicate safety: de-duplicate inputs by `event_id` (`LIMIT 1 BY event_id`) and count
   with `uniqExact`. The table is a ReplacingMergeTree, so rows may be duplicated until a
   merge.
-* Simulation-tagged events are never filtered out: scenario telemetry is genuine.
+* Controlled validation activity uses the same native sources and rule predicates as other
+  activity. Version 2 validation reports map action, verified event IDs and alert IDs.
 
 ### Static validation (`extorq rules validate`, `registry.py`, `sqlguard.py`)
 
@@ -68,7 +69,7 @@ the readonly ClickHouse identity, section 2). It rejects:
 * table functions (`url()`, `file()`, `remote()`, `s3()`, `mysql()`, ...), dictionary
   access, `system.*`, other databases, tables outside the allow-list, comma joins, CTE
   names that shadow a database object;
-* undeclared or mistyped parameters.
+* undeclared or mistyped parameters, or a top-level result cap.
 
 ## 2. Evaluation
 
@@ -103,14 +104,17 @@ Identities and privileges:
 
 | Step | ClickHouse identity |
 |---|---|
-| rule SQL | `extorq_rules_ro` (`readonly=1`, SELECT on the six telemetry tables only) |
+| rule SQL | `extorq_rules_ro` (`readonly=1`, SELECT on the approved telemetry tables) |
 | missing-source probe, existing alerts and evidence, service lookup | `extorq_detect` |
 | writes: `alerts`, `alert_evidence`, `rule_runs`, `detection_rules`, `pipeline_health`, contexts | `extorq_detect` |
 
 Every result row is validated (`alerts.parse_row`): asset id format, declared asset type,
 aware timestamps, at least one valid 32-hex evidence id, JSON features, confidence value.
-Malformed rows are rejected and counted in the run's error note; a missing output column
-fails the run.
+Before applying a batch, the detector resolves every cited ID to a single stored event
+identity and checks its asset, event-time window, and declared source and event type.
+Evidence associations retain the verified event timestamp. A malformed row, missing
+output column, or unverifiable
+evidence reference fails the run.
 
 ## 3. Alert identity, deduplication and late events
 
@@ -122,17 +126,19 @@ fails the run.
 * New identity: a new alert (`created_at = updated_at = now`).
 * Existing identity with new evidence (late events, overlapping windows): a new version
   with `created_at` preserved, `updated_at` strictly increased, `first_seen`/`last_seen`
-  widened, `event_count` never decreasing, confidence monotone, numeric features max,
+  widened, `event_count` never decreasing, confidence monotone within the same rule
+  version, numeric features max,
   boolean features OR, lists unioned. Only evidence ids never stored before get new
   `alert_evidence` rows. A row that adds nothing writes nothing (re-running a window is
   idempotent).
 * `window_bucket` continuity: a row whose activity is continuous with an existing alert of
-  the same group (gap <= `bucket_seconds`, total span <= `max_episode_seconds`, default
+  the same asset and group (gap <= `bucket_seconds`, total span <= `max_episode_seconds`, default
   3600 s) extends that alert, so a burst crossing a bucket boundary yields one alert.
 * The alert array `evidence_event_ids` holds at most 500 ids (`evidence_truncated = true`
   beyond); `alert_evidence` holds the full set.
-* `alert_evidence` rows are written before the alert version, so an interrupted write is
-  repaired by the next run (stored orphans are part of the evidence set).
+* `alert_evidence` rows are written before the alert version with its publication
+  timestamp. If publishing the alert is interrupted, a matching subsequent evaluation
+  reuses the stored associations and publishes the missing alert update.
 * `service_ids` (contract 1.1): the services of the evidence events: the producing service
   (`events.service_id`, falling back to the validated `payload` JSON) and the subject
   service the record is about (`attributes.subject_service_id`, e.g. the unit's own service
@@ -144,17 +150,12 @@ fails the run.
 
 ### Rule upgrades and stored alerts
 
-A new rule version applies to every evaluation after the detector loads it; it does not
-rewrite stored alerts. Because evidence only grows (an alert never silently loses
-evidence), an alert keeps the evidence and union-merged list features that an older
-version attached, and a re-evaluation that adds nothing writes no new version (so the
-summary and features of an old alert also stay as written). Live example: CORR-002 alert
-`b46da3805d1c6f17b6c1ed363b49a777` was created by v1.0.0 with an auditd `unlinkat` by
-`/usr/bin/rm` (a cleanup) as persistence evidence; v1.2.0 no longer counts deletions, still
-finds the chain (the unit creation at 15:07:11), and the stored alert still lists
-`/usr/bin/rm` in `persistence_writers`. Use the dry run (below) to see what the current
-version produces for any stored alert. Revalidating stored evidence on a version upgrade
-(a `superseded` evidence role) is **planned** (C2-IC-6; needs a contract change).
+When a different rule version matches the same alert identity, the detector publishes
+the confidence, features, and summary from that evaluation. The first creation time
+and accumulated evidence associations preserve the alert history. The latest evidence
+array prioritizes the events selected by the new version. Alerts that do not match
+the new version retain their last published version. A dry run shows the evidence the
+current rule would use. Explicit evidence roles for superseded references are **planned**.
 
 ### Dry run against stored telemetry
 
@@ -179,6 +180,14 @@ historical alerts after one.
   bounded), and `missing_sources` = required source types (optional ones included) with
   no events at all in the window.
 * A failing rule never stops the others (each evaluation is isolated).
+* The engine probes up to one row beyond `MAX_ROWS_PER_RULE`. When the probe exceeds
+  that size, a single full-window query streams the ordered result in bounded batches.
+  SQL window functions and aggregates still see the original event window. Completed
+  batches can publish alerts while the query is running. A stream or validation error
+  records a failed run and preserves the last-success watermark. The running detector
+  retries the same saturated window at the next scheduled evaluation. A process
+  restart uses the configured late-data catch-up horizon. On large runs, alert update
+  counts reflect versions written per batch.
 * ClickHouse unavailability: queries retry transient errors with exponential backoff and
   full jitter (3 attempts), then the run fails with a sanitised error. Rule-run records
   are kept in a bounded in-memory backlog (1000) and flushed later; dropped ones are
@@ -205,7 +214,7 @@ uv run extorq context build <alert_id>            # (re)build + store a context
 ```
 
 Settings (`EXTORQ_DETECTOR_*`, no secrets): `RULES_DIR`, `INGEST_DELAY_SECONDS`,
-`MAX_ROWS_PER_RULE` (1000), `MAX_EPISODE_SECONDS`, `POLL_SECONDS`,
+`MAX_ROWS_PER_RULE` (result batch size, 1000), `MAX_EPISODE_SECONDS`, `POLL_SECONDS`,
 `HEALTH_INTERVAL_SECONDS`, `INSTANCE`, `CORRELATION_ENABLED`, `MAX_CONTEXTS_PER_RUN`,
 `STARTUP_ATTEMPTS`. ClickHouse credentials come from A's settings (password files).
 
@@ -216,14 +225,14 @@ Settings (`EXTORQ_DETECTOR_*`, no secrets): `RULES_DIR`, `INGEST_DELAY_SECONDS`,
 random loopback port (throwaway admin password via a 0600 env file deleted after start;
 the name is unique per run, so two sessions running the suite at once never touch each
 other's container, and only leftovers of processes that no longer exist are removed), apply
-migrations 0001, 0003 and 0004, create users mirroring `extorq_rules_ro` (readonly) and
+migrations 0001, 0003–0006 and 0008–0009, create users mirroring `extorq_rules_ro` (readonly) and
 `extorq_detect`, and for each declared test case:
 
 1. truncate, load the JSONL fixture (validated by the contracts), shift it by whole days
    (bucket alignment preserved), insert through A's `extorq.storage.rows.to_row`;
 2. run the real `DetectionEngine` for that rule at a fixed `now`;
 3. assert the expectation (alert / no alert, count, confidence, entities, expected feature
-   values, summary substrings), simulation-tag propagation and integrity (evidence ids
+   values, summary substrings) and integrity (evidence ids
    exist in `events`, `alert_evidence` holds the full set, `event_count >= evidence`).
 
 The container is always removed. Engine properties are tested on the same server:
@@ -231,7 +240,8 @@ duplicate replay is idempotent for every rule, late events extend (not duplicate
 alerts, identities are stable across fresh detector state, a failing rule is recorded
 and isolated, rule SQL cannot read `alerts` (privileges), missing sources are reported,
 `service_ids` come from the evidence (and shadowing references are ignored), late
-telemetry is caught up exactly once, and the dry run writes nothing.
+telemetry is caught up exactly once, a saturated result matches the original window,
+and the dry run writes nothing.
 
 Fixtures are synthetic and labelled (`labels: {"extorq.fixture": "synthetic"}`,
 collector/parser `fixture-synthetic`, RFC 5737 addresses), regenerated deterministically

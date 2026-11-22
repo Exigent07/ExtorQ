@@ -1,0 +1,106 @@
+rule_id: K8S-004
+version: 1.0.0
+title: Kubernetes secret enumeration by a non-system identity
+description: >-
+  An identity that is not a control-plane component successfully listed or watched secrets
+  across the whole cluster (kubectl get secrets -A: one request returns every secret), or
+  listed secrets in at least three different namespaces within ten minutes (the same
+  enumeration done namespace by namespace). Secrets hold service account tokens, registry
+  credentials and application passwords, so cluster-wide access is credential access.
+  Control-plane identities and kube-system service accounts are excluded; service accounts
+  of workload namespaces are not, because a stolen workload token enumerating secrets is the
+  main case. Only successful requests count. Confidence: high (the kube-apiserver audit
+  record is authoritative for who received which secrets).
+severity: high
+status: stable
+mitre_techniques: [T1552.007, T1613]
+asset_types: [kubernetes_cluster]
+requires:
+  - source_type: k8s.audit
+    event_types: [k8s.api.request]
+schedule:
+  interval_seconds: 60
+  lookback_seconds: 1800
+  late_tolerance_seconds: 600
+dedup:
+  strategy: window_bucket
+  bucket_seconds: 900
+group_by: [cluster, user, variant]
+params:
+  window_seconds: 600
+  min_namespaces: 3
+  # Exact identities of reviewed operators that watch secrets cluster-wide (cert-manager,
+  # external-secrets, backup tools). Never a prefix or pattern.
+  allowed_identities: []
+false_positives:
+  - >-
+    Operators and controllers that legitimately watch all secrets (cert-manager,
+    external-secrets, Velero, ingress controllers). Handling: their exact service account
+    identity (system:serviceaccount:<namespace>:<name>) goes into allowed_identities after
+    review. A service account identity is issued by the cluster for that namespace, so
+    reusing it requires that namespace's token, not just a chosen name.
+  - >-
+    An administrator running kubectl get secrets -A while troubleshooting. Handling: alerted
+    by design (it exposes every credential of the cluster); one alert per person and 15-minute
+    episode.
+  - >-
+    Control-plane components (kube-controller-manager, the API server, kubelets) and
+    kube-system controllers watch secrets continuously. Handling: excluded by identity
+    prefix (system:* except workload service accounts, and system:serviceaccount:kube-system:*);
+    those identities require control-plane credentials.
+blind_spots:
+  - >-
+    Targeted reads of individual secrets by name (get), secrets read through pods that mount
+    them (the kubelet fetches them), and access through etcd or node credentials.
+  - >-
+    Denied attempts (403) are not alerted; they remain visible in the audit log and in the
+    investigation context.
+  - >-
+    A stolen kube-system service account token or a reviewed operator's token is excluded
+    by design.
+  - Sweeps slower than three namespaces in ten minutes.
+references:
+  - https://attack.mitre.org/techniques/T1552/007/
+  - https://kubernetes.io/docs/concepts/security/secrets-good-practices/
+query: K8S-004.sql
+summary_template: >-
+  {user} enumerated secrets ({variant}) on {asset_id}: {requests} successful request(s),
+  verbs {verbs}, namespaces {namespaces}; service account: {service_account}; impersonating
+  {impersonated_users}
+tests:
+  - name: matrix-kubectl-get-secrets-all-namespaces
+    description: >-
+      Matrix positive: kubectl get secrets -A by the cluster administrator (a captured secret
+      list reshaped to the cluster-wide, successful request kubectl sends).
+    fixture: tests/K8S-004/positive_matrix_cluster_wide_list.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {user: kubernetes-admin, variant: cluster_wide}
+    features:
+      verbs: [list]
+      service_account: false
+  - name: workload-service-account-namespace-sweep
+    description: >-
+      A workload service account lists secrets in four namespaces within two minutes:
+      namespace_sweep variant.
+    fixture: tests/K8S-004/positive_namespace_sweep_service_account.jsonl
+    expect: alert
+    alerts: 1
+    confidence: high
+    entities: {variant: namespace_sweep}
+    features:
+      namespaces_count: 4
+      service_account: true
+  - name: matrix-control-get-one-configmap
+    description: >-
+      Matrix negative control: kubectl get configmap <one> in one namespace.
+    fixture: tests/K8S-004/negative_matrix_get_one_configmap.jsonl
+    expect: no_alert
+  - name: control-plane-watches-and-denied-list
+    description: >-
+      Captured shapes of the controller manager and the API server watching all secrets, a
+      kube-system controller service account, a 403 cluster-wide list by a workload service
+      account, and secret lists in only two namespaces: none alerts.
+    fixture: tests/K8S-004/negative_system_identities_and_denied.jsonl
+    expect: no_alert

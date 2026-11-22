@@ -1,4 +1,4 @@
--- K8S-001 v1.0.0: privileged / host-namespace pod denied by Pod Security admission.
+-- K8S-001 v1.1.0: privileged / host-namespace pod denied by Pod Security admission.
 --
 -- Input: kube-apiserver audit events (k8s.api.request, source k8s.audit) normalised by
 -- B2's otlp_k8s: pod create (or ephemeral-container patch/update) answered 403 where the
@@ -10,6 +10,9 @@
 --
 -- Identity: one alert per audit id (PLAN 5.3). Duplicate-safe via LIMIT 1 BY event_id
 -- and grouping by audit id (several stages of one request collapse).
+-- Confidence: high when the request body's risk flags AND the Pod Security violation text
+-- both name a privileged control (two independent descriptions of the same request agree);
+-- medium when only one of them does (e.g. the body was not logged).
 WITH
     ev AS (
         SELECT
@@ -27,8 +30,7 @@ WITH
             JSONExtractString(attributes, 'pod_security_violation') AS psa_violation,
             JSONExtractString(attributes, 'pod_security_enforce_policy') AS enforce_policy,
             JSONExtract(attributes, 'risk_flags', 'Array(String)') AS risk_flags,
-            JSONExtractBool(attributes, 'dry_run') AS dry_run,
-            simulation_run_id
+            JSONExtractBool(attributes, 'dry_run') AS dry_run
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -70,10 +72,8 @@ SELECT
               'subresource String, dry_run Bool, violation String)'))) AS features,
     m.audit_id AS signature,
     if(length(groupUniqArrayArray(16)(m.matched_flags)) > 0 AND max(m.text_match), 'high', 'medium')
-        AS confidence,
-    groupUniqArray(16)(m.simulation_run_id) AS simulation_run_ids
+        AS confidence
 FROM matched AS m
 WHERE length(m.matched_flags) > 0 OR m.text_match
 GROUP BY m.audit_id
 ORDER BY first_seen
-LIMIT 1000

@@ -49,7 +49,7 @@ def synthetic_event(marker: str) -> dict[str, object]:
         "event_time": now.isoformat(),
         "observed_time": now.isoformat(),
         "outcome": "unknown",
-        "message": "SYNTHETIC platform smoke test event (agent A); not real telemetry",
+        "message": "SYNTHETIC platform smoke test event; not real telemetry",
         "attributes": {"synthetic": True, "smoke_marker": marker},
         "labels": {"synthetic": "true", "purpose": "platform-smoke-test"},
         "provenance": {"parser": "extorq-platform-smoke", "parser_version": "0.1.0"},
@@ -88,8 +88,13 @@ def main() -> int:
     while time.monotonic() < deadline:
         rows = ch.query(
             "SELECT event_id, producer_id, batch_id, labels['synthetic'], ingested_time "
-            "FROM extorq.events WHERE event_id = {id:String}",
-            parameters={"id": event["event_id"]},
+            "FROM extorq.events WHERE producer_id = {producer:String} "
+            "AND batch_id = {batch:String} AND source_native_id = {native:String}",
+            parameters={
+                "producer": PRODUCER,
+                "batch": batch.batch_id,
+                "native": f"platform-smoke:{marker}",
+            },
         ).result_rows
         if rows:
             row = rows[0]

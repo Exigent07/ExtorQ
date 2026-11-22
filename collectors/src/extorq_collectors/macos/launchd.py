@@ -12,7 +12,11 @@ system volume; they are only *counted* (reported in health details).
 Each ``*.plist`` is read with a size cap, hashed (SHA-256 of the file bytes) and
 parsed with :mod:`plistlib` (XML or binary). Only security-relevant keys are
 kept; ``EnvironmentVariables`` contributes key *names* only and program
-arguments are redacted. Symlinks are recorded as such (their target is hashed
+arguments are redacted and limited to the first :data:`MAX_PROGRAM_ARGS` entries
+(``program_arguments_count`` keeps the real count). Two facts only the host can
+answer are added for the program: whether it exists and whether the logged-in user
+can modify it (``program_user_writable``: the file or its directory is writable), the
+"user-writable path" half of MAC-002. Symlinks are recorded as such (their target is hashed
 when it is a regular file). What launchd has actually *loaded* is not visible
 without root (``launchctl print system`` / the Background Task Management
 database), so items are reported as files on disk, not as running jobs.
@@ -49,7 +53,6 @@ from extorq.contracts import (
 from extorq_collectors.macos.common import (
     SourceContext,
     bounded_attributes,
-    launchd_simulation_tag,
     make_event,
     redact_list,
     to_ms,
@@ -59,7 +62,9 @@ PARSER = "macos-launchd"
 SOURCE = SourceType.MACOS_LAUNCHD
 MAX_PLIST_BYTES = 1024 * 1024
 MAX_ENTRIES_PER_DIR = 2000
-MAX_PROGRAM_ARGS = 32
+#: Arguments kept per item: the first entries carry the interpreter, its flags and the
+#: script or command (e.g. ["/bin/sh", "-c", "<command>"]); long tails add little.
+MAX_PROGRAM_ARGS = 16
 SYSTEM_COUNT_DIRS = ("/System/Library/LaunchAgents", "/System/Library/LaunchDaemons")
 
 
@@ -151,6 +156,9 @@ class LaunchItem:
     label: str | None = None
     program: str | None = None
     program_arguments: list[str] = field(default_factory=list)
+    program_arguments_count: int | None = None
+    program_exists: bool | None = None
+    program_user_writable: bool | None = None
     run_at_load: bool | None = None
     keep_alive: str | None = None  # "true" | "false" | "conditional"
     start_interval: int | None = None
@@ -192,6 +200,9 @@ class LaunchItem:
                 "label": self.label,
                 "program": self.program,
                 "program_arguments": self.program_arguments or None,
+                "program_arguments_count": self.program_arguments_count,
+                "program_exists": self.program_exists,
+                "program_user_writable": self.program_user_writable,
                 "run_at_load": self.run_at_load,
                 "keep_alive": self.keep_alive,
                 "start_interval": self.start_interval,
@@ -242,6 +253,30 @@ def _str_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def program_facts(program: str) -> tuple[bool | None, bool | None]:
+    """(exists, writable by the collector's user) for an absolute program path.
+
+    Writable means the file itself, or the directory holding it, can be modified by the
+    logged-in user: code the user (or malware running as the user) can swap silently.
+    Relative or odd paths stay unknown (None): launchd resolves them, ExtorQ does not guess.
+    """
+    if not program.startswith("/") or "\x00" in program or len(program) > 1024:
+        return None, None
+    try:
+        if os.path.exists(program):
+            writable = os.access(program, os.W_OK) or os.access(os.path.dirname(program), os.W_OK)
+            return True, writable
+        # Missing program: could this user create it? Check the nearest existing ancestor.
+        ancestor = os.path.dirname(program)
+        for _ in range(64):
+            if os.path.isdir(ancestor) or ancestor in ("", "/"):
+                break
+            ancestor = os.path.dirname(ancestor)
+        return False, os.access(ancestor or "/", os.W_OK)
+    except (OSError, ValueError):
+        return None, None
+
+
 def apply_plist(item: LaunchItem, data: Mapping[str, Any]) -> None:
     """Extract the security-relevant keys from a parsed launchd plist."""
     item.label = _str_or_none(data.get("Label"))
@@ -250,11 +285,13 @@ def apply_plist(item: LaunchItem, data: Mapping[str, Any]) -> None:
     program = _str_or_none(data.get("Program")) or (args[0] if args else None)
     redacted_args, count = redact_list(args[:MAX_PROGRAM_ARGS])
     item.program_arguments = redacted_args
+    item.program_arguments_count = len(args) if args else None
     item.redactions += count
     if program:
         redacted_program, count = redact_list([program], 2048)
         item.program = redacted_program[0] or None
         item.redactions += count
+        item.program_exists, item.program_user_writable = program_facts(program)
     item.run_at_load = _bool_or_none(data.get("RunAtLoad"))
     keep_alive = data.get("KeepAlive")
     if isinstance(keep_alive, bool):
@@ -525,7 +562,6 @@ def change_to_event(
         outcome=Outcome.SUCCESS,
         resource=Resource(type="launchd_plist", name=name, path=change.path),
         attributes=attrs,
-        simulation=launchd_simulation_tag(change.path, label),
         redaction_count=redactions,
         service=service,
     )

@@ -107,9 +107,9 @@ def test_session_listener_is_unattributed() -> None:
 
 def test_vm002_unit_becomes_service_and_known_units_persist() -> None:
     created = _services(load_json("inventory/inventory_vm002_created.json"))
-    sim = next(s for u, s in created.items() if u.startswith("extorq-sim-"))
-    assert not sim.running and sim.adapter is None
-    assert {e.value for e in sim.candidate.evidence} == {"systemd_unit"}
+    test_unit = next(s for u, s in created.items() if u.startswith("extorq-test-"))
+    assert not test_unit.running and test_unit.adapter is None
+    assert {e.value for e in test_unit.candidate.evidence} == {"systemd_unit"}
     # fwupd ran when the baseline was captured and had exited by the next capture: a service
     # seen earlier stays a (not running) service while its unit file exists.
     assert _services(load_json("inventory/inventory_baseline.json"))["fwupd.service"].running
@@ -154,11 +154,11 @@ def test_vm002_inventory_diff_events() -> None:
     after = load_json("inventory/inventory_vm002_created.json")
     (created,) = inv.unit_events(_diff("units", before, after), _dctx())
     assert created.event_type == "persistence.systemd.unit_created"
-    assert created.resource.path.startswith("/etc/systemd/system/extorq-sim-0e49c82d82bc")
+    assert created.resource.path.startswith("/etc/systemd/system/extorq-test-0e49c82d82bc")
     assert created.attributes["exec_start"] == "/bin/true"
     assert created.attributes["vendor_unit"] is False
     assert len(created.attributes["sha256"]) == 64
-    assert created.simulation.run_id == "0e49c82d82bc"
+    assert created.labels == {}  # a detection-test unit is ordinary telemetry
     (enabled,) = inv.enablement_events(_diff("enablement", before, after), _dctx())
     assert enabled.event_type == "persistence.systemd.unit_enabled"
     assert enabled.attributes["wanted_by"] == "multi-user.target"
@@ -170,12 +170,42 @@ def test_vm002_inventory_diff_events() -> None:
     assert again[0].event_id == created.event_id
 
 
+def test_legacy_dispatcher_arguments_are_not_emitted_or_treated_as_unit_changes() -> None:
+    document = load_json("inventory/inventory_vm002_created.json")
+    unit = next(
+        item for item in document["systemd_units"] if item.get("exec_start") == ["/bin/true"]
+    )
+    path = unit["path"]
+    unit["exec_start"] = ["-/bin/true synthetic-argument"]
+    items = inv.unit_items(document)
+    current = items[path]
+    assert current["exec_start"] == ["/bin/true"]
+    previous = {**current, "exec_start": ["-/bin/true synthetic-argument"]}
+    migration = SnapshotDiff({}, {path: current}, {}, {path: previous})
+    assert inv.unit_events(migration, _dctx()) == []
+
+    removal = SnapshotDiff({}, {}, {path: previous}, {path: previous})
+    (event,) = inv.unit_events(removal, _dctx())
+    assert event.attributes["exec_start"] == "/bin/true"
+    (tombstone,) = inv.inventory_records(
+        "units",
+        removal,
+        {},
+        asset_id=ASSET,
+        collector_id="linux-test",
+        snapshot_id="synthetic",
+        observed_at=NOW,
+        full=False,
+    )
+    assert tombstone.attributes["exec_start"] == ["/bin/true"]
+
+
 def test_account_diff_and_privileged_groups() -> None:
     before = load_json("inventory/inventory_vm002_created.json")
     after = load_json("inventory/inventory_user_added.json")
     (created,) = inv.user_events(_diff("users", before, after), _dctx())
     assert created.event_type == "account.user.created"
-    assert created.actor.name.startswith("extorq-sim-") and created.attributes["uid"] == 999
+    assert created.actor.name.startswith("extorq-test-") and created.attributes["uid"] == 999
     assert created.attributes["interactive_shell"] is False
     (deleted,) = inv.user_events(_diff("users", after, before), _dctx())
     assert deleted.event_type == "account.user.deleted"

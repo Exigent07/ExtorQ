@@ -398,6 +398,11 @@ class FakeGitHub:
                 items,
                 lambda chunk: {"total_count": len(items), "workflow_runs": chunk},
             )
+        match = re.fullmatch(r"/actions/runs/([0-9]+)", rest)
+        if match:
+            run_id = int(match.group(1))
+            run = next((item for item in self.runs if item["id"] == run_id), None)
+            return (200, run, {}) if run is not None else not_found
         match = re.fullmatch(r"/git/trees/([0-9a-f]{40})", rest)
         if match:
             commit = self.commits.get(match.group(1))

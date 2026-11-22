@@ -215,19 +215,6 @@ def _records(c: Canary) -> dict[str, dict[str, Any]]:
                 "details": {"note": c.bearer()},
             },
         },
-        "simulation_run": {
-            "kind": "simulation_run",
-            "data": {
-                "run_id": "fsectest01",
-                "scenario_id": "VM-001",
-                "asset_id": HOST,
-                "status": "started",
-                "started_at": NOW_ISO,
-                "operator": "f-security-test",
-                "description": f"description {c.password()}",
-                "notes": [f"note {c.bearer()}"],
-            },
-        },
         "service": {
             "kind": "service",
             "data": {
@@ -315,6 +302,19 @@ def test_quarantine_excerpt_is_redacted() -> None:
     reason_leak = canary.leaked_in(entry.reason)
     assert excerpt_leak is False, "secret survived in the quarantine excerpt"
     assert reason_leak is False, "secret survived in the quarantine reason"
+
+
+def test_retired_simulation_input_is_quarantined_without_exposing_free_text() -> None:
+    canary = Canary()
+    retired = {
+        "kind": "simulation_run",
+        "data": {"asset_id": HOST, "description": canary.password()},
+    }
+    batch = processing.prepare_batch([retired], _producer(), batch_id="e" * 32, now=NOW)
+    assert not batch.candidates
+    (entry,) = batch.quarantined
+    assert entry.reason.startswith("invalid_record")
+    assert canary.leaked_in(entry.excerpt) is False
 
 
 def _string_leaves(value: Any, path: str = "") -> list[tuple[str, str]]:

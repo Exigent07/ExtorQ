@@ -18,7 +18,6 @@ from extorq.api.routes.common import (
     EVENT_TYPE_PATTERN,
     EVENT_TYPE_PREFIX_PATTERN,
     MAX_OFFSET,
-    SIM_RUN_PATTERN,
     AssetIdQuery,
     Clock,
     EventIdPath,
@@ -40,11 +39,13 @@ CITING_ALERTS_LIMIT = 100
 
 
 def _service_scope(repo: Repository, service_id: str | None) -> str:
-    """Owning asset of a known service ("" for no filter or an unknown service)."""
+    """Owning asset of a known service ("" when there is no service filter)."""
     if not service_id:
         return ""
     owner = repo.get_service(service_id)
-    return str(owner["asset_id"]) if owner else ""
+    if owner is None:
+        raise NotFound("service not found")
+    return str(owner["asset_id"])
 
 
 @router.get(
@@ -79,7 +80,6 @@ def list_events(
     src_ip: Annotated[
         str | None, Query(max_length=64, description="Exact IP (also matches k8s source IPs).")
     ] = None,
-    simulation_run_id: Annotated[str | None, Query(pattern=SIM_RUN_PATTERN)] = None,
     service_id: ServiceIdQuery = None,
 ) -> s.EventListResponse:
     now = now_ms(clock)
@@ -102,7 +102,6 @@ def list_events(
         outcome=outcome.value if outcome else "",
         actor=actor or "",
         src_ip=normalise_ip(src_ip),
-        simulation_run_id=simulation_run_id or "",
         service_id=service_id or "",
         # F-19: events attributed to a known service count only on its own asset subtree.
         scope_asset=_service_scope(repo, service_id),
@@ -123,7 +122,7 @@ def list_events(
     "/events/{event_id}",
     response_model=s.EventDetailResponse,
     responses={404: {"model": s.ErrorResponse, "description": "Event not found"}},
-    summary="One stored SecurityEvent (contract schema 1.0/1.1) with ingest metadata",
+    summary="One stored SecurityEvent (contract schema 2.0) with ingest metadata",
 )
 def get_event(
     event_id: EventIdPath, principal: CurrentPrincipal, repo: Repo

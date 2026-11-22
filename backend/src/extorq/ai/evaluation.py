@@ -99,16 +99,26 @@ def _raw_key(case: EvalCase, settings: AISettings) -> str:
     return f"{case.case_id}|{case.context.input_hash}|{qs.version}|{settings.jev_model}"
 
 
-def _load_raw(path: Path) -> dict[str, AIAssessment]:
+def _load_raw(path: Path) -> tuple[dict[str, AIAssessment], int]:
+    """Previously recorded answers by raw key, plus the number of unreadable lines.
+
+    Lines written by an older ExtorQ version (another contract schema or question set)
+    are skipped, never reused: a reused answer must be exactly what the current code
+    would have asked for.
+    """
     reused: dict[str, AIAssessment] = {}
+    skipped = 0
     if not path.is_file():
-        return reused
+        return reused, skipped
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        record = json.loads(line)
-        reused[record["key"]] = AIAssessment.model_validate(record["assessment"])
-    return reused
+        try:
+            record = json.loads(line)
+            reused[str(record["key"])] = AIAssessment.model_validate(record["assessment"])
+        except (ValueError, KeyError, TypeError):  # ValidationError is a ValueError
+            skipped += 1
+    return reused, skipped
 
 
 def _apply(result: CaseResult, a: AIAssessment) -> None:
@@ -134,6 +144,8 @@ class EvalRun:
     live: bool
     settings_model: str
     question_sets: dict[str, str]
+    #: Raw-answer lines that could not be reused (older schema or unreadable).
+    raw_lines_skipped: int = 0
 
 
 def run_eval(
@@ -145,7 +157,7 @@ def run_eval(
     raw_path: Path | None,
 ) -> EvalRun:
     """Run the baseline on every case and (when ``provider`` is given) Jev, one call per case."""
-    reused = _load_raw(raw_path) if raw_path is not None else {}
+    reused, raw_skipped = _load_raw(raw_path) if raw_path is not None else ({}, 0)
     results: list[CaseResult] = []
     calls = 0
     for case in cases:
@@ -181,6 +193,7 @@ def run_eval(
         live=provider is not None,
         settings_model=settings.jev_model,
         question_sets={d.value: question_set(d).version for d in Domain},
+        raw_lines_skipped=raw_skipped,
     )
 
 
@@ -453,6 +466,11 @@ def build_report(run: EvalRun, *, dataset: Path, max_calls: int, date: str) -> d
         "counts and coverage gaps; it cannot see actors, review signals or maintenance context.",
         "Jev output is advisory: it never changes alert severity or suppresses alerts.",
     ]
+    if run.raw_lines_skipped:
+        notes.append(
+            f"{run.raw_lines_skipped} recorded raw answer(s) were not reused because they no "
+            "longer validate (older contract schema or question set)."
+        )
     if run.live and metrics.get("jev") and metrics["jev"]["accuracy"] is None:
         notes.insert(
             0,
@@ -485,6 +503,7 @@ def build_report(run: EvalRun, *, dataset: Path, max_calls: int, date: str) -> d
             "requested_model": run.settings_model,
             "prompt_version": TRIAGE_PROMPT_VERSION,
             "question_sets": run.question_sets,
+            "raw_lines_skipped": run.raw_lines_skipped,
         },
         "metrics": metrics,
         "results": [asdict(r) for r in run.results],

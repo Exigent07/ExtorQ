@@ -8,9 +8,6 @@ coverage and "never fabricate" rules unit-testable with a fake repository.
 from __future__ import annotations
 
 import json
-import threading
-import time
-from collections import defaultdict, deque
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -18,14 +15,15 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from extorq.api import schemas as s
-from extorq.api.errors import BadRequest, Conflict, TooManyRequests
+from extorq.api.errors import BadRequest
 from extorq.api.logs import get_logger
 from extorq.api.repository import CLOSED_STATUSES, Row
-from extorq.contracts import ServiceEndpoint, ServiceKind
+from extorq.contracts import AIProvider, AITask, ServiceEndpoint, ServiceKind
 
 log = get_logger("extorq.api.service")
 
 STALE_FACTOR = 3
+OTEL_LOG_SOURCES = frozenset({"k8s.audit", "k8s.container_log"})
 #: Allowed explicit time-series bucket sizes (seconds).
 BUCKET_CHOICES: tuple[int, ...] = (60, 300, 900, 3600, 21600, 86400)
 MAX_BUCKETS = 1000
@@ -156,13 +154,24 @@ def collector_status(row: Row, now: datetime) -> s.CollectorStatus:
         stale, reason = False, None
     collector_type = str(row.get("collector_type") or "")
     source_types = [str(x) for x in row.get("source_types") or []]
+    details = parse_json_object(row.get("details")) or {}
+    status = row["status"]
+    last_reported_at = row["last_reported_at"]
+    if collector_type == "k8s_otel" and interval > 0:
+        if (now - last_reported_at).total_seconds() > threshold:
+            stale, reason = True, "the node has stopped reporting Collector delivery metrics"
+            status = "unknown"
+            details["delivery_state"] = "unavailable"
+        elif stale and details.get("delivery_state") == "delivering":
+            status = "unknown"
+            details["delivery_state"] = "running_not_delivering"
     return s.CollectorStatus(
         collector_id=str(row["collector_id"]),
         collector_type=collector_type,
         asset_id=str(row.get("asset_id") or ""),
         source_types=source_types,
-        status=row["status"],
-        last_reported_at=row["last_reported_at"],
+        status=status,
+        last_reported_at=last_reported_at,
         last_attempt_at=row.get("last_attempt_at"),
         last_success_at=last_success,
         last_error=row.get("last_error"),
@@ -175,7 +184,7 @@ def collector_status(row: Row, now: datetime) -> s.CollectorStatus:
         stale=stale,
         stale_reason=reason,
         seconds_since_success=since_success,
-        details=parse_json_object(row.get("details")) or {},
+        details=details,
         # Provisional: ``lifecycle.Estate`` marks retired collectors per request.
         lifecycle_state="stale" if stale else "active",
         self_test=is_self_test(collector_type, source_types),
@@ -184,8 +193,8 @@ def collector_status(row: Row, now: datetime) -> s.CollectorStatus:
 
 #: Collector type of the SDK heartbeat self-test (A-IC-1: "treat as self-test").
 SELF_TEST_COLLECTOR_TYPES: frozenset[str] = frozenset({"heartbeat"})
-#: Source types of ExtorQ's own pipeline (``extorq.pipeline``, ``extorq.simulation``):
-#: not telemetry of the asset a collector reports for.
+#: Source types of ExtorQ's own pipeline (``extorq.pipeline``): not telemetry of the asset a
+#: collector reports for.
 PIPELINE_SOURCE_PREFIX = "extorq."
 
 
@@ -240,7 +249,6 @@ def alert_item(row: Row) -> s.AlertListItem:
         event_count=int(row["event_count"]),
         entities={str(k): str(v) for k, v in (row.get("entities") or {}).items()},
         mitre_techniques=[str(x) for x in row.get("mitre_techniques") or []],
-        simulation_run_ids=[str(x) for x in row.get("simulation_run_ids") or []],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         analyst_status=row.get("analyst_status") or "new",
@@ -273,7 +281,6 @@ def alert_record(row: Row) -> s.AlertRecord:
         evidence_truncated=as_bool(row.get("evidence_truncated")),
         features=parse_json_object(row.get("features")),
         mitre_techniques=[str(x) for x in row.get("mitre_techniques") or []],
-        simulation_run_ids=[str(x) for x in row.get("simulation_run_ids") or []],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         detector_version=str(row["detector_version"]),
@@ -652,11 +659,32 @@ def pipeline_health(
     return items
 
 
-#: Provider/task pairs ExtorQ uses (PLAN: Jev triage, Gemini summary).
-AI_PROVIDER_TASKS: tuple[tuple[str, str], ...] = (
-    ("typesafe-jev", "triage"),
-    ("google-gemini", "summary"),
-)
+#: Provider/task pairs ExtorQ uses (schema 2.0: Jev triage is the only AI path). Always listed
+#: in GET /health, even before the first assessment, so a disabled provider is visible.
+AI_PROVIDER_TASKS: tuple[tuple[str, str], ...] = ((AIProvider.JEV.value, AITask.TRIAGE.value),)
+#: ``pipeline_health.component`` of the ai-worker, which runs Jev triage (extorq.ai.worker).
+AI_WORKER_COMPONENT = "ai_worker"
+
+
+def ai_runtime(
+    pipeline: Sequence[s.PipelineComponentHealth],
+) -> dict[tuple[str, str], s.PipelineComponentHealth]:
+    """Newest *fresh* ai-worker report per provider/task it runs (triage).
+
+    The worker names its provider in ``details.provider``; a report without it is Jev's (the
+    only provider). Stale reports are ignored: a stopped worker must not look like a running
+    one, so its provider's runtime state is then unknown.
+    """
+    newest: dict[tuple[str, str], s.PipelineComponentHealth] = {}
+    for report in pipeline:
+        if report.component != AI_WORKER_COMPONENT or report.stale:
+            continue
+        provider = str(report.details.get("provider") or AIProvider.JEV.value)
+        key = (provider, AITask.TRIAGE.value)
+        current = newest.get(key)
+        if current is None or report.last_reported_at > current.last_reported_at:
+            newest[key] = report
+    return newest
 
 
 def ai_health(
@@ -664,7 +692,14 @@ def ai_health(
     latest: Sequence[Row],
     configuration: dict[tuple[str, str], dict[str, bool | None]],
     window_hours: int,
+    runtime: dict[tuple[str, str], s.PipelineComponentHealth] | None = None,
 ) -> list[s.AIProviderHealth]:
+    """One health row per provider/task: Jev triage always, then any other pair that has
+    stored assessments (reported as stored, never hidden; its configuration is unknown).
+
+    ``runtime`` is :func:`ai_runtime` over the request's pipeline reports: the state of the
+    worker that runs the provider, reported next to the API process's own configuration."""
+    runtime = runtime or {}
     pairs = list(AI_PROVIDER_TASKS)
     for row in [*counts, *latest]:
         pair = (str(row["provider"]), str(row["task"]))
@@ -679,12 +714,15 @@ def ai_health(
                 status_counts[str(row["status"])] = int(row["assessments"])
         last = latest_by_pair.get((provider, task))
         config = configuration.get((provider, task), {})
+        worker = runtime.get((provider, task))
         items.append(
             s.AIProviderHealth(
                 provider=provider,
                 task=task,
                 configured=config.get("configured"),
                 enabled=config.get("enabled"),
+                runtime_status=worker.status if worker else None,
+                runtime_reported_at=worker.last_reported_at if worker else None,
                 window_hours=window_hours,
                 status_counts=status_counts,
                 last_assessment_at=last.get("last_assessment_at") if last else None,
@@ -740,7 +778,7 @@ def is_open(status: str) -> bool:
     return status not in CLOSED_STATUSES
 
 
-# ── Services (schema 1.1) ─────────────────────────────────────────────────────────
+# ── Services ──────────────────────────────────────────────────────────────────────
 
 SourceCollection = Literal["fresh", "stale", "no_collector_health"]
 COVERAGE_STATES: tuple[str, ...] = (
@@ -762,6 +800,17 @@ def is_ancestor_asset(ancestor_id: str, asset_id: str) -> bool:
     """``ancestor_id`` is a strict ancestor of ``asset_id`` in the asset-id namespace
     (``k8s:<cluster>`` of ``k8s:<cluster>/node/<name>``); segment-aware, never a bare prefix."""
     return bool(ancestor_id) and asset_id.startswith(ancestor_id + "/")
+
+
+def _workload_nodes(asset_id: str, attrs: dict[str, Any]) -> frozenset[str]:
+    nodes = attrs.get("running_node_asset_ids")
+    if not isinstance(nodes, list):
+        return frozenset()
+    prefix = f"{asset_id}/node/"
+    return frozenset(
+        node for node in nodes[:64]
+        if isinstance(node, str) and node.startswith(prefix) and node.removeprefix(prefix)
+    )
 
 
 def collectors_for_asset(
@@ -859,7 +908,17 @@ class ServiceEvaluator:
         """Collectors covering ``asset_id`` (own + ancestors): the asset-coverage input."""
         return collectors_for_asset(asset_id, self._collectors)
 
-    def source_collectors(self, asset_id: str, source_type: str) -> list[s.CollectorStatus]:
+    def source_collectors(
+        self, asset_id: str, source_type: str, node_assets: frozenset[str] = frozenset()
+    ) -> list[s.CollectorStatus]:
+        if node_assets and source_type in OTEL_LOG_SOURCES:
+            return [
+                c
+                for c in self._collectors
+                if c.asset_id in node_assets
+                and c.collector_type == "k8s_otel"
+                and source_type in c.source_types
+            ]
         return [
             c
             for c in collectors_for_asset(asset_id, self._collectors)
@@ -892,6 +951,25 @@ class ServiceEvaluator:
             stale_seconds=self._stale_seconds,
             stale_sources=self.stale_sources(asset_id, sources),
         )
+        if row["service_kind"] == ServiceKind.K8S_WORKLOAD and state == "monitored":
+            attrs = parse_json_object(row.get("attributes")) or {}
+            nodes = _workload_nodes(asset_id, attrs)
+            for source in sorted(OTEL_LOG_SOURCES.intersection(sources)):
+                if not nodes or len(nodes) != attrs.get("running_node_count"):
+                    reasons.append(f"telemetry source {source}: hosting nodes are unknown")
+                    continue
+                delivering = {
+                    c.asset_id
+                    for c in self.source_collectors(asset_id, source, nodes)
+                    if not c.stale and c.details.get("delivery_state") == "delivering"
+                }
+                if missing := sorted(nodes - delivering):
+                    reasons.append(
+                        f"telemetry source {source}: delivery unconfirmed on "
+                        f"{', '.join(missing[:4])}"
+                    )
+            if reasons:
+                state = "degraded"
         endpoints, invalid = parse_endpoints(row.get("endpoints"))
         present_exposures = {e.exposure for e in endpoints}
         return {
@@ -988,14 +1066,25 @@ class ServiceEvaluator:
     ) -> list[s.ServiceTelemetrySource]:
         """Declared sources (adapter order) then sources seen only in attributed events."""
         by_source = {str(r["source_type"]): r for r in event_rows}
+        nodes = (
+            _workload_nodes(service.asset_id, service.attributes or {})
+            if isinstance(service, s.ServiceRecord)
+            else frozenset()
+        )
         ordered = list(dict.fromkeys(service.telemetry_sources))
         ordered += sorted(src for src in by_source if src not in ordered)
         result: list[s.ServiceTelemetrySource] = []
         for source in ordered:
-            reporting = self.source_collectors(service.asset_id, source)
+            reporting = self.source_collectors(service.asset_id, source, nodes)
             collection: SourceCollection
             if not reporting:
                 collection = "no_collector_health"
+            elif source in OTEL_LOG_SOURCES and nodes:
+                delivering = {
+                    c.asset_id for c in reporting
+                    if not c.stale and c.details.get("delivery_state") == "delivering"
+                }
+                collection = "fresh" if nodes == delivering else "stale"
             elif all(c.stale for c in reporting):
                 collection = "stale"
             else:
@@ -1078,35 +1167,3 @@ def auth_activity(
             for r in sources
         ],
     )
-
-
-# ── Summary request gate (protects the AI budget from UI loops) ─────────────────────
-
-
-class SummaryGate:
-    """Per-user sliding-window limit plus one in-flight summary per alert."""
-
-    def __init__(self, per_minute: int) -> None:
-        self._per_minute = per_minute
-        self._lock = threading.Lock()
-        self._requests: dict[str, deque[float]] = defaultdict(deque)
-        self._in_flight: set[str] = set()
-
-    def acquire(self, user: str, alert_id: str) -> None:
-        now = time.monotonic()
-        with self._lock:
-            window = self._requests[user]
-            while window and now - window[0] > 60.0:
-                window.popleft()
-            if len(window) >= self._per_minute:
-                raise TooManyRequests(
-                    "summary request limit reached; retry later", headers={"Retry-After": "60"}
-                )
-            if alert_id in self._in_flight:
-                raise Conflict("a summary for this alert is already being generated")
-            window.append(now)
-            self._in_flight.add(alert_id)
-
-    def release(self, alert_id: str) -> None:
-        with self._lock:
-            self._in_flight.discard(alert_id)

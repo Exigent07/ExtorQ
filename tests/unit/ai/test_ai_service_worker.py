@@ -1,29 +1,25 @@
-"""AIService (API/CLI path), context loading and the ai-worker loop (fakes, no network)."""
+"""AIService (CLI path), context loading and the ai-worker loop (fakes, no network)."""
 
 from __future__ import annotations
 
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from ai_fakes import (
     FakeClickHouse,
-    FakeGeminiClient,
-    FakeGeminiResponse,
+    FakeJevClient,
     answering_client,
     enabled_settings,
-    gemini_key,
     jev_key,
     ssh_context,
-    summary_json,
 )
 
 from extorq.ai import context_source, service, store
 from extorq.ai import worker as worker_mod
-from extorq.ai.budget import BudgetGuard, CooldownTracker
+from extorq.ai.budget import BudgetGuard
 from extorq.ai.context_source import ContextLoadError
-from extorq.ai.gemini import GeminiSummaryProvider
 from extorq.ai.jev import JevTriageProvider
 from extorq.ai.service import AIService, ContextNotFound, ContextUnavailable, InvalidAlertId
 from extorq.ai.settings import AISettings
@@ -35,35 +31,27 @@ NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
 CTX = ssh_context()
 
 
-def _gemini_client() -> FakeGeminiClient:
-    def respond(contents: Any, config: Any) -> FakeGeminiResponse:
-        import json
-
-        line = contents.split("ALLOWED_EVIDENCE_IDS (cite only these): ")[1].split("\n")[0]
-        return FakeGeminiResponse(summary_json(json.loads(line)))
-
-    return FakeGeminiClient(respond)
-
-
 class Storage:
     """Fake ClickHouse answering the AI store's queries from in-memory state."""
 
-    def __init__(self, *, attempts_today: int = 0, last_attempt: datetime | None = None) -> None:
+    def __init__(self, *, attempts_today: int = 0) -> None:
         self.attempts_today = attempts_today
-        self.last_attempt = last_attempt
         self.reusable_rows: list[tuple[Any, ...]] = []
         self.ch = FakeClickHouse(self.handle)
 
     def handle(self, sql: str, params: dict[str, Any]) -> list[tuple[Any, ...]]:
         if "uniqExact(assessment_id) FROM" in sql:
             return [(self.attempts_today,)]
-        if "max(created_at), count()" in sql:
-            if self.last_attempt is None:
-                return [(datetime(1970, 1, 1), 0)]
-            return [(self.last_attempt.replace(tzinfo=None), 1)]
         if "context_input_hash = {input_hash:String}" in sql:
             return self.reusable_rows
         return []
+
+    def reuse_first_insert(self) -> None:
+        """Make the first stored assessment visible to ``store.find_reusable``."""
+        values = self.ch.inserts[0]["rows"][0]
+        row = dict(zip(store.ASSESSMENT_COLUMNS, values, strict=True))
+        columns = [c.strip() for c in store._SELECT_COLUMNS.split(",")]
+        self.reusable_rows = [tuple(row[c] for c in columns)]
 
 
 def _service(
@@ -72,30 +60,23 @@ def _service(
     *,
     ctx: InvestigationContext | None = CTX,
     settings: AISettings | None = None,
-    gemini_client: FakeGeminiClient | None = None,
-) -> tuple[AIService, FakeGeminiClient]:
+    client: Any = None,
+) -> tuple[AIService, FakeJevClient]:
     monkeypatch.setattr(service, "load_latest_context", lambda client, alert_id: ctx)
     monkeypatch.setattr(service, "build_and_save_context", lambda r, w, alert_id: None)
     monkeypatch.setattr(
         service, "shared_guard", lambda p, cap: BudgetGuard(p, cap, clock=lambda: NOW)
     )
     s = settings or enabled_settings()
-    client = gemini_client or _gemini_client()
-    gemini = GeminiSummaryProvider(
-        s, key=gemini_key(), client_factory=lambda k, st: client, clock=lambda: NOW
+    jev_client = client or answering_client()
+    jev = JevTriageProvider(
+        s, key=jev_key(), client_factory=lambda k, st: jev_client, clock=lambda: NOW
     )
-    svc = AIService(
-        s,
-        read_client=storage.ch,
-        write_client=storage.ch,
-        gemini=gemini,
-        cooldowns=CooldownTracker(),
-        clock=lambda: NOW,
-    )
-    return svc, client
+    svc = AIService(s, read_client=storage.ch, write_client=storage.ch, jev=jev, clock=lambda: NOW)
+    return svc, jev_client
 
 
-# ── AIService.request_summary ─────────────────────────────────────────
+# ── AIService.request_triage ──────────────────────────────────────────
 
 
 def test_invalid_alert_id_is_rejected_before_any_io(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,20 +84,20 @@ def test_invalid_alert_id_is_rejected_before_any_io(monkeypatch: pytest.MonkeyPa
     svc, client = _service(storage, monkeypatch)
     for bad in ("", "ABC", "x" * 32, "0" * 31, "'; DROP TABLE alerts; --"):
         with pytest.raises(InvalidAlertId):
-            svc.request_summary(bad, "analyst:alice")
+            svc.request_triage(bad, "analyst:alice")
     assert storage.ch.queries == [] and client.calls == []
 
 
 def test_missing_context_raises_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     svc, _ = _service(Storage(), monkeypatch, ctx=None)
     with pytest.raises(ContextNotFound):
-        svc.request_summary("a" * 32, "analyst:alice")
+        svc.request_triage("a" * 32, "analyst:alice")
 
 
 def test_context_for_another_alert_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     svc, _ = _service(Storage(), monkeypatch)
     with pytest.raises(ContextUnavailable):
-        svc.request_summary("b" * 32, "analyst:alice")
+        svc.request_triage("b" * 32, "analyst:alice")
 
 
 def test_storage_failure_while_loading_context_is_unavailable(
@@ -129,34 +110,32 @@ def test_storage_failure_while_loading_context_is_unavailable(
 
     monkeypatch.setattr(service, "load_latest_context", broken)
     with pytest.raises(ContextUnavailable, match="ConnectionError"):
-        svc.request_summary(CTX.alert_id, "analyst:alice")
+        svc.request_triage(CTX.alert_id, "analyst:alice")
 
 
-def test_summary_success_is_persisted_with_the_write_client(
+def test_triage_success_is_persisted_with_the_write_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     storage = Storage()
     svc, client = _service(storage, monkeypatch)
-    assessment = svc.request_summary(CTX.alert_id, "analyst:alice")
+    assessment = svc.request_triage(CTX.alert_id, "analyst:alice")
     assert assessment.status is AIStatus.OK
+    assert assessment.provider is AIProvider.JEV
     assert len(client.calls) == 1
     (insert,) = storage.ch.inserts
     assert insert["table"] == "ai_assessments"
     row = dict(zip(insert["columns"], insert["rows"][0], strict=True))
     assert row["assessment_id"] == assessment.assessment_id
     assert row["requested_by"] == "analyst:alice"
-    assert '"requested_model":"gemini-3.6-flash"' in row["output"]
+    assert '"requested_model":"jev-1.14.0"' in row["output"]
 
 
-def test_existing_summary_for_same_context_is_reused(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_existing_triage_for_same_context_is_reused(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = Storage()
     svc, client = _service(storage, monkeypatch)
-    first = svc.request_summary(CTX.alert_id, "analyst:alice")
-    values = storage.ch.inserts[0]["rows"][0]
-    row = dict(zip(store.ASSESSMENT_COLUMNS, values, strict=True))
-    columns = [c.strip() for c in store._SELECT_COLUMNS.split(",")]
-    storage.reusable_rows = [tuple(row[c] for c in columns)]
-    second = svc.request_summary(CTX.alert_id, "analyst:bob")
+    first = svc.request_triage(CTX.alert_id, "analyst:alice")
+    storage.reuse_first_insert()
+    second = svc.request_triage(CTX.alert_id, "analyst:bob")
     assert second.assessment_id == first.assessment_id
     assert len(client.calls) == 1, "no second paid call"
     assert len(storage.ch.inserts) == 1
@@ -165,59 +144,60 @@ def test_existing_summary_for_same_context_is_reused(monkeypatch: pytest.MonkeyP
 def test_disabled_provider_is_refused_without_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = Storage()
     svc, client = _service(storage, monkeypatch, settings=AISettings())
-    assessment = svc.request_summary(CTX.alert_id, "analyst:alice")
+    assessment = svc.request_triage(CTX.alert_id, "analyst:alice")
     assert assessment.status is AIStatus.DISABLED
-    assert assessment.error == "EXTORQ_GEMINI_ENABLED is false"
+    assert assessment.error == "EXTORQ_JEV_ENABLED is false"
     assert client.calls == [] and storage.ch.inserts == []
-
-
-def test_cooldown_after_a_recent_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
-    storage = Storage(last_attempt=NOW - timedelta(seconds=30))
-    svc, client = _service(storage, monkeypatch)
-    assessment = svc.request_summary(CTX.alert_id, "analyst:alice")
-    assert assessment.status is AIStatus.BUDGET_EXCEEDED
-    assert assessment.error is not None and assessment.error.startswith("cooldown_active")
-    assert "90 s" in assessment.error  # default cooldown 120 s, last attempt 30 s ago
-    assert client.calls == [] and storage.ch.inserts == []
-
-
-def test_in_process_cooldown_covers_unsaved_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
-    storage = Storage()
-    storage.ch.fail_inserts = True
-    svc, client = _service(storage, monkeypatch)
-    first = svc.request_summary(CTX.alert_id, "analyst:alice")
-    assert first.status is AIStatus.OK  # result returned even though storage failed
-    second = svc.request_summary(CTX.alert_id, "analyst:alice")
-    assert second.status is AIStatus.BUDGET_EXCEEDED
-    assert len(client.calls) == 1
 
 
 def test_daily_cap_is_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
-    storage = Storage(attempts_today=50)
+    storage = Storage(attempts_today=300)
     svc, client = _service(storage, monkeypatch)
-    assessment = svc.request_summary(CTX.alert_id, "analyst:alice")
+    assessment = svc.request_triage(CTX.alert_id, "analyst:alice")
     assert assessment.status is AIStatus.BUDGET_EXCEEDED
-    assert assessment.error is not None and "daily_cap_reached (50/50" in assessment.error
-    assert client.calls == []
+    assert assessment.error is not None and "daily_cap_reached (300/300" in assessment.error
+    assert client.calls == [] and storage.ch.inserts == []
 
 
 def test_unverifiable_budget_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = Storage()
     svc, client = _service(storage, monkeypatch)
     storage.ch.fail_queries = True
-    assessment = svc.request_summary(CTX.alert_id, "analyst:alice")
+    assessment = svc.request_triage(CTX.alert_id, "analyst:alice")
     assert assessment.status is AIStatus.ERROR
     assert assessment.error is not None and assessment.error.startswith("budget_check_unavailable")
     assert client.calls == []
 
 
+def test_result_is_returned_even_when_storage_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    storage = Storage()
+    storage.ch.fail_inserts = True
+    svc, client = _service(storage, monkeypatch)
+    assessment = svc.request_triage(CTX.alert_id, "analyst:alice")
+    assert assessment.status is AIStatus.OK and len(client.calls) == 1
+    # The unsaved attempt still counts against today's cap in this process.
+    guard = BudgetGuard(AIProvider.JEV, 1, clock=lambda: NOW)
+    monkeypatch.setattr(service, "shared_guard", lambda p, cap: guard)
+    guard.try_reserve(lambda day: 0).finish(persisted=False)
+    capped = svc.request_triage(CTX.alert_id, "analyst:alice")
+    assert capped.status is AIStatus.BUDGET_EXCEEDED and len(client.calls) == 1
+
+
 def test_concurrent_requests_for_one_alert_make_one_call(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = Storage()
     svc, client = _service(storage, monkeypatch)
-    results: list[AIStatus] = []
+    original = svc._persist
+
+    def persist_and_publish(assessment: Any) -> bool:
+        stored = original(assessment)
+        storage.reuse_first_insert()  # visible to the next caller, as in ClickHouse
+        return stored
+
+    monkeypatch.setattr(svc, "_persist", persist_and_publish)
+    results: list[str] = []
 
     def run() -> None:
-        results.append(svc.request_summary(CTX.alert_id, "analyst:alice").status)
+        results.append(svc.request_triage(CTX.alert_id, "analyst:alice").assessment_id)
 
     threads = [threading.Thread(target=run) for _ in range(5)]
     for t in threads:
@@ -225,25 +205,7 @@ def test_concurrent_requests_for_one_alert_make_one_call(monkeypatch: pytest.Mon
     for t in threads:
         t.join()
     assert len(client.calls) == 1
-    assert results.count(AIStatus.OK) == 1
-    assert results.count(AIStatus.BUDGET_EXCEEDED) == 4  # cooldown
-
-
-def test_request_triage_uses_the_jev_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    storage = Storage()
-    svc, _ = _service(storage, monkeypatch)
-    jev_client = answering_client()
-    svc._jev = JevTriageProvider(
-        enabled_settings(), key=jev_key(), client_factory=lambda k, s: jev_client, clock=lambda: NOW
-    )
-    assessment = svc.request_triage(CTX.alert_id)
-    assert assessment.status is AIStatus.OK
-    assert assessment.provider is AIProvider.JEV
-    assert len(storage.ch.inserts) == 1
-    storage.attempts_today = 300
-    storage.reusable_rows = []
-    capped = svc.request_triage(CTX.alert_id)
-    assert capped.status is AIStatus.BUDGET_EXCEEDED
+    assert len(set(results)) == 1, "every caller receives the one stored assessment"
 
 
 # ── context loading ───────────────────────────────────────────────────

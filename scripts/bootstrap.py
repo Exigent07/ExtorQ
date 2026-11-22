@@ -78,11 +78,18 @@ _TELEMETRY_KINDS = [
     "scan_run",
     "collector_health",
 ]
-#: Contract 1.1 (PLAN §10): host and Kubernetes-inventory producers also report the
+#: Service model (PLAN §10): host and Kubernetes-inventory producers also report the
 #: services they discover and their instances (processes, containers, Pods).
 _SERVICE_AWARE_KINDS = [*_TELEMETRY_KINDS, "service", "service_instance"]
-#: "any configured lab asset" (PLAN §4.2/§4.3).
-_LAB_ASSET_PATTERNS = ["macos:workstation-01", "linux:lab-vm-01", "k8s:extorq-lab*", "github:*"]
+#: Every monitored asset (PLAN §4.2/§4.3): the scanner runner may report on any of them.
+_KIND_ASSET_PATTERNS = ["k8s:extorq-lab", "k8s:extorq-lab/node/*"]
+_GITHUB_ASSET_ID = "github:exigent07/extorq-lab"
+_MONITORED_ASSET_PATTERNS = [
+    "macos:workstation-01",
+    "linux:lab-vm-01",
+    *_KIND_ASSET_PATTERNS,
+    _GITHUB_ASSET_ID,
+]
 
 
 @dataclass(frozen=True)
@@ -94,9 +101,12 @@ class ProducerSpec:
 
 
 #: PLAN §4.3 + §10 (service kinds). The gateway authorizes every record against this
-#: registry. ``extorq-selftest`` is the SDK heartbeat example's identity (docs/collectors.md):
-#: it may only report CollectorHealth for ExtorQ's own pipeline (source ``extorq.pipeline``)
-#: from the Mac where it runs (proposal in docs/team/interface-changes/A.md).
+#: registry and ONLY this registry: ``producers.json`` is rebuilt from it on every run, so a
+#: producer removed here (``simulation-runner``, retired with schema 2.0) is never authorized
+#: again even when its token file is still on disk (reported as stale below).
+#: ``extorq-selftest`` is the SDK heartbeat example's identity (docs/collectors.md): it may
+#: only report CollectorHealth for ExtorQ's own pipeline (source ``extorq.pipeline``) from
+#: the Mac where it runs.
 PRODUCERS: tuple[ProducerSpec, ...] = (
     ProducerSpec(
         "macos-workstation-01", _SERVICE_AWARE_KINDS, ["macos.*"], ["macos:workstation-01"]
@@ -106,20 +116,20 @@ PRODUCERS: tuple[ProducerSpec, ...] = (
         "k8s-inventory-extorq-lab",
         _SERVICE_AWARE_KINDS,
         ["k8s.api_inventory", "k8s.events", "k8s.posture"],
-        ["k8s:extorq-lab*"],
+        _KIND_ASSET_PATTERNS,
     ),
     ProducerSpec(
-        "k8s-otel-extorq-lab", ["event"], ["k8s.audit", "k8s.container_log"], ["k8s:extorq-lab*"]
+        "k8s-otel-extorq-lab",
+        ["event", "collector_health"],
+        ["k8s.audit", "k8s.container_log"],
+        _KIND_ASSET_PATTERNS,
     ),
-    ProducerSpec("github-collector", _TELEMETRY_KINDS, ["github.*"], ["github:*"]),
+    ProducerSpec("github-collector", _TELEMETRY_KINDS, ["github.*"], [_GITHUB_ASSET_ID]),
     ProducerSpec(
         "scanner-runner",
         ["asset", "finding", "scan_run", "collector_health"],
         ["scanner.*"],
-        _LAB_ASSET_PATTERNS,
-    ),
-    ProducerSpec(
-        "simulation-runner", ["simulation_run"], ["extorq.simulation"], _LAB_ASSET_PATTERNS
+        _MONITORED_ASSET_PATTERNS,
     ),
     ProducerSpec(
         "extorq-selftest", ["collector_health"], ["extorq.pipeline"], ["macos:workstation-01"]
@@ -491,6 +501,20 @@ def producers_registry(token_dir: Path) -> bytes:
     return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
+def stale_tokens(token_dir: Path) -> list[str]:
+    """Producer ids of token files that are not in :data:`PRODUCERS` (never authorized).
+
+    Tokens are secrets, so bootstrap never deletes them on its own; it reports the ids
+    (never the values) so the operator can remove the files.
+    """
+    known = {spec.producer_id for spec in PRODUCERS}
+    try:
+        names = sorted(p.stem for p in token_dir.glob("*.token") if p.is_file())
+    except OSError:
+        return []
+    return [name for name in names if name not in known]
+
+
 def write_if_changed(path: Path, data: bytes, report: Report) -> None:
     try:
         current = path.read_bytes()
@@ -558,6 +582,7 @@ def bootstrap(root: Path, *, rotate: bool, rotate_ca: bool) -> int:
 
         tls_report = Report()
         ensure_tls(tls_dir, rotate=rotate, rotate_ca=rotate_ca, report=tls_report)
+        stale = stale_tokens(token_dir)
     except BootstrapError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -585,6 +610,11 @@ def bootstrap(root: Path, *, rotate: bool, rotate_ca: bool) -> int:
         + tls_report.permissions_fixed
     )
     print(f"permissions fixed: {fixed}")
+    if stale:
+        print(
+            f"stale producer tokens (not in the registry, never authorized; safe to delete "
+            f"var/secrets/tokens/<id>.token): {', '.join(stale)}"
+        )
     print(f".env present: {'yes' if (root / '.env').exists() else 'no'} (never read or modified)")
     if rotate or rotate_ca:
         print(

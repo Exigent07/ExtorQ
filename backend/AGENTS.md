@@ -8,15 +8,15 @@ that apply to all backend code.
 
 | Package | Purpose | Owner |
 |---|---|---|
-| `contracts/` | versioned Pydantic contracts (schema 1.1), event catalog, identities | lead |
-| `common/` | `config` (settings, `_FILE` secrets, startup checks), `logging` (JSON + redaction), `redaction` (`redact_text`, `sanitize_untrusted`) | A |
-| `storage/` | `clickhouse.get_client(role)`, `rows` (contract -> row mapping), `migrate` | A |
-| `ingest/` | HTTPS gateway (`app.py`, `processing.py`, `registry.py`, `body.py`, `server.py`); `otlp_k8s.py` is B2's normaliser | A (+B2) |
-| `pipeline/` | durable SQLite spool and the ClickHouse writer | A |
-| `detection/`, `correlation/` | rule engine, detector service, context builder | C2 |
-| `ai/` | Jev triage, Gemini summaries, ai-worker | E |
-| `api/` | analyst API | D1 |
-| `cli.py` | root `extorq` CLI (lazy imports per command) | A |
+| `contracts/` | versioned Pydantic contracts (schema 2.0), event catalog, identities | lead |
+| `common/` | `config` (settings, `_FILE` secrets, startup checks), `logging` (JSON + redaction), `redaction` (`redact_text`, `sanitize_untrusted`) | platform |
+| `storage/` | `clickhouse.get_client(role)`, `rows` (contract -> row mapping), `migrate`, `reset` (clean-slate TRUNCATE) | platform |
+| `ingest/` | HTTPS gateway (`app.py`, `processing.py`, `registry.py`, `body.py`, `server.py`); `otlp_k8s.py` is the Kubernetes telemetry team's OTLP normaliser | platform (+Kubernetes) |
+| `pipeline/` | durable SQLite spool and the ClickHouse writer | platform |
+| `detection/`, `correlation/` | rule engine, detector service, context builder | detection |
+| `ai/` | Jev triage (the only AI provider; advisory), ai-worker | AI |
+| `api/` | analyst API | UI/API |
+| `cli.py` | root `extorq` CLI (lazy imports per command) | platform |
 
 ## Conventions
 
@@ -34,9 +34,11 @@ that apply to all backend code.
   `v_*` views. Sorting keys are not unique.
 * **Writing rows**: map models with `extorq.storage.rows` (`to_row`, `alert_to_row`, ...)
   so columns always match the migrations (`tests/unit/platform/test_platform_rows.py`
-  parses the DDL and fails on drift). Schema changes are new migrations
-  (`infra/clickhouse/migrations/NNNN_name.sql`, idempotent statements); applied files
-  are immutable (the runner refuses changed checksums).
+  replays every migration's DDL and fails on drift). A new table also goes into
+  `extorq.storage.reset.DATA_TABLES` (or is protected there), otherwise
+  `test_platform_reset.py` fails: a clean slate must know every table. Schema changes
+  are new migrations (`infra/clickhouse/migrations/NNNN_name.sql`, idempotent
+  statements); applied files are immutable (the runner refuses changed checksums).
 * **Settings** subclass `extorq.common.config.ExtorQBaseSettings` (prefix `EXTORQ_`, no
   dotenv). Secrets are `SecretStr` fields and automatically accept `<ENV_NAME>_FILE`.
   Startup checks report missing setting *names*, never values.
@@ -59,10 +61,18 @@ make bootstrap && make up && make up-debug     # gateway 8443, ClickHouse debug 
 uv run extorq migrate --status
 uv run python scripts/smoke_ingest.py          # one SYNTHETIC event round trip
 make up-full                                   # + detector, ai-worker, api (8000), console, grafana (AI off)
-make up-demo                                   # the same with Jev/Gemini ON (live, budgeted calls)
+make up-demo                                   # the same with Jev triage ON (live, budgeted calls)
 make collectors-start                          # host collectors in the background (collectors-status/-stop)
-make demo-check                                # read-only readiness report (scenarios, freshness, endpoints)
+make reset-data                                # read-only plan and table counts
+make test-detections                           # real detection tests per asset (positives + negative controls)
+make demo-check                                # read-only readiness: telemetry per asset, rules, detection tests
 ```
+
+Use the [recovery runbook](../docs/recovery.md) for backup and clean-slate resets.
+The reset script verifies the data bundle before truncation, clears shared queues
+and re-baselines collectors with their source cursors intact. After partial
+mutation it keeps writers stopped. `extorq data counts` and `extorq spool status`
+are the read-only store commands.
 
 Gateway time window: events more than 1 day in the future or older than the `events`
 retention (90 days, `EXTORQ_EVENT_RETENTION_DAYS`, must equal the TTL in 0001) are
@@ -74,5 +84,5 @@ Dev servers bind other ports (API 8100, console 3100) so they never clash with c
 
 * `uv run pytest -q` (default markers exclude `integration`, `lab`, `live_ai`, `failure`).
 * Platform: `tests/unit/platform/`, `tests/integration/platform/` (`make test-integration`),
-  `tests/failure/` (`make test-failure`, agent A only: stops shared services).
+  `tests/failure/` (`make test-failure`, platform only: stops shared services).
 * Never claim a test passed without running it; record the command and result.

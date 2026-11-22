@@ -1,4 +1,4 @@
-"""Service-aware monitoring endpoints (contract schema 1.1, PLAN section 10).
+"""Service-aware monitoring endpoints (service model since contract schema 1.1, PLAN section 10).
 
 * ``GET /assets/{asset_id}/services``: services of one asset with a coverage summary.
 * ``GET /services``: services across assets (filters: asset, kind, category,
@@ -64,7 +64,8 @@ from extorq.contracts import AdapterSupport, MonitoringStatus, ServiceCategory, 
 
 log = get_logger("extorq.api.services")
 
-#: Upper bound of service records evaluated per request (lab scale is far below it).
+#: Upper bound of service records evaluated per request (a single-host deployment has a few
+#: hundred at most).
 SERVICE_SCAN_CAP = 2000
 INSTANCES_LIMIT = 200
 RECENT_EVENTS_LIMIT = 50
@@ -526,7 +527,7 @@ def _service_detail(
 
     # Same attribution rule as GET /findings?service_id= (latest observation wins).
     finding_rows, findings_total, lifecycle = repo.list_findings(
-        FindingFilters(service_id=service_id), SERVICE_FINDINGS_LIMIT, 0
+        FindingFilters(service_id=service_id, scope_asset=scope), SERVICE_FINDINGS_LIMIT, 0
     )
 
     alerts_range = s.TimeRange(since=now - ALERTS_WINDOW, until=now + timedelta(days=1))

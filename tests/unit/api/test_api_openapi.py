@@ -21,14 +21,13 @@ EXPECTED_OPERATIONS = {
     ("get", "/api/v1/alerts/{alert_id}"),
     ("get", "/api/v1/alerts/{alert_id}/context"),
     ("get", "/api/v1/alerts/{alert_id}/assessments"),
-    ("post", "/api/v1/alerts/{alert_id}/summary"),
     ("post", "/api/v1/alerts/{alert_id}/state"),
     ("get", "/api/v1/events"),
     ("get", "/api/v1/events/{event_id}"),
     ("get", "/api/v1/health"),
     ("get", "/api/v1/timeseries/alerts"),
     ("get", "/api/v1/timeseries/events"),
-    # Service-aware monitoring (PLAN section 10, schema 1.1)
+    # Service-aware monitoring (PLAN section 10)
     ("get", "/api/v1/assets/{asset_id}/services"),
     ("get", "/api/v1/services"),
     ("get", "/api/v1/services/{service_id}"),
@@ -54,3 +53,10 @@ def test_every_plan_endpoint_is_present_and_authenticated() -> None:
             assert {"X-ExtorQ-User", "X-ExtorQ-Role"} <= headers, (method, path)
             assert "401" in operation["responses"] and "403" in operation["responses"]
     assert spec["components"]["securitySchemes"]["ServiceToken"]["scheme"] == "bearer"
+
+
+def test_removed_concepts_are_absent_from_the_contract() -> None:
+    """Schema 2.0: no simulation fields or filters and no AI summary anywhere in the API."""
+    text = json.dumps(build_openapi()).lower()
+    for removed in ("simulation", "scenario_id", "/summary", "summaryresponse", "gemini"):
+        assert removed not in text, removed

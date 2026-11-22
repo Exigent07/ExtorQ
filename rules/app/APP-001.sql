@@ -1,16 +1,18 @@
--- APP-001 v1.0.0: burst of failed logins against an instrumented web application.
+-- APP-001 v1.1.0: burst of failed logins against an instrumented web application.
 --
--- Input: app.auth.login_failed (structured application security events: the lab app on
--- the Linux VM via linux.app, the same app in Kubernetes via k8s.container_log).
+-- Input: app.auth.login_failed (structured application security events of the web
+-- application: on the Linux VM via linux.app, the same application in Kubernetes via
+-- k8s.container_log). Successful logins are never counted.
 -- Two non-overlapping variants, each a sliding {window_seconds} window:
 --   guessing  >= {min_failures} failures for ONE user name (any sources) in one app
 --   spraying  >= {min_failures} failures from ONE source across >= {min_spray_users}
 --             distinct user names in one app
 -- One row per (asset, app, variant, key, bucket); the engine merges continuous bursts.
 -- The app is the attributed service (service_name), else the Kubernetes workload, pod or
--- the app's own service field. Confidence: high when the involved source addresses are not
--- shared NAT/gateway addresses; medium otherwise (lab traffic arrives via 10.0.2.2 on the VM
--- and 10.244.0.1 in kind). Duplicate-safe (LIMIT 1 BY event_id, uniqExact).
+-- the app's own service field. Confidence: high when every involved source address is
+-- known and none is a shared NAT/gateway address; medium otherwise (traffic from the Mac
+-- arrives via 10.0.2.2 on the VM and 10.244.0.1 in kind). Duplicate-safe (LIMIT 1 BY
+-- event_id, uniqExact).
 WITH
     ev AS (
         SELECT
@@ -25,8 +27,7 @@ WITH
                      'unknown') AS app,
             substring(ifNull(actor_name, ''), 1, 64) AS user_name,
             ifNull(src_ip, '') AS src,
-            JSONExtractString(attributes, 'reason') AS reason,
-            simulation_run_id
+            JSONExtractString(attributes, 'reason') AS reason
         FROM events
         WHERE event_time >= {window_start:DateTime64(3, 'UTC')}
           AND event_time < {window_end:DateTime64(3, 'UTC')}
@@ -93,8 +94,7 @@ SELECT
               'src_ip_shared_nat Bool, window_seconds UInt32)'))) AS features,
     c.bucket_start AS bucket_start,
     if(hasAny({shared_nat_ips:Array(String)}, groupUniqArrayIf(8)(e.src, e.src != ''))
-       OR countIf(e.src = '') > 0, 'medium', 'high') AS confidence,
-    groupUniqArray(16)(e.simulation_run_id) AS simulation_run_ids
+       OR countIf(e.src = '') > 0, 'medium', 'high') AS confidence
 FROM crossings AS c
 INNER JOIN ev AS e
     ON e.asset_id = c.asset_id AND e.app = c.app
@@ -103,4 +103,3 @@ WHERE ((c.variant = 'guessing' AND e.user_name = c.k) OR (c.variant = 'spraying'
   AND e.event_time <= c.last_crossing
 GROUP BY c.asset_id, c.app, c.variant, c.k, c.bucket_start
 ORDER BY first_seen
-LIMIT 1000

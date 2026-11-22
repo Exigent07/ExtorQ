@@ -18,7 +18,6 @@ from extorq_collectors.github.records import (
     normalize_protection,
     normalize_repo_settings,
     parse_time,
-    simulation_run_id,
 )
 from extorq_collectors.github.state import MAX_ETAGS, RepoState, checkpoint_key
 
@@ -34,20 +33,6 @@ def test_repo_ref_asset_ids_are_lower_case_and_validated() -> None:
             RepoRef.parse(bad)
 
 
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("ci: broaden permissions [extorq-sim abc12345]", "abc12345"),
-        ("branch extorq-sim-k3y9zz01x", "k3y9zz01x"),
-        ("extorq-sim-ABC12345", None),  # upper case is not a run id
-        ("extorq-sim-short", None),
-        ("no marker", None),
-    ],
-)
-def test_simulation_marker(text: str, expected: str | None) -> None:
-    assert simulation_run_id(text) == expected
-
-
 def test_clean_text_strips_controls_and_bounds() -> None:
     assert clean_text("a\x1b[31mred\x00\nline", 100) == "ared line"  # ANSI sequence removed
     assert len(clean_text("x" * 500, 50)) <= 50
@@ -56,12 +41,12 @@ def test_clean_text_strips_controls_and_bounds() -> None:
     assert "\n" in multi and "\x07" not in multi
 
 
-def test_clean_redacted_removes_tokens_and_lab_fake_secret() -> None:
+def test_clean_redacted_removes_tokens_and_named_credentials() -> None:
     synthetic_pat = "ghp_" + "A1b2C3d4" * 4 + "Zz9Y"
-    fake = "EXTORQ_TEST_SECRET_" + "LABFAKE" + "X" * 17
-    text, count, truncated = clean_redacted(f"leak {synthetic_pat} and {fake}", 500)
+    fake = "synthetic-credential-" + "X" * 17
+    text, count, truncated = clean_redacted(f"leak {synthetic_pat} and password={fake}", 500)
     assert synthetic_pat not in text and fake not in text
-    assert "[REDACTED:lab_fake_secret]" in text
+    assert "[REDACTED:secret]" in text
     assert count >= 2 and truncated is False
 
 
@@ -174,8 +159,12 @@ def test_config_validation() -> None:
     )
     assert [r.full_name for r in cfg.repos] == ["Example-Org/extorq-lab", "example-org/other"]
     assert cfg.repos[1].branches == ("release/1.x",)
-    assert cfg.allow_gh_cli_token is False and cfg.gh_hostname == "github.com"
-    assert GitHubCollectorConfig.from_mapping({"gh_cli_token_fallback": True}).allow_gh_cli_token
+    assert cfg.allow_gh_cli_token is False
+    assert not GitHubCollectorConfig.from_mapping(
+        {"gh_cli_token_fallback": False}
+    ).allow_gh_cli_token
+    with pytest.raises(ValueError):
+        GitHubCollectorConfig.from_mapping({"gh_cli_token_fallback": True})
     assert GitHubCollectorConfig.from_mapping({}).repos == ()
     with pytest.raises(ValueError, match="duplicate"):
         GitHubCollectorConfig.from_mapping({"repos": ["a-b/c", "A-B/C"]})
@@ -190,7 +179,7 @@ def test_config_validation() -> None:
     with pytest.raises(ValueError):
         GitHubCollectorConfig.from_mapping({"page_size": 1000})
     enterprise = GitHubCollectorConfig.from_mapping({"api_base_url": "https://ghe.example/api/v3"})
-    assert enterprise.gh_hostname == "ghe.example"
+    assert enterprise.api_base_url == "https://ghe.example/api/v3"
 
 
 @pytest.mark.parametrize(
@@ -227,13 +216,14 @@ def test_event_builder_produces_contract_valid_events() -> None:
         event_time=now,
         observed_time=now,
         action="commit",
-        message="Commit\x1b[2J aaaa",
-        sim_run_id="abc12345",
+        message="Commit\x1b[2J aaaa [extorq-sim abc12345]",
     )
     assert isinstance(event, SecurityEvent)
     assert event.asset_id == "github:example-org/extorq-lab"
     assert event.category.value == "source_control"
-    assert event.simulation is not None and event.simulation.run_id == "abc12345"
+    assert "simulation" not in event.model_dump()
+    assert event.provenance.parser == "github-api"
+    assert "abc12345" in (event.message or "")
     assert "\x1b" not in (event.message or "")
     again = builder.build(
         event_type="github.commit.observed",

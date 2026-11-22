@@ -4,6 +4,14 @@ Commands owned by other teams resolve their module only when invoked; a module
 that does not exist yet produces a clear error and exit code 3 instead of
 breaking unrelated commands (``extorq gateway`` must work before ``extorq api``
 exists).
+
+Operator commands for a clean slate (``make reset-data`` runs them in one-off
+containers after stopping the pipeline; never run them against a live pipeline):
+
+* ``extorq data counts`` / ``extorq data reset --yes``: ClickHouse row counts and
+  TRUNCATE of the data tables (admin identity; ``extorq.storage.reset``);
+* ``extorq spool status`` / ``extorq spool clear --yes``: the gateway spool
+  (``extorq.pipeline.spool``).
 """
 
 from __future__ import annotations
@@ -23,10 +31,16 @@ app = typer.Typer(
     add_completion=False,
     pretty_exceptions_enable=False,
 )
-rules_app = typer.Typer(help="Detection rules (owner: C2).", no_args_is_help=True)
-context_app = typer.Typer(help="Investigation contexts (owner: C2).", no_args_is_help=True)
+rules_app = typer.Typer(help="Detection rules.", no_args_is_help=True)
+context_app = typer.Typer(help="Investigation contexts.", no_args_is_help=True)
 ai_app = typer.Typer(
-    help="AI enrichment (owner: E). Uses budgeted providers.", no_args_is_help=True
+    help="AI triage (Jev only; advisory, budgeted, off unless enabled).", no_args_is_help=True
+)
+data_app = typer.Typer(
+    help="ClickHouse data counts and clean-slate reset (admin identity).", no_args_is_help=True
+)
+spool_app = typer.Typer(
+    help="Gateway spool inspection and clean-slate clear.", no_args_is_help=True
 )
 healthcheck_app = typer.Typer(
     help="Container healthchecks (used by compose).", hidden=True, no_args_is_help=True
@@ -34,6 +48,8 @@ healthcheck_app = typer.Typer(
 app.add_typer(rules_app, name="rules")
 app.add_typer(context_app, name="context")
 app.add_typer(ai_app, name="ai")
+app.add_typer(data_app, name="data")
+app.add_typer(spool_app, name="spool")
 app.add_typer(healthcheck_app, name="healthcheck")
 
 EXIT_MODULE_MISSING = 3
@@ -88,7 +104,7 @@ def _print_model(model: Any) -> None:
         typer.echo(json.dumps(model, indent=2, default=str))
 
 
-# ── platform services (owner: A) ──────────────────────────────────────
+# ── platform services (owner: platform) ───────────────────────────────
 
 
 @app.command()
@@ -147,7 +163,79 @@ def version() -> None:
     typer.echo(__version__)
 
 
-# ── detection (owner: C2) ─────────────────────────────────────────────
+ConfirmOpt = Annotated[
+    bool, typer.Option("--yes", help="Confirm the destructive operation (required).")
+]
+
+
+@data_app.command("counts")
+def data_counts() -> None:
+    """Print physical row counts per ClickHouse table as one JSON line (counts only)."""
+    main: Callable[..., int] = load("extorq.storage.reset", "main")
+    _exit(main(confirm=False, counts_only=True))
+
+
+@data_app.command("reset")
+def data_reset(yes: ConfirmOpt = False) -> None:
+    """TRUNCATE every data table (never schema_migrations, users or grants); JSON counts.
+
+    Use 'make reset-data' to quiesce the pipeline and verify the recovery bundle first.
+    """
+    main: Callable[..., int] = load("extorq.storage.reset", "main")
+    _exit(main(confirm=yes))
+
+
+@data_app.command("backup")
+def data_backup(archive: str) -> None:
+    """Stage a native database archive on the private ClickHouse backup disk."""
+    main: Callable[..., int] = load("extorq.storage.recovery", "main")
+    _exit(main(archive=archive))
+
+
+@data_app.command("restore")
+def data_restore(
+    archive: str,
+    yes: ConfirmOpt = False,
+    expected_schema: Annotated[
+        str | None,
+        typer.Option(
+            "--expected-schema", help="Backup schema digest for an empty migrated target."
+        ),
+    ] = None,
+) -> None:
+    """Restore a staged archive on a fresh, disposable ClickHouse server."""
+    if not yes:
+        typer.echo("restore requires --yes and a disposable target", err=True)
+        raise typer.Exit(2)
+    main: Callable[..., int] = load("extorq.storage.recovery", "main")
+    _exit(main(archive=archive, restore=True, expected_schema=expected_schema))
+
+
+@spool_app.command("status")
+def spool_status() -> None:
+    """Print row counts per spool table as one JSON line (read-only)."""
+    main: Callable[..., int] = load("extorq.pipeline.spool", "admin_main")
+    _exit(main(confirm=False, status_only=True))
+
+
+@spool_app.command("clear")
+def spool_clear(yes: ConfirmOpt = False) -> None:
+    """Empty the spool: queued records, replay results, dedup keys, dead letters, counters.
+
+    Only while the ingest and writer services are stopped ('make reset-data').
+    """
+    main: Callable[..., int] = load("extorq.pipeline.spool", "admin_main")
+    _exit(main(confirm=yes))
+
+
+@spool_app.command("seed-event-identities")
+def spool_seed_event_identities(yes: ConfirmOpt = False) -> None:
+    """Import replay fingerprints from retained events while ingest and writer are paused."""
+    main: Callable[..., int] = load("extorq.storage.seed_event_identities", "main")
+    _exit(main(confirm=yes))
+
+
+# ── detection ─────────────────────────────────────────────────────────
 
 
 @app.command()
@@ -190,7 +278,7 @@ def context_build(alert_id: str) -> None:
     _print_model(ctx)
 
 
-# ── AI (owner: E) ─────────────────────────────────────────────────────
+# ── AI (Jev triage only) ──────────────────────────────────────────────
 
 
 @app.command("ai-worker")
@@ -207,13 +295,6 @@ def ai_triage(alert_id: str, requested_by: str = "system:cli") -> None:
     _print_model(service_cls().request_triage(alert_id, requested_by))
 
 
-@ai_app.command("summary")
-def ai_summary(alert_id: str, requested_by: str = "analyst:cli") -> None:
-    """Request a Gemini summary for ALERT_ID (budgeted)."""
-    service_cls = load("extorq.ai.service", "AIService")
-    _print_model(service_cls().request_summary(alert_id, requested_by))
-
-
 @ai_app.command("eval", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def ai_eval(ctx: typer.Context) -> None:
     """Run the AI evaluation harness (arguments are passed through)."""
@@ -221,7 +302,7 @@ def ai_eval(ctx: typer.Context) -> None:
     _exit(main(list(ctx.args)))
 
 
-# ── API (owner: D1) ───────────────────────────────────────────────────
+# ── analyst API ───────────────────────────────────────────────────────
 
 
 @app.command()

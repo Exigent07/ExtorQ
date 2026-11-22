@@ -1,7 +1,7 @@
 {
   "uid": "extorq-linux",
   "title": "ExtorQ - Linux Investigation",
-  "description": "SSH authentication, sudo, systemd persistence and HTTP probing on Linux hosts (asset_type linux_host). All text fields are attacker-controllable telemetry.",
+  "description": "Linux hosts (asset_type linux_host): SSH authentication, sudo, accounts, systemd and cron persistence, HTTP probing and application logins. Sources: linux.journald, linux.auditd, linux.inventory, linux.nginx, linux.app (Linux SSH collector). host = the name inside the asset id. All text fields are attacker-controllable telemetry.",
   "tags": [
     "extorq"
   ],
@@ -54,7 +54,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "SSH authentication failures by source IP",
-      "description": "Failed, invalid-user, pre-auth-closed and max-auth-exceeded sshd events (VM-001 inputs).",
+      "description": "Failed, invalid-user, pre-auth-closed and max-auth-exceeded sshd events per source address (VM-001 inputs). Source: linux.journald. Behind NAT every client shares one address.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -89,12 +89,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -104,6 +105,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -127,7 +131,7 @@
       "id": 3,
       "type": "stat",
       "title": "Successful SSH logins",
-      "description": "Distinct successful sshd logins in the range.",
+      "description": "Distinct successful sshd logins in the range on Linux hosts. Source: linux.journald. Compare with the failures: success after a failure burst matters.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -162,7 +166,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -182,7 +186,7 @@
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
-        "textMode": "value_and_name",
+        "textMode": "value",
         "orientation": "auto"
       }
     },
@@ -190,7 +194,7 @@
       "id": 4,
       "type": "table",
       "title": "SSH failure sources",
-      "description": "Per source: distinct failure events, distinct (src_ip, src_port) connections (VM-001 counts connections) and attempted user names.",
+      "description": "Per host and source: distinct failure events, distinct (src_ip, src_port) connections (VM-001 counts connections, threshold 5 in 5 min) and attempted user names. Source: linux.journald.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -212,7 +216,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT asset_id, ifNull(src_ip, 'unknown') AS source_ip, uniqExact(event_id) AS failures,\n       uniqExact(tuple(src_ip, src_port)) AS connections, uniqExact(actor_name) AS users,\n       min(event_time) AS first_seen, max(event_time) AS last_seen\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND event_type IN ('auth.ssh.login_failed', 'auth.ssh.invalid_user', 'auth.ssh.preauth_closed', 'auth.ssh.max_auth_exceeded')\nGROUP BY asset_id, source_ip\nORDER BY failures DESC\nLIMIT 50"
+          "rawSql": "SELECT replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, ifNull(src_ip, 'unknown') AS source_ip,\n       uniqExact(event_id) AS failures, uniqExact(tuple(src_ip, src_port)) AS connections,\n       uniqExact(actor_name) AS users, min(event_time) AS first_seen,\n       max(event_time) AS last_seen\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND event_type IN ('auth.ssh.login_failed', 'auth.ssh.invalid_user', 'auth.ssh.preauth_closed', 'auth.ssh.max_auth_exceeded')\nGROUP BY host, source_ip\nORDER BY failures DESC\nLIMIT 50"
         }
       ],
       "fieldConfig": {
@@ -225,7 +229,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -236,7 +240,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -253,7 +258,7 @@
       "id": 5,
       "type": "table",
       "title": "Recent SSH logins",
-      "description": "Successful sshd logins (auth_method empty when not reported).",
+      "description": "Successful sshd logins, newest first. Source: linux.journald. auth_method is empty when sshd did not report it.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -275,7 +280,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT event_time, asset_id, actor_name AS user, src_ip,\n       JSONExtractString(attributes, 'auth_method') AS auth_method\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND event_type = 'auth.ssh.login_succeeded'\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 100"
+          "rawSql": "SELECT event_time, replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, actor_name AS user, src_ip,\n       JSONExtractString(attributes, 'auth_method') AS auth_method\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND event_type = 'auth.ssh.login_succeeded'\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 100"
         }
       ],
       "fieldConfig": {
@@ -288,7 +293,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -299,7 +304,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -315,7 +321,7 @@
     {
       "id": 6,
       "type": "row",
-      "title": "Privilege use",
+      "title": "Privilege use and accounts",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -328,15 +334,15 @@
     {
       "id": 7,
       "type": "table",
-      "title": "sudo commands",
-      "description": "sudo commands and failures. Command lines are redacted at ingestion for known secret patterns; treat them as sensitive.",
+      "title": "sudo commands and failures",
+      "description": "sudo commands and denials, newest first. Source: linux.journald. Command lines are redacted at ingestion for known secret patterns; still treat them as sensitive.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 14,
         "x": 0,
         "y": 18
       },
@@ -351,7 +357,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT event_time, asset_id, event_type, actor_name AS user,\n       JSONExtractString(attributes, 'run_as') AS run_as, outcome,\n       process_command_line AS command\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND event_type IN ('auth.sudo.command', 'auth.sudo.failure')\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+          "rawSql": "SELECT event_time, replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, event_type, actor_name AS user,\n       JSONExtractString(attributes, 'run_as') AS run_as, outcome,\n       process_command_line AS command\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND event_type IN ('auth.sudo.command', 'auth.sudo.failure')\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
         }
       ],
       "fieldConfig": {
@@ -364,7 +370,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -375,7 +381,109 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "outcome"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "success": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "failure": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "denied": {
+                        "color": "red",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Local accounts and cron changes",
+      "description": "Local accounts that appeared or disappeared and cron configuration changes between inventory snapshots (VM-003 and VM-004 inputs). Source: linux.inventory. The change time is the snapshot that saw it, not the second it happened.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "extorq-clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 14,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "extorq-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.23.5",
+          "rawSql": "SELECT event_time, replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, event_type, actor_name AS account,\n       JSONExtractString(attributes, 'uid') AS uid, JSONExtractString(attributes, 'shell') AS shell,\n       resource_path AS path, JSONExtractString(attributes, 'sha256') AS sha256\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND event_type IN ('account.user.created', 'account.user.deleted', 'persistence.cron.changed')\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -389,7 +497,7 @@
       }
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "row",
       "title": "Persistence",
       "collapsed": false,
@@ -402,10 +510,10 @@
       "panels": []
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "table",
       "title": "systemd persistence changes",
-      "description": "Unit created/modified/deleted/enabled (inventory diff) and auditd watches on systemd paths (VM-002 inputs).",
+      "description": "systemd units created, modified, deleted or enabled and auditd watches on systemd paths: the VM-002 inputs. Sources: linux.inventory (snapshot diff), linux.auditd (watch key extorq_systemd). Both sources agreeing raises VM-002's confidence.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -427,7 +535,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT event_time, asset_id, event_type, resource_name AS unit, resource_path AS path,\n       JSONExtractString(attributes, 'sha256') AS sha256,\n       JSONExtractString(attributes, 'exec_start') AS exec_start, source_type\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND (event_type IN ('persistence.systemd.unit_created', 'persistence.systemd.unit_modified', 'persistence.systemd.unit_deleted', 'persistence.systemd.unit_enabled')\n       OR (event_type = 'file.audit.watch'\n           AND JSONExtractString(attributes, 'audit_key') = 'extorq_systemd'))\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
+          "rawSql": "SELECT event_time, replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, event_type, resource_name AS unit, resource_path AS path,\n       JSONExtractString(attributes, 'sha256') AS sha256,\n       JSONExtractString(attributes, 'exec_start') AS exec_start, source_type\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND (event_type IN ('persistence.systemd.unit_created', 'persistence.systemd.unit_modified', 'persistence.systemd.unit_deleted', 'persistence.systemd.unit_enabled')\n       OR (event_type = 'file.audit.watch'\n           AND JSONExtractString(attributes, 'audit_key') = 'extorq_systemd'))\nORDER BY event_time DESC\nLIMIT 1 BY event_id\nLIMIT 200"
         }
       ],
       "fieldConfig": {
@@ -440,7 +548,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -451,7 +559,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -465,10 +574,10 @@
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "timeseries",
       "title": "Persistence events by type",
-      "description": "Distinct persistence-related events per interval.",
+      "description": "Distinct persistence-related events per interval (systemd units, daemon reloads, cron changes, auditd systemd watches). Sources: linux.inventory, linux.journald, linux.auditd.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -490,7 +599,7 @@
           "format": 0,
           "queryType": "timeseries",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT $__timeInterval(event_time) AS time, event_type, uniqExact(event_id) AS events\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND (event_type IN ('persistence.systemd.unit_created', 'persistence.systemd.unit_modified', 'persistence.systemd.unit_deleted', 'persistence.systemd.unit_enabled', 'system.systemd.daemon_reload')\n       OR (event_type = 'file.audit.watch'\n           AND JSONExtractString(attributes, 'audit_key') = 'extorq_systemd'))\nGROUP BY time, event_type\nORDER BY time, event_type"
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, event_type, uniqExact(event_id) AS events\nFROM extorq.events\nWHERE $__timeFilter(event_time) AND asset_type = 'linux_host'\n  AND (event_type IN ('persistence.systemd.unit_created', 'persistence.systemd.unit_modified', 'persistence.systemd.unit_deleted', 'persistence.systemd.unit_enabled', 'system.systemd.daemon_reload',\n                      'persistence.cron.changed')\n       OR (event_type = 'file.audit.watch'\n           AND JSONExtractString(attributes, 'audit_key') = 'extorq_systemd'))\nGROUP BY time, event_type\nORDER BY time, event_type"
         }
       ],
       "fieldConfig": {
@@ -503,12 +612,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -518,6 +628,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -538,9 +651,9 @@
       }
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "row",
-      "title": "HTTP",
+      "title": "HTTP and web application",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -551,10 +664,10 @@
       "panels": []
     },
     {
-      "id": 12,
+      "id": 13,
       "type": "timeseries",
       "title": "HTTP responses by status class",
-      "description": "Requests seen by the web server/application per HTTP status class.",
+      "description": "Requests seen by web servers and applications per HTTP status class. Sources: linux.nginx, linux.apache, linux.app. A rise in 4xx often means probing.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -589,12 +702,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -604,6 +718,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -624,10 +741,10 @@
       }
     },
     {
-      "id": 13,
+      "id": 14,
       "type": "table",
       "title": "Route probing: routes with client errors",
-      "description": "Routes requested in the range (route text is attacker-controlled).",
+      "description": "Routes requested in the range, ranked by 4xx answers (HTTP-001 looks for many probe-like paths from one source). Sources: linux.nginx, linux.apache, linux.app. Route text is attacker-controlled; query strings are stripped at collection.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -662,7 +779,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -673,7 +790,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -687,10 +805,10 @@
       }
     },
     {
-      "id": 14,
+      "id": 15,
       "type": "table",
       "title": "Probing sources",
-      "description": "Sources ranked by client errors and distinct routes (probing indicators).",
+      "description": "Client addresses ranked by client errors and distinct routes (probing indicators). Sources: linux.nginx, linux.apache, linux.app.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -725,7 +843,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -736,7 +854,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
         "overrides": []
@@ -750,10 +869,10 @@
       }
     },
     {
-      "id": 15,
+      "id": 16,
       "type": "timeseries",
       "title": "Application authentication failures",
-      "description": "Structured authentication/authorization failures from the lab web application.",
+      "description": "Structured login failures and authorization denials written by web applications on Linux hosts (the lab-portal app's JSON log; APP-001 inputs). Source: linux.app.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -788,12 +907,13 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
           },
           "mappings": [],
+          "min": 0,
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
@@ -803,6 +923,9 @@
             "stacking": {
               "mode": "normal",
               "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -823,7 +946,7 @@
       }
     },
     {
-      "id": 16,
+      "id": 17,
       "type": "row",
       "title": "Services on Linux hosts",
       "collapsed": false,
@@ -836,10 +959,10 @@
       "panels": []
     },
     {
-      "id": 17,
+      "id": 18,
       "type": "table",
       "title": "Services",
-      "description": "Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source. Endpoint attribution: confirmed (socket owner observed), inferred (configuration/well-known port), unknown.",
+      "description": "Current state: services discovered on Linux hosts (systemd units, processes, listening sockets) with their adapter and coverage. Source: v_services (Linux service discovery). Endpoint attribution: confirmed (socket owner observed), inferred (configuration or well-known port), unknown. Coverage: unsupported = no adapter; planned = extension point only, no telemetry; unmonitored = adapter not enabled; degraded = stale/failing (also when the discovery record is older than 1 h); monitored = enabled and fresh. The console/API also checks collector staleness per telemetry source.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "extorq-clickhouse"
@@ -861,7 +984,7 @@
           "format": 1,
           "queryType": "table",
           "pluginVersion": "4.23.5",
-          "rawSql": "SELECT asset_id, name AS service, service_kind AS kind, category, product,\n       adapter_id AS adapter, adapter_support, monitoring_status,\n       multiIf(adapter_support = 'none', 'unsupported', adapter_support = 'planned', 'planned', monitoring_status = 'unmonitored', 'unmonitored', monitoring_status = 'degraded', 'degraded', last_seen < now() - INTERVAL 1 HOUR, 'degraded (stale record)', 'monitored') AS coverage, arrayStringConcat(arrayMap(e -> concat(JSONExtractString(e, 'protocol'), '/', toString(JSONExtractUInt(e, 'port')), ' ', JSONExtractString(e, 'exposure'), ' (', JSONExtractString(e, 'attribution'), ')'), JSONExtractArrayRaw(endpoints)), ', ') AS endpoints,\n       arrayStringConcat(telemetry_sources, ', ') AS telemetry_sources,\n       instance_count, last_seen AS discovery_refreshed, coverage_note\nFROM extorq.v_services\nWHERE present = 1\n  AND asset_id IN (SELECT asset_id FROM extorq.v_assets WHERE asset_type = 'linux_host')\nORDER BY asset_id, coverage, name\nLIMIT 500"
+          "rawSql": "SELECT replaceRegexpOne(asset_id, '^[a-z0-9]+:', '') AS host, name AS service, service_kind AS kind, category, product,\n       adapter_id AS adapter, adapter_support, monitoring_status,\n       multiIf(adapter_support = 'none', 'unsupported', adapter_support = 'planned', 'planned', monitoring_status = 'unmonitored', 'unmonitored', monitoring_status = 'degraded', 'degraded', last_seen < now() - INTERVAL 1 HOUR, 'degraded (stale record)', 'monitored') AS coverage, arrayStringConcat(arrayMap(e -> concat(JSONExtractString(e, 'protocol'), '/', toString(JSONExtractUInt(e, 'port')), ' ', JSONExtractString(e, 'exposure'), ' (', JSONExtractString(e, 'attribution'), ')'), JSONExtractArrayRaw(endpoints)), ', ') AS endpoints,\n       arrayStringConcat(telemetry_sources, ', ') AS telemetry_sources,\n       instance_count, last_seen AS discovery_refreshed, coverage_note\nFROM extorq.v_services\nWHERE present = 1\n  AND asset_id IN (SELECT asset_id FROM extorq.v_assets WHERE asset_type = 'linux_host')\nORDER BY host, coverage, name\nLIMIT 500"
         }
       ],
       "fieldConfig": {
@@ -874,7 +997,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
               }
             ]
@@ -885,10 +1008,56 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": true
+            "inspect": true,
+            "filterable": true
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "coverage"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "monitored": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "degraded": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "degraded (stale record)": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "unmonitored": {
+                        "color": "orange",
+                        "index": 3
+                      },
+                      "planned": {
+                        "color": "blue",
+                        "index": 4
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
