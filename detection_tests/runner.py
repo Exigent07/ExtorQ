@@ -70,6 +70,7 @@ from detection_tests.windows import (
     event_matches,
     extended_alerts,
     format_time,
+    joined_alerts,
     match_telemetry,
     parse_time,
     quiet_period_remaining,
@@ -121,6 +122,8 @@ class ApiLike(Protocol):
 @dataclass(frozen=True)
 class RunOptions:
     skip_negatives: bool = False
+    #: Batch mode: every test runs concurrently and NEGATIVE-FIRST (see Runner.run_batch).
+    batch: bool = False
     #: Seconds between two API polls while waiting.
     poll_seconds: float = 10.0
     #: Tolerated clock difference between the Mac and an asset (the VM's journald clock).
@@ -227,6 +230,12 @@ class _Baseline:
     rule_last_seen: dict[str, datetime] = field(default_factory=dict)
 
 
+#: Rules that cannot run inside a concurrent batch (see Runner.run_batch).
+BATCH_EXCLUDED = frozenset({"CORR-002"})
+#: (asset key, rule) -> group; tests of one group run one after another inside a batch.
+BATCH_SERIAL_GROUPS = {("macos", "MAC-001"): "launchd", ("macos", "MAC-002"): "launchd"}
+
+
 class Runner:
     """Executes suites and returns one :class:`TestResult` per selected test."""
 
@@ -267,6 +276,66 @@ class Runner:
             for future in futures:
                 ordered.extend(future.result())
             return ordered
+
+    def run_batch(self, suites: Sequence[AssetSuite]) -> list[TestResult]:
+        """Run every test of every suite CONCURRENTLY, each one negative-first.
+
+        Why negative-first: a negative control must not share a detection window with the
+        positive (VM-001 looks back five minutes), so after a positive the negative would have
+        to wait that long. Run first, the benign control is observed silent, then the positive
+        must still fire. Tests are independent threads, so the wall clock is roughly two short
+        waves instead of the sum of all tests.
+
+        Not batched (their results would be unsound):
+        * ``BATCH_EXCLUDED`` (CORR-002) needs a quiet 30-minute window and its own ordering;
+          run it BEFORE the batch (``--only CORR-002``).
+        * tests in one ``BATCH_SERIAL_GROUPS`` group run one after another because their
+          activity is visible to each other's rules (MAC-001 fires on ANY new LaunchAgent).
+        The GitHub tests overlap their waits but push one at a time (LabRepository lock).
+        """
+        out = self.output.scoped("batch")
+        jobs: list[tuple[AssetSuite, DetectionTest, Sequence[StepResult]]] = []
+        blocked: list[TestResult] = []
+        for suite in suites:
+            suite_out = self.output.scoped(suite.asset.key)
+            ctx = TestContext(self.root, self.api, self.clock, self.options, suite_out)
+            try:
+                checks = self._asset_checks(suite, ctx)
+            except PreconditionFailed as exc:
+                suite_out(f"BLOCKED: {exc}")
+                now = self.clock.now()
+                blocked.extend(
+                    TestResult(
+                        spec=t.spec,
+                        status=TestStatus.BLOCKED,
+                        started_at=now,
+                        finished_at=now,
+                        message=f"asset precondition failed: {exc}",
+                    )
+                    for t in suite.tests
+                )
+                continue
+            for test in suite.tests:
+                if test.spec.rule_id in BATCH_EXCLUDED:
+                    out(f"{test.spec.rule_id} is not part of a batch (run it separately)")
+                    continue
+                jobs.append((suite, test, checks))
+        group_locks = {g: threading.Lock() for g in set(BATCH_SERIAL_GROUPS.values())}
+        out(f"batch of {len(jobs)} test(s) starting together")
+
+        def work(job: tuple[AssetSuite, DetectionTest, Sequence[StepResult]]) -> TestResult:
+            suite, test, checks = job
+            group = BATCH_SERIAL_GROUPS.get((suite.asset.key, test.spec.rule_id))
+            if group is None or self._instant:  # no negatives => no cross-contamination
+                return self.run_test(test, checks)
+            with group_locks[group]:
+                return self.run_test(test, checks)
+
+        if not jobs:
+            return blocked
+        with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="batch") as pool:
+            results = [f.result() for f in [pool.submit(work, job) for job in jobs]]
+        return blocked + results
 
     def run_suite(self, suite: AssetSuite) -> list[TestResult]:
         out = self.output.scoped(suite.asset.key)
@@ -412,7 +481,7 @@ class Runner:
                 return result
             phases = (
                 (PhaseKind.NEGATIVE, PhaseKind.POSITIVE)
-                if spec.negative_first
+                if spec.negative_first or (self.options.batch and not spec.positive_first_in_batch)
                 else (PhaseKind.POSITIVE, PhaseKind.NEGATIVE)
             )
             previous_end: datetime | None = None
@@ -515,8 +584,16 @@ class Runner:
             now=self.clock.now(),
         )
 
+    @property
+    def _instant(self) -> bool:
+        """Positives-only batch (``--batch --skip-negatives``): one concurrent wave."""
+        return self.options.batch and self.options.skip_negatives
+
     def _quiet_period(self, spec: TestSpec, rule: Mapping[str, Any], ctx: TestContext) -> None:
-        if spec.fresh_group:
+        if spec.fresh_group or self._instant:
+            # Instant mode does not wait for an earlier alert's episode to close: a positive is
+            # accepted only if an alert's EVIDENCE contains this run's own telemetry, which an
+            # extended (merged-into) alert satisfies and a stale one never can.
             return
         record = rule.get("rule") if isinstance(rule.get("rule"), Mapping) else {}
         gap = continuation_gap_seconds(record if isinstance(record, Mapping) else {})
@@ -646,6 +723,20 @@ class Runner:
                     baseline_ids=baseline.rule_ids,
                     skew_seconds=self.options.clock_skew_seconds,
                 )
+                if self.options.batch:
+                    known = {str(a.get("alert_id")) for a in found}
+                    found += [
+                        a
+                        for a in joined_alerts(
+                            alerts,
+                            rule_id=spec.rule_id,
+                            asset_id=spec.asset.asset_id,
+                            start=window.start,
+                            baseline_ids=frozenset() if self._instant else baseline.rule_ids,
+                            skew_seconds=self.options.clock_skew_seconds,
+                        )
+                        if str(a.get("alert_id")) not in known
+                    ]
                 last_error = None
             except ApiError as exc:
                 found, alerts, last_error = [], [], str(exc)

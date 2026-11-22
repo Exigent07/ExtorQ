@@ -163,3 +163,23 @@ def test_invalid_settings_fail_setup(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         GitHubCollector().setup(ctx)
     store.close()
+
+
+def test_plan_limit_gaps_are_listed_but_do_not_degrade_the_collector() -> None:
+    from extorq_collectors.github.collector import _is_plan_limit
+
+    free_plan = [
+        "o/r: branch_protection:main: feature unavailable or not authorised "
+        "(HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature.)",
+        "o/r: code_scanning_alerts: feature unavailable or not authorised "
+        "(HTTP 403: Code scanning is not enabled for this repository.)",
+    ]
+    free_plan.append(
+        "o/r: security_and_analysis: security_and_analysis not visible to this token (requires admin access)"
+    )
+    assert all(_is_plan_limit(g) for g in free_plan)
+    # A genuine authorisation failure or a truncation must still degrade.
+    assert not _is_plan_limit(
+        "o/r: dependabot_alerts: feature unavailable or not authorised (HTTP 403: Resource not accessible by personal access token)"
+    )
+    assert not _is_plan_limit("o/r: workflow_runs: listing truncated at 10 pages")

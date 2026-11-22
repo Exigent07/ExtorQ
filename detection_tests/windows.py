@@ -187,6 +187,36 @@ def select_new_alerts(
     return selected
 
 
+def joined_alerts(
+    alerts: Iterable[Mapping[str, Any]],
+    *,
+    rule_id: str,
+    asset_id: str,
+    start: datetime,
+    baseline_ids: frozenset[str] | set[str],
+    skew_seconds: float,
+) -> list[Mapping[str, Any]]:
+    """Alerts created after the phase began whose ``first_seen`` precedes it (batch mode).
+
+    Window-bucket rules cite ALL activity of the bucket, so when a test runs negative-first the
+    alert raised by the positive also cites the benign control's events and starts at the
+    control. Such an alert only counts if it is new (not in the baseline), still active inside
+    the window, and the caller then verifies that its evidence contains the positive's telemetry.
+    """
+    selected: list[Mapping[str, Any]] = []
+    for alert in alerts:
+        if alert.get("asset_id") != asset_id or alert.get("rule_id") != rule_id:
+            continue
+        if str(alert.get("alert_id")) in baseline_ids:
+            continue
+        last_seen = parse_time(alert.get("last_seen"))
+        if last_seen is None or last_seen < start - timedelta(seconds=skew_seconds):
+            continue
+        selected.append(alert)
+    selected.sort(key=lambda a: (str(a.get("first_seen")), str(a.get("alert_id"))))
+    return selected
+
+
 def extended_alerts(
     alerts: Iterable[Mapping[str, Any]],
     *,

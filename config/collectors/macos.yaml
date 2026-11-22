@@ -8,12 +8,12 @@ collectors:
     asset_id: macos:workstation-01
     module: extorq_collectors.macos.collector:MacOSCollector
     # The runner calls the collector every 60 s; each source below runs when due.
-    interval_seconds: 60
+    interval_seconds: 10
     enabled: true
     settings:
       unified_log:
         enabled: true
-        interval_seconds: 60
+        interval_seconds: 10
         # Names only; predicates are fixed in code (unified_log.PRODUCERS).
         producers:
           - sudo
@@ -35,7 +35,7 @@ collectors:
         resolve_generated_uid: true
       launchd:
         enabled: true
-        interval_seconds: 60
+        interval_seconds: 10
         full_inventory_seconds: 3600
         # Known-legitimate labels: events are STILL emitted, with attributes.allowlisted=true.
         allowlist:
@@ -48,7 +48,7 @@ collectors:
         # Listening sockets every minute: an all-interfaces listener is security relevant
         # (MAC-003) and short-lived listeners would be missed by the 300 s inventory.
         enabled: true
-        interval_seconds: 60
+        interval_seconds: 10
         include_udp: true
         full_inventory_seconds: 3600
         command_timeout_seconds: 30
@@ -78,7 +78,7 @@ collectors:
         # /Applications and ~/Applications every minute -> software.installed/removed with
         # the codesign status of NEW bundles only (MAC-005).
         enabled: true
-        interval_seconds: 60
+        interval_seconds: 10
         include_user_applications: true
         settle_seconds: 30            # wait until a copied bundle is complete (no false
         max_defer_scans: 5            #   "invalid signature" mid-copy), at most 5 scans

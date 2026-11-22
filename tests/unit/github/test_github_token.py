@@ -82,3 +82,29 @@ def test_token_path_must_not_be_a_symlink(tmp_path: Path) -> None:
     link.symlink_to(write_token(tmp_path / "readonly-pat"))
     with pytest.raises(TokenUnavailable, match="cannot be opened"):
         read_token_file(link)
+
+
+BROAD_TOKEN = "gho_" + "B" * 36  # synthetic OAuth-shaped value (what `gh auth token` returns)
+
+
+def test_broad_oauth_token_is_rejected_unless_the_operator_opts_in(tmp_path: Path) -> None:
+    path = write_token(tmp_path / "pat", BROAD_TOKEN)
+    with pytest.raises(TokenUnavailable, match="fine-grained"):
+        resolve_token(config_token_file=str(path), environ={})
+    token = resolve_token(config_token_file=str(path), environ={}, allow_broad_token=True)
+    assert token.kind == "broad_token" and token.value == BROAD_TOKEN
+    assert BROAD_TOKEN not in repr(token)
+
+
+def test_opt_in_does_not_widen_what_is_accepted(tmp_path: Path) -> None:
+    """The flag admits only GitHub's own broad-token prefixes, nothing arbitrary."""
+    for bad in ("x" * 40, "ghs_" + "S" * 36, "Bearer " + "g" * 30):
+        path = write_token(tmp_path / "t", bad)
+        with pytest.raises(TokenUnavailable):
+            resolve_token(config_token_file=str(path), environ={}, allow_broad_token=True)
+
+
+def test_opt_in_still_enforces_file_permissions(tmp_path: Path) -> None:
+    path = write_token(tmp_path / "t", BROAD_TOKEN, mode=0o644)
+    with pytest.raises(TokenUnavailable):
+        resolve_token(config_token_file=str(path), environ={}, allow_broad_token=True)

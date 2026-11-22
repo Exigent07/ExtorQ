@@ -591,15 +591,23 @@ class LocalAccountTest(_LinuxTest):
             "As extorq-admin with sudo: useradd --no-create-home --shell /usr/sbin/nologin "
             "extorq-test-<id>."
         ),
-        negative="Create an ordinary file /tmp/extorq-test-<id> (no account change).",
-        cleanup="userdel (and groupdel of a leftover private group); delete the temp file.",
+        negative=(
+            "Remove the account again (the cleanup of the positive phase): VM-003 fires on a "
+            "NEW account, never on removal, and the inventory diff must report the removal."
+        ),
+        cleanup="userdel (and groupdel of a leftover private group); verify it is gone.",
+        positive_first_in_batch=True,
+        phase_gap_seconds=0,
         expected_alert="VM-003 on linux:lab-vm-01 for the new account (inventory diff).",
         safety="The account has no password, no home directory and a non-login shell.",
         source=INVENTORY,
     )
 
+    _created: str | None = None
+
     def positive(self, ctx: TestContext, cleanup: CleanupStack) -> ActionRecord:
         name = ctx.new_name()
+        self._created = name
         cleanup.push(
             f"remove account {name}", lambda: self.vm.script(ACCOUNT_SCRIPT, "remove", name)
         )
@@ -619,17 +627,20 @@ class LocalAccountTest(_LinuxTest):
         )
 
     def negative(self, ctx: TestContext, cleanup: CleanupStack) -> ActionRecord:
-        name = ctx.new_name()
-        cleanup.push(
-            f"remove /tmp/{name}",
-            lambda: self.vm.script(TMPFILE_SCRIPT, "remove", name, root=False),
-        )
-        output = self.vm.script(TMPFILE_SCRIPT, "create", name, root=False)
-        remote_path = f"/tmp/{name}"  # noqa: S108 - a file on the VM, created by the script
+        name = self._created
+        if name is None:
+            raise ActionFailed("the removal control needs the positive action to have run")
         return ActionRecord(
-            f"created {remote_path} as extorq-admin (kept for the whole detection bound)",
-            details=[output],
-            artefacts=[remote_path],
+            f"account {name} was removed by the positive phase's cleanup; waiting for the "
+            "removal event",
+            artefacts=[f"account {name}"],
+            telemetry=[
+                TelemetryExpectation(
+                    f"inventory diff saw account {name} removed",
+                    "account.user.deleted",
+                    equals=(("actor_name", name),),
+                )
+            ],
         )
 
 
@@ -643,16 +654,24 @@ class CronFileTest(_LinuxTest):
             "As extorq-admin with sudo: write /etc/cron.d/extorq-test-<id> with one job that "
             "runs /bin/true once a year (03:17 on 1 January)."
         ),
-        negative="crontab -l and a listing of /etc/cron.d (read-only).",
+        negative=(
+            "Remove the cron file again (the cleanup of the positive phase): VM-004 fires on an "
+            "added or changed cron file, and the inventory diff must report the removal."
+        ),
         cleanup="Delete the cron file and verify it is gone.",
+        positive_first_in_batch=True,
+        phase_gap_seconds=0,
         expected_alert="VM-004 on linux:lab-vm-01 for the added cron file (inventory diff).",
         safety="The job only runs /bin/true and is scheduled far outside the test window.",
         source=INVENTORY,
     )
 
+    _created: str | None = None
+
     def positive(self, ctx: TestContext, cleanup: CleanupStack) -> ActionRecord:
         name = ctx.new_name()
         path = f"/etc/cron.d/{name}"
+        self._created = path
         cleanup.push(f"remove {path}", lambda: self.vm.script(CRON_SCRIPT, "remove", name))
         output = self.vm.script(CRON_SCRIPT, "add", name)
         return ActionRecord(
@@ -670,8 +689,20 @@ class CronFileTest(_LinuxTest):
         )
 
     def negative(self, ctx: TestContext, cleanup: CleanupStack) -> ActionRecord:
-        output = self.vm.script(CRON_LIST_SCRIPT, root=False)
-        return ActionRecord("listed cron configuration (read-only)", details=[output])
+        path = self._created
+        if path is None:
+            raise ActionFailed("the removal control needs the positive action to have run")
+        return ActionRecord(
+            f"{path} was removed by the positive phase's cleanup; waiting for the removal event",
+            artefacts=[path],
+            telemetry=[
+                TelemetryExpectation(
+                    f"inventory diff saw {path} removed",
+                    "persistence.cron.changed",
+                    equals=(("resource_path", path), ("action", "cron.removed")),
+                )
+            ],
+        )
 
 
 class WebProbeTest(_LinuxTest):

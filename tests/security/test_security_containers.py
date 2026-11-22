@@ -206,6 +206,8 @@ def _service_secret_names(service: dict[str, Any]) -> list[str]:
 def test_ai_secrets_reach_only_ai_services() -> None:
     problems: list[str] = []
     for name, service in _services().items():
+        if name == "ai-worker":
+            continue  # the one service allowed to hold the Jev key (checked in the Jev test)
         for secret in _service_secret_names(service):
             if AI_SECRET_HINT.search(secret):
                 problems.append(f"{name}: receives AI provider secret {secret!r}")
@@ -218,18 +220,19 @@ def test_ai_secrets_reach_only_ai_services() -> None:
 
 
 @requires_compose
-def test_jev_is_opt_in_budgeted_and_file_scoped() -> None:
-    base = _services()["ai-worker"]
-    assert base["environment"]["EXTORQ_JEV_ENABLED"] == "false"
-    assert base["networks"] == ["data"]
-    assert base["read_only"] is True
-    document = yaml.safe_load(read_text(REPO_ROOT / "compose.jev.yaml"))
-    assert set(document["services"]) == {"ai-worker"}
-    worker = document["services"]["ai-worker"]
-    assert _service_secret_names(worker) == ["jev_api_key"]
+def test_jev_is_default_on_budgeted_and_file_scoped() -> None:
+    """Jev is on by default, but capped, advisory, file-scoped and confined to the worker."""
+    worker = _services()["ai-worker"]
+    assert worker["environment"]["EXTORQ_JEV_ENABLED"] == "${EXTORQ_JEV_ENABLED:-true}"
+    assert worker["environment"]["EXTORQ_JEV_DAILY_CAP"] == "${EXTORQ_JEV_DAILY_CAP:-300}"
     assert worker["environment"]["JEV_API_KEY_FILE"] == "/run/secrets/jev_api_key"
-    assert worker["environment"]["EXTORQ_JEV_DAILY_CAP"].startswith("${EXTORQ_JEV_DAILY_CAP:?")
+    assert "jev_api_key" in _service_secret_names(worker)
+    assert sorted(worker["networks"]) == ["data", "edge"]  # egress to the provider needs edge
+    assert worker["read_only"] is True
+    document = yaml.safe_load(read_text(REPO_ROOT / "compose.yaml"))
     assert set(document["secrets"]["jev_api_key"]) == {"file"}
+    holders = [n for n, svc in _services().items() if "jev_api_key" in _service_secret_names(svc)]
+    assert holders == ["ai-worker"], holders
 
 
 @requires_compose

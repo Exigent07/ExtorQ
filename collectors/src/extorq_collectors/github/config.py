@@ -73,6 +73,10 @@ class GitHubCollectorConfig(BaseModel):
     api_base_url: str = "https://api.github.com"
     #: Path to the token file (only used when EXTORQ_GITHUB_TOKEN_FILE is unset). Never a token.
     token_file: str | None = None
+    #: Operator opt-in (default off): accept a broad OAuth/classic token (what ``gh auth token``
+    #: returns) from ``token_file``. Such a token can write to repositories, so the collector
+    #: reports every cycle as degraded while it is in use. Prefer a fine-grained read-only PAT.
+    allow_broad_token: bool = False
     #: Accept old checked-in and operator configs that explicitly disabled the fallback.
     allow_gh_cli_token: Literal[False] = Field(
         default=False,

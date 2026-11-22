@@ -43,6 +43,25 @@ def _bounded(items: list[str]) -> list[str]:
     return [clean_text(item, 500) for item in items[:MAX_HEALTH_ITEMS]]
 
 
+#: Fragments of GitHub's own messages when a feature is unavailable for the repository's plan
+#: or not enabled; such gaps are permanent facts, not degraded collection.
+_PLAN_LIMIT_MARKERS = (
+    "upgrade to github",
+    "make this repository public",
+    "is not enabled",
+    "not enabled for this repository",
+    "enable code scanning",
+    "advanced security must be enabled",
+    # GitHub omits security_and_analysis for repositories without Advanced Security (free plan).
+    "security_and_analysis not visible",
+)
+
+
+def _is_plan_limit(gap: str) -> bool:
+    text = gap.lower()
+    return any(marker in text for marker in _PLAN_LIMIT_MARKERS)
+
+
 class GitHubCollectorError(RuntimeError):
     """Cycle-level failure with a sanitised, secret-free message."""
 
@@ -67,9 +86,19 @@ class GitHubCollector(Collector):
             details["note"] = "no repositories configured in config/collectors/github.yaml"
             ctx.health_details = details
             return
-        token = resolve_token(config_token_file=cfg.token_file)
+        token = resolve_token(
+            config_token_file=cfg.token_file, allow_broad_token=cfg.allow_broad_token
+        )
         warnings: list[str] = []
         details.update({"token_source": token.source, "token_kind": token.kind})
+        if token.kind == "broad_token":
+            # The operator opted in (allow_broad_token), so this is a standing WARNING in the
+            # health details, not a degraded collection: it keeps nagging until a fine-grained
+            # read-only PAT replaces the token.
+            warnings.append(
+                "GitHub token is a broad OAuth/classic token (write-capable), accepted by "
+                "allow_broad_token; use a fine-grained read-only PAT"
+            )
         retry_at = parse_time(ctx.checkpoints.get(_RATE_LIMIT_CHECKPOINT))
         if retry_at is not None and retry_at > datetime.now(UTC):
             ctx.health_details = {**details, "requests": 0, "rate_limited_until": iso(retry_at)}
@@ -159,7 +188,10 @@ class GitHubCollector(Collector):
             raise GitHubCollectorError(failure)
         if rate_limited_until is not None:
             ctx.mark_degraded("GitHub API rate limit stopped the cycle")
-        if errors or gaps or len(reports) != len(cfg.repos):
+        # Permanent plan/feature limits (free plan: branch protection, rulesets, code scanning)
+        # are listed in ``gaps`` but are not a collection problem; everything else is.
+        actionable_gaps = [g for g in gaps if not _is_plan_limit(g)]
+        if errors or actionable_gaps or len(reports) != len(cfg.repos):
             ctx.mark_degraded("GitHub API collection has incomplete source coverage")
         if reports and not any(r.completed for r in reports) and rate_limited_until is None:
             # Records of the phases that did run were committed; the cycle still counts as

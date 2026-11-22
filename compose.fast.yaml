@@ -1,0 +1,14 @@
+# Fast test profile (opt-in): evaluate detection rules every 10 s and shrink the ingest delay,
+# so an alert appears roughly 30-45 s after the activity (with `make fast-on` for the
+# collectors). Rule windows are unchanged, so detection semantics are identical.
+# Use: make fast-on   |   revert: make fast-off
+services:
+  detector:
+    environment:
+      EXTORQ_DETECTOR_INTERVAL_OVERRIDE_SECONDS: "10"
+      EXTORQ_DETECTOR_INGEST_DELAY_SECONDS: "2"
+  api:
+    environment:
+      # The analyst API caches aggregate responses (15 s by default); a short TTL makes a new
+      # alert or event show up quickly. Raises ClickHouse query volume, fine for testing.
+      EXTORQ_API_CACHE_TTL_SECONDS: "2"

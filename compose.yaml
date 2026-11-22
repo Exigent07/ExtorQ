@@ -204,14 +204,19 @@ services:
     <<: *backend
     profiles: [full]
     command: ["ai-worker"]
-    networks: [data]
     environment:
       <<: *backend-env
       EXTORQ_INSTANCE_NAME: ai-worker
-      EXTORQ_JEV_ENABLED: "false"
+      # Jev triage is ON by default (advisory only; capped; never blocks detection). With no
+      # key file the worker reports itself disabled instead of failing.
+      EXTORQ_JEV_ENABLED: ${EXTORQ_JEV_ENABLED:-true}
+      EXTORQ_JEV_DAILY_CAP: ${EXTORQ_JEV_DAILY_CAP:-300}
+      JEV_API_KEY_FILE: /run/secrets/jev_api_key
       EXTORQ_AI_DOTENV: ""
+    networks: [data, edge]
     secrets:
       - extorq_ai_password
+      - jev_api_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -337,6 +342,8 @@ volumes:
   grafana-data: {}
 
 secrets:
+  jev_api_key:
+    file: ${EXTORQ_JEV_KEY_PATH:-./var/secrets/jev_api_key}
   clickhouse_admin_users_xml:
     file: ./var/secrets/clickhouse/extorq_admin_users.xml
   extorq_admin_password:

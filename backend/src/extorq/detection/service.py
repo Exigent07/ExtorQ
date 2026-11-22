@@ -86,6 +86,7 @@ def build_engine(settings: DetectorSettings) -> tuple[DetectionEngine, list[Load
     detect_client = connect("detect")
     config = EngineConfig(
         ingest_delay_seconds=settings.ingest_delay_seconds,
+        interval_override_seconds=settings.interval_override_seconds,
         max_rows_per_rule=settings.max_rows_per_rule,
         max_contexts_per_run=settings.max_contexts_per_run,
         max_episode_seconds=settings.max_episode_seconds,

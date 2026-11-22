@@ -1,7 +1,7 @@
 """Jev feature flag, limits and API key resolution.
 
 Non-secret settings use the ``EXTORQ_`` prefix (pydantic-settings), e.g.
-``EXTORQ_JEV_ENABLED=true``. Jev is **disabled by default**: ExtorQ works completely
+``EXTORQ_JEV_ENABLED=true``. Jev is **enabled by default** (a missing key reports 'disabled', never fails): ExtorQ works completely
 without AI.
 
 The key ``JEV_API_KEY`` is resolved in this order, and is never logged, printed or
@@ -59,7 +59,7 @@ class AISettings(BaseSettings):
     )
 
     # ── feature flag and model ──────────────────────────────────────
-    jev_enabled: bool = False
+    jev_enabled: bool = True
     #: Pinned model id; the id the provider reports is stored with every assessment.
     jev_model: str = Field(default="jev-1.14.0", pattern=_MODEL_ID_PATTERN)
 

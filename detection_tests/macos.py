@@ -62,9 +62,9 @@ COLLECTOR_ID = "macos-workstation-01"
 CONFIG_FILE = "config/collectors/macos.yaml"
 APPLICATIONS = Path("/Applications")
 UNSIGNED_APP = APPLICATIONS / "ExtorQ Test.app"
-SIGNED_COPY = APPLICATIONS / "ExtorQ Test Calculator.app"
-SIGNED_SOURCE = Path("/System/Applications/Calculator.app")
-SIGNED_SOURCE_BUNDLE_ID = "com.apple.calculator"
+SIGNED_COPY = APPLICATIONS / "ExtorQ Test Signed Copy.app"
+#: Largest source considered for the MAC-005 negative control (it is copied, then deleted).
+SIGNED_SOURCE_MAX_KB = 50_000
 SUDO = "/usr/bin/sudo"
 CODESIGN = "/usr/bin/codesign"
 PLUTIL = "/usr/bin/plutil"
@@ -259,6 +259,43 @@ def codesign_verify(app: Path) -> tuple[bool, str]:
     return result.ok, display(result.stderr.strip() or "valid signature", 160)
 
 
+_signed_source_cache: tuple[Path, str] | None = None
+
+
+def signed_source() -> tuple[Path, str]:
+    """(path, bundle id) of the control source for the MAC-005 negative.
+
+    Apple's own apps cannot serve: SIP-protected bundles refuse to be copied at all. The
+    control is a small, genuinely signed, NON-system application already installed in
+    /Applications (the smallest that verifies under ``codesign --verify --strict``). It is only
+    read; the copy is removed afterwards. Raises PreconditionFailed when none exists.
+    """
+    global _signed_source_cache
+    if _signed_source_cache is not None:
+        return _signed_source_cache
+    best: tuple[int, Path] | None = None
+    for app in sorted(APPLICATIONS.glob("*.app")):
+        if app.is_symlink() or app in (UNSIGNED_APP, SIGNED_COPY):
+            continue
+        try:
+            size = int(run(["/usr/bin/du", "-sk", str(app)], timeout=60).stdout.split()[0])
+        except (ValueError, IndexError):
+            continue
+        if size == 0 or size > SIGNED_SOURCE_MAX_KB:
+            continue  # 0 KB = firmlinked system app (e.g. Safari); too large = slow copy
+        if best is not None and size >= best[0]:
+            continue
+        if codesign_verify(app)[0] and bundle_id(app):
+            best = (size, app)
+    if best is None:
+        raise PreconditionFailed(
+            f"no signed third-party application under {SIGNED_SOURCE_MAX_KB // 1000} MB found in "
+            f"{APPLICATIONS}: the MAC-005 negative control needs one"
+        )
+    _signed_source_cache = (best[1], bundle_id(best[1]) or "")
+    return _signed_source_cache
+
+
 # ── listener ───────────────────────────────────────────────────────────────────────────
 
 
@@ -353,18 +390,26 @@ class LaunchAgentTest(DetectionTest):
             "Write ~/Library/LaunchAgents/com.extorq.test.<id>.plist running /usr/bin/true "
             "(RunAtLoad false, never loaded)."
         ),
-        negative="Create ~/Library/LaunchAgents/extorq-test-<id>.txt (not a property list).",
-        cleanup="Delete both files after verifying they are ours (Label / regular file).",
+        negative=(
+            "Remove the positive's plist (the cleanup of the positive phase): MAC-001 fires on "
+            "creation or modification, never on removal, and the launchd scan must report it."
+        ),
+        cleanup="Delete the plist after verifying it is ours (Label / regular file).",
+        positive_first_in_batch=True,
+        phase_gap_seconds=0,
         expected_alert="MAC-001 on macos:workstation-01 for the new plist.",
         safety="launchctl is never called; the job would only run /usr/bin/true.",
         source=LAUNCHD,
     )
+
+    _created: Path | None = None
 
     def positive(self, ctx: TestContext, cleanup: CleanupStack) -> ActionRecord:
         label = label_for(ctx.new_name())
         path = launch_agents_dir() / f"{label}.plist"
         cleanup.push(f"delete {path}", lambda: remove_launch_agent(path, label))
         write_launch_agent(launch_agents_dir(), label, ["/usr/bin/true"])
+        self._created = path
         return ActionRecord(
             f"created {path} (/usr/bin/true, not loaded)",
             artefacts=[str(path)],
@@ -373,19 +418,24 @@ class LaunchAgentTest(DetectionTest):
         )
 
     def negative(self, ctx: TestContext, cleanup: CleanupStack) -> ActionRecord:
-        path = launch_agents_dir() / f"{ctx.new_name()}.txt"
-
-        def remove() -> str:
-            if path.is_symlink() or (path.exists() and not path.is_file()):
-                raise ActionFailed(f"{path} is not a regular file: not deleted")
-            path.unlink(missing_ok=True)
-            return "deleted (verified absent)" if not path.exists() else "still present"
-
-        cleanup.push(f"delete {path}", remove)
-        with path.open("x", encoding="utf-8") as handle:
-            handle.write("Notes about local agents.\n")
+        path = self._created
+        if path is None:
+            raise ActionFailed("the removal control needs the positive action to have run")
+        if path.exists():
+            raise ActionFailed(
+                f"{path} still exists: the positive phase's cleanup did not remove it"
+            )
         return ActionRecord(
-            f"created {path} (kept for the whole detection bound)", artefacts=[str(path)]
+            f"{path} was removed by the positive phase's cleanup; waiting for the removal event",
+            artefacts=[str(path)],
+            telemetry=[
+                TelemetryExpectation(
+                    "launchd scan reported the removal",
+                    "persistence.launchd.item_deleted",
+                    equals=(("resource_path", str(path)),),
+                    source_type="macos.launchd",
+                )
+            ],
         )
 
 
@@ -595,7 +645,7 @@ class UnsignedAppTest(DetectionTest):
             "two-line shell script as executable); it is never executed."
         ),
         negative=(
-            "Copy Apple's signed Calculator.app to '/Applications/ExtorQ Test Calculator.app' "
+            "Copy a small signed third-party app to '/Applications/ExtorQ Test Signed Copy.app' "
             "(signature verified intact)."
         ),
         cleanup="Delete both bundles after verifying their bundle identifiers.",
@@ -613,10 +663,11 @@ class UnsignedAppTest(DetectionTest):
                     f"{app} already exists; run `uv run python -m detection_tests cleanup "
                     "--asset macos`"
                 )
-        valid, detail = codesign_verify(SIGNED_SOURCE)
+        source, _ = signed_source()
+        valid, detail = codesign_verify(source)
         if not valid:
-            raise PreconditionFailed(f"{SIGNED_SOURCE} does not verify ({detail})")
-        return [StepResult(f"{SIGNED_SOURCE} signature", True, "valid (negative control source)")]
+            raise PreconditionFailed(f"{source} does not verify ({detail})")
+        return [StepResult(f"{source} signature", True, "valid (negative control source)")]
 
     def positive(self, ctx: TestContext, cleanup: CleanupStack) -> ActionRecord:
         identifier = label_for(ctx.new_name())
@@ -651,17 +702,18 @@ class UnsignedAppTest(DetectionTest):
 
     def negative(self, ctx: TestContext, cleanup: CleanupStack) -> ActionRecord:
         cleanup.push(
-            f"delete {SIGNED_COPY}", lambda: remove_bundle(SIGNED_COPY, SIGNED_SOURCE_BUNDLE_ID)
+            f"delete {SIGNED_COPY}", lambda: remove_bundle(SIGNED_COPY, signed_source()[1])
         )
         staging = APPLICATIONS / f".{ctx.new_name()}.tmp"
         cleanup.push(f"delete {staging}", lambda: _remove_staging(staging))
-        run([DITTO, str(SIGNED_SOURCE), str(staging)], timeout=300, check=True, what="ditto")
+        source, _ = signed_source()
+        run([DITTO, str(source), str(staging)], timeout=300, check=True, what="ditto")
         os.rename(staging, SIGNED_COPY)
         signed, detail = codesign_verify(SIGNED_COPY)
         if not signed:
             raise ActionFailed(f"the copy does not verify ({detail}): negative control invalid")
         return ActionRecord(
-            f"copied {SIGNED_SOURCE} to {SIGNED_COPY} (signature verified)",
+            f"copied {source} to {SIGNED_COPY} (signature verified)",
             details=[f"codesign --verify: {detail}"],
             artefacts=[str(SIGNED_COPY)],
             telemetry=[
@@ -705,9 +757,7 @@ def _sweep(_ctx: TestContext) -> list[StepResult]:
         _attempt(f"delete {UNSIGNED_APP}", lambda: remove_bundle(UNSIGNED_APP, _LABEL_RE))
     )
     results.append(
-        _attempt(
-            f"delete {SIGNED_COPY}", lambda: remove_bundle(SIGNED_COPY, SIGNED_SOURCE_BUNDLE_ID)
-        )
+        _attempt(f"delete {SIGNED_COPY}", lambda: remove_bundle(SIGNED_COPY, signed_source()[1]))
     )
     for staging in sorted(APPLICATIONS.glob(f".{ARTEFACT_PREFIX}*.tmp")):
         results.append(_attempt(f"delete {staging}", lambda s=staging: _remove_staging(s)))

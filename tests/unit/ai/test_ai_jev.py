@@ -265,7 +265,9 @@ def _provider(client: Any, settings: AISettings | None = None) -> JevTriageProvi
 
 def test_disabled_provider_makes_no_call() -> None:
     client = answering_client()
-    provider = JevTriageProvider(AISettings(), key=jev_key(), client_factory=lambda key, s: client)
+    provider = JevTriageProvider(
+        AISettings(jev_enabled=False), key=jev_key(), client_factory=lambda key, s: client
+    )
     assessment = provider.assess(ssh_context())
     assert assessment.status is AIStatus.DISABLED
     assert assessment.error == "EXTORQ_JEV_ENABLED is false"

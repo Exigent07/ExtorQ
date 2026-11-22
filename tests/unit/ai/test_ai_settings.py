@@ -13,9 +13,10 @@ SECRET = "unit-test-secret-value-1234567890"  # synthetic test credential
 AI_PACKAGE = Path(ai_settings.__file__).resolve().parent
 
 
-def test_ai_disabled_by_default() -> None:
+def test_jev_enabled_by_default() -> None:
+    """Operator decision 2026-11-23: Jev triage is on by default (capped, advisory only)."""
     s = AISettings()
-    assert s.jev_enabled is False
+    assert s.jev_enabled is True
     assert s.jev_model == "jev-1.14.0"
     assert s.jev_daily_cap == 300
 
@@ -94,7 +95,7 @@ def test_startup_report_has_states_not_values(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("JEV_API_KEY", SECRET)
     report = startup_report(AISettings())
     assert report == {
-        "jev_enabled": "false",
+        "jev_enabled": "true",
         "jev_model": "jev-1.14.0",
         "jev_key": "configured",
         "jev_daily_cap": "300",

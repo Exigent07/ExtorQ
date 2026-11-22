@@ -143,7 +143,7 @@ def test_existing_triage_for_same_context_is_reused(monkeypatch: pytest.MonkeyPa
 
 def test_disabled_provider_is_refused_without_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = Storage()
-    svc, client = _service(storage, monkeypatch, settings=AISettings())
+    svc, client = _service(storage, monkeypatch, settings=AISettings(jev_enabled=False))
     assessment = svc.request_triage(CTX.alert_id, "analyst:alice")
     assert assessment.status is AIStatus.DISABLED
     assert assessment.error == "EXTORQ_JEV_ENABLED is false"
@@ -296,7 +296,7 @@ def _worker(
 
 def test_worker_disabled_makes_no_calls_and_reports_disabled() -> None:
     storage = WorkerStorage([(CTX.alert_id, CTX.context_id, CTX.input_hash)])
-    w = _worker(storage, settings=AISettings())
+    w = _worker(storage, settings=AISettings(jev_enabled=False))
     w.run_forever(once=True)
     (insert,) = storage.ch.inserts
     assert insert["table"] == "pipeline_health"

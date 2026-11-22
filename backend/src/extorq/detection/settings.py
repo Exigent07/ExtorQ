@@ -18,6 +18,10 @@ class DetectorSettings(BaseSettings):
     rules_dir: str | None = None
     #: Window end lag behind "now" so in-flight batches are not evaluated half-written.
     ingest_delay_seconds: int = Field(default=10, ge=0, le=600)
+    #: Test/demo profile only: evaluate EVERY rule at this interval instead of its own
+    #: ``schedule.interval_seconds``. Rule windows and lookbacks are unchanged, so detection
+    #: semantics stay identical; only the evaluation cadence (and ClickHouse load) changes.
+    interval_override_seconds: int | None = Field(default=None, ge=5, le=3600)
     max_rows_per_rule: int = Field(default=1000, ge=1, le=100_000)
     #: Longest span a single window_bucket alert may grow to via continuity merging.
     max_episode_seconds: int = Field(default=3600, ge=60, le=7 * 86400)

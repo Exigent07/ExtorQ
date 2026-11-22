@@ -55,6 +55,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--skip-negatives", action="store_true", help="skip negative controls")
     run_p.add_argument(
+        "--batch",
+        action="store_true",
+        help=(
+            "run ALL tests of the selected assets concurrently, each negative-first "
+            "(fastest; pair with `make fast-on`; CORR-002 is excluded, run it first)"
+        ),
+    )
+    run_p.add_argument(
         "--parallel",
         action="store_true",
         help="with --asset all: run the asset suites concurrently (one thread per asset)",
@@ -183,7 +191,7 @@ def cmd_run(args: argparse.Namespace, argv: Sequence[str]) -> int:
     except (ValueError, ApiError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    if args.parallel and args.asset != "all":
+    if args.parallel and args.asset != "all" and not args.batch:
         print("error: --parallel needs --asset all", file=sys.stderr)
         return 2
     try:
@@ -197,6 +205,7 @@ def cmd_run(args: argparse.Namespace, argv: Sequence[str]) -> int:
         return 2
     options = RunOptions(
         skip_negatives=args.skip_negatives,
+        batch=args.batch,
         poll_seconds=max(2.0, args.poll_seconds),
         clock_skew_seconds=max(0, args.clock_skew_seconds),
         min_margin_seconds=max(0, args.min_margin_seconds),
@@ -211,7 +220,11 @@ def cmd_run(args: argparse.Namespace, argv: Sequence[str]) -> int:
     output.line(
         "runner", f"{total} test(s) on {len(suites)} asset(s); report dir {args.report_dir}"
     )
-    results = runner.run_suites(suites, parallel=args.parallel)
+    results = (
+        runner.run_batch(suites)
+        if args.batch
+        else runner.run_suites(suites, parallel=args.parallel)
+    )
     report = RunReport(
         started_at=started,
         finished_at=utc_now(),
@@ -222,6 +235,7 @@ def cmd_run(args: argparse.Namespace, argv: Sequence[str]) -> int:
             "only": parse_only(args.only),
             "skip_negatives": options.skip_negatives,
             "parallel": bool(args.parallel),
+            "batch": bool(args.batch),
             "poll_seconds": options.poll_seconds,
             "clock_skew_seconds": options.clock_skew_seconds,
             "min_margin_seconds": options.min_margin_seconds,

@@ -20,10 +20,15 @@ class TokenUnavailable(RuntimeError):
 class GitHubToken:
     value: str = field(repr=False)
     source: str = field(default="file", init=False)
-    kind: str = field(default="fine_grained_pat", init=False)
+    #: ``fine_grained_pat`` (the supported credential) or ``broad_token`` (operator opt-in).
+    kind: str = field(default="fine_grained_pat")
 
 
-def _validate(content: str) -> str:
+#: Prefixes of GitHub's broad (OAuth app / classic) tokens, e.g. what ``gh auth token`` returns.
+_BROAD_PREFIXES = ("gho_", "ghp_")
+
+
+def _validate(content: str, *, allow_broad: bool = False) -> str:
     value = content.strip()
     if not value:
         raise TokenUnavailable(f"{TOKEN_FILE_ENV} is empty")
@@ -31,12 +36,14 @@ def _validate(content: str) -> str:
         raise TokenUnavailable(f"{TOKEN_FILE_ENV} has an unexpected token length")
     if not all("\x21" <= ch <= "\x7e" for ch in value):
         raise TokenUnavailable(f"{TOKEN_FILE_ENV} contains whitespace or non-printable characters")
-    if not value.startswith("github_pat_"):
-        raise TokenUnavailable(f"{TOKEN_FILE_ENV} requires a dedicated fine-grained GitHub PAT")
-    return value
+    if value.startswith("github_pat_"):
+        return value
+    if allow_broad and value.startswith(_BROAD_PREFIXES):
+        return value
+    raise TokenUnavailable(f"{TOKEN_FILE_ENV} requires a dedicated fine-grained GitHub PAT")
 
 
-def read_token_file(path: Path) -> str:
+def read_token_file(path: Path, *, allow_broad: bool = False) -> str:
     """Open without following symlinks and validate the same descriptor before reading it."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -60,7 +67,7 @@ def read_token_file(path: Path) -> str:
             content = handle.read(MAX_TOKEN_FILE_BYTES + 1)
         if len(content) > MAX_TOKEN_FILE_BYTES:
             raise TokenUnavailable(f"{TOKEN_FILE_ENV} is larger than {MAX_TOKEN_FILE_BYTES} bytes")
-        return _validate(content.decode("utf-8"))
+        return _validate(content.decode("utf-8"), allow_broad=allow_broad)
     except (OSError, UnicodeDecodeError) as exc:
         raise TokenUnavailable(
             f"{TOKEN_FILE_ENV} could not be read ({type(exc).__name__})"
@@ -70,7 +77,10 @@ def read_token_file(path: Path) -> str:
 
 
 def resolve_token(
-    *, config_token_file: str | None = None, environ: Mapping[str, str] | None = None
+    *,
+    config_token_file: str | None = None,
+    environ: Mapping[str, str] | None = None,
+    allow_broad_token: bool = False,
 ) -> GitHubToken:
     env = os.environ if environ is None else environ
     file_path = env.get(TOKEN_FILE_ENV) or config_token_file
@@ -79,4 +89,6 @@ def resolve_token(
             f"no dedicated GitHub token file configured: set {TOKEN_FILE_ENV} "
             "or settings.token_file"
         )
-    return GitHubToken(read_token_file(Path(file_path).expanduser()))
+    value = read_token_file(Path(file_path).expanduser(), allow_broad=allow_broad_token)
+    kind = "fine_grained_pat" if value.startswith("github_pat_") else "broad_token"
+    return GitHubToken(value, kind=kind)

@@ -71,6 +71,8 @@ ContextHook = Callable[[LoadedRule, list[str]], tuple[int, int]]
 @dataclass
 class EngineConfig:
     ingest_delay_seconds: int = 10
+    #: Fast profile: replaces every rule's evaluation interval (see DetectorSettings).
+    interval_override_seconds: int | None = None
     max_rows_per_rule: int = 1000
     max_contexts_per_run: int = 100
     max_episode_seconds: int = 3600
@@ -182,9 +184,10 @@ class DetectionEngine:
         for rule in due:
             run = self.evaluate(rule, now)
             runs.append(run)
-            self._next_due[rule.rule_id] = now + timedelta(
-                seconds=rule.metadata.schedule.interval_seconds
+            interval = (
+                self.config.interval_override_seconds or rule.metadata.schedule.interval_seconds
             )
+            self._next_due[rule.rule_id] = now + timedelta(seconds=interval)
         self._record_runs(runs)
         self.stats.cycles_total += 1
         if due:

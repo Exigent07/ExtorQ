@@ -152,6 +152,9 @@ class TestSpec:
     #: Run the negative control before the positive action (CORR-002: the burst alone must
     #: happen before the probing that would make it a valid second stage).
     negative_first: bool = False
+    #: Batch runs are negative-first for every test; ``True`` keeps this test positive-first
+    #: because its control builds on the positive (MAC-001: the removal of the positive's plist).
+    positive_first_in_batch: bool = False
     #: Minimum seconds between the end of the first phase's action and the start of the
     #: second phase. ``None``: the deployed rule's sliding window before a negative control
     #: (see :func:`detection_tests.windows.rule_window_seconds`), nothing before a positive.

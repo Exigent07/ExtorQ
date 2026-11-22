@@ -60,11 +60,23 @@ build: ## Build the backend image
 up: ## Start the core stack: clickhouse, migrate, ingest (8443), writer
 	$(COMPOSE) up -d --build --wait $(CORE_SERVICES)
 
-up-full: ## EVERYTHING: core + detector, ai-worker, api 8000, console 3000, grafana 3001 (AI triage OFF)
+up-full: ## EVERYTHING: core + detector, ai-worker, api 8000, console 3000, grafana 3001 (Jev AI triage ON)
 	$(COMPOSE) --profile full up -d --build $(WAIT) $(CORE_SERVICES) $(FULL_SERVICES)
 
-up-demo: ## up-full with Jev AI triage ON in the ai-worker (live, budgeted calls with a daily cap)
-	$(COMPOSE) -f compose.yaml -f compose.jev.yaml --profile full up -d --build $(WAIT) $(CORE_SERVICES) $(FULL_SERVICES)
+up-demo: up-full ## alias of up-full (Jev triage is on by default)
+
+fast-on: ## TEST PROFILE: detector evaluates every 10 s, collectors poll every 10-15 s (alerts in ~30-45 s)
+	python3 scripts/fast_profile.py on
+	$(COMPOSE) -f compose.yaml -f compose.fast.yaml --profile full up -d --no-deps detector
+	$(MAKE) collectors-stop collectors-start
+
+fast-off: ## Back to the normal intervals (restores config/collectors/*.yaml, recreates the detector)
+	python3 scripts/fast_profile.py off
+	$(COMPOSE) --profile full up -d --no-deps --force-recreate detector
+	$(MAKE) collectors-stop collectors-start
+
+jev-key: ## Provision var/secrets/jev_api_key from .env JEV_API_KEY (value never printed)
+	@umask 077; mkdir -p var/secrets; grep -E '^JEV_API_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" > var/secrets/jev_api_key; chmod 600 var/secrets/jev_api_key; test -s var/secrets/jev_api_key && echo 'var/secrets/jev_api_key written (0600)' || { echo 'JEV_API_KEY not found in .env'; exit 1; }
 
 up-debug: ## Start the loopback-only ClickHouse debug proxy on 127.0.0.1:18123 (never in demos)
 	$(COMPOSE) --profile debug up -d clickhouse-debug
@@ -134,17 +146,25 @@ kind-status: ## extorq-lab cluster status (owner: Kubernetes telemetry)
 # window that the rule fired (positive) or stayed silent (negative control), and cleans up.
 # Reports: var/reports/detection-tests-*.json (read by `make demo-check`). ARGS passes options.
 .PHONY: test-detections test-detections-linux test-detections-kubernetes \
-	test-detections-github test-detections-macos
-test-detections: ## Detection-test matrix on EVERY asset (real activity, negative controls, cleanup)
-	$(UV) run python -m detection_tests run --asset all $(ARGS)
-test-detections-linux: ## Detection tests on the Ubuntu VM (SSH, systemd, account, cron, HTTP, app)
-	$(UV) run python -m detection_tests run --asset linux $(ARGS)
-test-detections-kubernetes: ## Detection tests on the extorq-lab kind cluster
-	$(UV) run python -m detection_tests run --asset kubernetes $(ARGS)
-test-detections-github: ## Detection tests in the private repository Exigent07/extorq-lab
-	$(UV) run python -m detection_tests run --asset github $(ARGS)
-test-detections-macos: ## Detection tests on this Mac (never sudo, never loads launch items)
-	$(UV) run python -m detection_tests run --asset macos $(ARGS)
+	test-detections-github test-detections-macos test-detections-corr test-detections-slow test-detections-instant
+test-detections: ## ALL assets at once, FAST (concurrent, negative-first; run `make fast-on` first for ~1 min captures)
+	@python3 scripts/fast_profile.py status
+	$(UV) run python -m detection_tests run --asset all --batch $(ARGS)
+test-detections-instant: ## EVERY positive at the same moment, one wave (~1 min); negatives are proven by `make test-detections`
+	@python3 scripts/fast_profile.py status
+	$(UV) run python -m detection_tests run --asset all --batch --skip-negatives $(ARGS)
+test-detections-linux: ## Linux VM tests, concurrent (SSH, systemd, account, cron, HTTP, app)
+	$(UV) run python -m detection_tests run --asset linux --batch $(ARGS)
+test-detections-kubernetes: ## kind cluster tests, concurrent
+	$(UV) run python -m detection_tests run --asset kubernetes --batch $(ARGS)
+test-detections-github: ## Tests in the private repository Exigent07/extorq-lab, concurrent (pushes are serialised)
+	$(UV) run python -m detection_tests run --asset github --batch $(ARGS)
+test-detections-macos: ## macOS tests, concurrent (never sudo, never loads launch items)
+	$(UV) run python -m detection_tests run --asset macos --batch $(ARGS)
+test-detections-corr: ## CORR-002 alone (needs 30 quiet minutes without HTTP probing; run BEFORE the batch)
+	$(UV) run python -m detection_tests run --asset linux --only CORR-002 $(ARGS)
+test-detections-slow: ## STRICT sequential mode: one test at a time, positive then negative (30+ minutes)
+	$(UV) run python -m detection_tests run --asset all --parallel $(ARGS)
 
 # ── frontend (owner: D2) ──────────────────────────────────────────────────────
 .PHONY: frontend-dev frontend-build

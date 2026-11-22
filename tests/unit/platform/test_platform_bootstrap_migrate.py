@@ -190,6 +190,11 @@ def test_every_compose_file_secret_is_created_by_bootstrap(tmp_path: Path) -> No
     ]
     assert "./var/secrets/grafana_secret_key" in files
     for path in files:
+        if "jev_api_key" in path:
+            # Operator-provided (`make jev-key` copies it from .env); bootstrap must never
+            # invent it. It must still live under var/ and be overridable.
+            assert path.startswith("${EXTORQ_JEV_KEY_PATH:-./var/secrets/"), path
+            continue
         assert path.startswith("./var/"), path
         assert (tmp_path / path[2:]).is_file(), f"bootstrap does not create {path}"
     grafana = compose["services"]["grafana"]

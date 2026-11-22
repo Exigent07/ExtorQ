@@ -71,6 +71,7 @@ from extorq_collectors.github.records import (
     redact,
     repo_asset,
 )
+from extorq_collectors.github.secrets import scan_added_lines
 from extorq_collectors.github.state import MAX_COMMIT_RETRIES, MAX_RUNS_TRACKED, RepoState
 from extorq_collectors.github.workflow import (
     MAX_LEXICAL_BYTES,
@@ -1044,6 +1045,57 @@ class RepoPoller:
         detail["_files_truncated"] = bool(next_url)
         return detail
 
+    def _secret_events(
+        self,
+        files: Sequence[Mapping[str, Any]],
+        sha: str,
+        branch: str,
+        info: GitHubInfo,
+        actor: Any,
+        event_time: datetime,
+    ) -> list[IngestRecord]:
+        """``github.secret.exposed`` for credential-shaped strings ADDED by this commit.
+
+        Pattern name, location and the already-redacted line only (see ``secrets.py``). A
+        file without a ``patch`` (binary, or too large for the API) cannot be scanned; that is
+        a documented blind spot of the rule, not an error.
+        """
+        records: list[IngestRecord] = []
+        for change in files:
+            path, patch = change.get("filename"), change.get("patch")
+            if not isinstance(path, str) or not isinstance(patch, str):
+                continue
+            for finding in scan_added_lines(clean_text(path, 300), patch):
+                try:
+                    event = self.builder.build(
+                        event_type="github.secret.exposed",
+                        native_key=f"{sha}:{finding.path}:{finding.line}:{finding.pattern}",
+                        event_time=event_time,
+                        observed_time=self.now,
+                        action="credential_committed",
+                        actor=actor,
+                        resource=Resource(type="github_file", path=finding.path),
+                        github=info,
+                        message=(
+                            f"Credential-shaped {finding.pattern} added in "
+                            f"{finding.path}:{finding.line} of {sha[:12]} (value not stored)"
+                        ),
+                        attributes={
+                            "pattern": finding.pattern,
+                            "line": finding.line,
+                            "redacted_match": finding.redacted_match,
+                            "commit_sha": sha,
+                            "ref": f"refs/heads/{clean_text(branch, 100)}",
+                        },
+                    )
+                except ValueError as exc:
+                    records.append(
+                        self._record_failure("secret_scan", f"{sha}:{finding.path}", exc)
+                    )
+                    continue
+                records.append(EventRecord(data=event))
+        return records
+
     def _commit_records(
         self, branch: str, sha: str, push: _Push | None, flags: Mapping[str, Any]
     ) -> list[IngestRecord]:
@@ -1157,6 +1209,7 @@ class RepoPoller:
                 )
             )
         parent = parents[0] if parents else None
+        records.extend(self._secret_events(files, sha, branch, info, actor, event_time))
         for change in files:
             try:
                 event = self._workflow_event(

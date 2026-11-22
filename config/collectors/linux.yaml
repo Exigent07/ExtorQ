@@ -9,7 +9,7 @@ collectors:
     producer_id: linux-ssh-lab-vm-01
     asset_id: linux:lab-vm-01
     module: extorq_collectors.linux.collector:LinuxSSHCollector
-    interval_seconds: 30
+    interval_seconds: 10
     enabled: true
     settings:
       ssh:
@@ -34,7 +34,7 @@ collectors:
         max_bytes: 1048576                        # per dispatch call (boundary limit 1 MiB)
         max_rounds: 8
       inventory:
-        interval_seconds: 60                      # unit/listener/account/file diffs (VM-002)
+        interval_seconds: 10                      # unit/listener/account/file diffs (VM-002)
         full_snapshot_seconds: 21600              # complete InventoryItem snapshot every 6 h
       packages:
         interval_seconds: 3600

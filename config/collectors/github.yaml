@@ -9,7 +9,7 @@ collectors:
     # Health records are attributed to the lab repository asset (ids are lower-case).
     asset_id: github:exigent07/extorq-lab
     module: extorq_collectors.github.collector:GitHubCollector
-    interval_seconds: 120
+    interval_seconds: 15
     enabled: true
     settings:
       # Repositories to monitor, as OWNER/NAME. The default branch is always monitored;
@@ -22,6 +22,10 @@ collectors:
         - Exigent07/extorq-lab
       # Use a repository-scoped read-only PAT via token_file / EXTORQ_GITHUB_TOKEN_FILE.
       token_file: var/secrets/github/readonly-pat  # path only, never a token value
+      # Operator opt-in (2026-11-23): the token file currently holds the user's broad `gh` OAuth
+      # token. The collector accepts it only because of this flag and reports DEGRADED on every
+      # cycle until a fine-grained read-only PAT replaces it (then remove this line).
+      allow_broad_token: true
       api_base_url: https://api.github.com
       page_size: 50                    # per_page for listings (1-100)
       max_pages: 10                    # pages per listing per poll (bounded collection)

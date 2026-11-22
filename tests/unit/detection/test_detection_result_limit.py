@@ -142,3 +142,19 @@ def test_rule_cannot_link_an_unrelated_event_type_from_its_source(detector) -> N
     assert run.status is RuleRunStatus.FAILED
     assert "absent from its metadata" in (run.error or "")
     db.insert_rows.assert_not_called()
+
+
+def test_interval_override_replaces_every_rules_own_interval(detector) -> None:
+    """Fast test profile: rules are due again after the override, windows are untouched."""
+    from datetime import UTC, datetime, timedelta
+
+    engine, _db, _rules = detector
+    own = RULE.metadata.schedule.interval_seconds
+    assert own > 10, "the fixture rule must have a slower interval than the override"
+    now = datetime(2026, 11, 23, 12, 0, tzinfo=UTC)
+    engine.config.interval_override_seconds = 10
+    engine.run_once(now, force=True)
+    assert engine._next_due[RULE.rule_id] == now + timedelta(seconds=10)
+    engine.config.interval_override_seconds = None
+    engine.run_once(now, force=True)
+    assert engine._next_due[RULE.rule_id] == now + timedelta(seconds=own)

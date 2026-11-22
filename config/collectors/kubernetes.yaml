@@ -18,7 +18,7 @@ collectors:
     asset_id: k8s:extorq-lab
     module: extorq_collectors.kubernetes.collector:KubernetesInventoryCollector
     # Every cycle: LIST all kinds, diff, Events, service hierarchy, posture scan (ScanRun).
-    interval_seconds: 60
+    interval_seconds: 10
     enabled: true
     settings:
       kubeconfig: var/kube/extorq-inventory.kubeconfig

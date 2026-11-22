@@ -20,10 +20,12 @@ of this private repository after the revert (as a real leaked key would).
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import secrets
 import string
+import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -208,14 +210,16 @@ def issue_triage_workflow(*, injectable: bool) -> str:
     if injectable:
         step = (
             "      - name: Print the issue title\n"
-            '        run: echo "New issue: ${{ github.event.issue.title }}"\n'
+            "        run: |\n"
+            '          echo "New issue: ${{ github.event.issue.title }}"\n'
         )
     else:
         step = (
             "      - name: Print the issue title\n"
             "        env:\n"
             "          ISSUE_TITLE: ${{ github.event.issue.title }}\n"
-            '        run: echo "New issue: $ISSUE_TITLE"\n'
+            "        run: |\n"
+            '          echo "New issue: $ISSUE_TITLE"\n'
         )
     return (
         "name: Issue triage\n\n"
@@ -295,10 +299,27 @@ def _check_repo_path(path: str) -> str:
 # ── repository access ──────────────────────────────────────────────────────────────────
 
 
+def _serialised(method):  # type: ignore[no-untyped-def]
+    """Hold the repository lock for the whole method.
+
+    Batch runs execute the GitHub tests concurrently (their *waits* overlap), but the shared
+    clone must only be mutated by one test at a time: sync/commit/push/revert are short, so
+    serialising them costs seconds, not minutes.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class LabRepository:
     """The clone of ``Exigent07/extorq-lab`` and the git/gh commands the tests need."""
 
     def __init__(self, root: Path) -> None:
+        self._lock = threading.RLock()
         self.root = root
         self.clone_dir = root / CLONE_DIR
         self.branch: str | None = None
@@ -402,6 +423,7 @@ class LabRepository:
 
     # working copy
 
+    @_serialised
     def sync(self) -> str:
         """Clone or fetch, verify ``origin``, reset to the remote branch head; return its SHA."""
         branch = self.branch
@@ -468,6 +490,7 @@ class LabRepository:
             self.git("push", "--quiet", "origin", f"HEAD:{branch}", network=True)
         return self.git("rev-parse", "HEAD").stdout.strip()
 
+    @_serialised
     def commit(self, changes: Mapping[str, str | None], message: str) -> str:
         """Write (or delete, value ``None``) files, commit with ``message`` and push."""
         if SKIP_CI not in message:
@@ -487,6 +510,7 @@ class LabRepository:
         self.git(*identity, "commit", "--quiet", "-m", message)
         return self._push()
 
+    @_serialised
     def revert(self, sha: str) -> str:
         if not _SHA40_RE.fullmatch(sha):
             raise ValueError("invalid commit SHA")
@@ -494,6 +518,7 @@ class LabRepository:
         self.git(*self._identity_args(), "revert", "--no-edit", sha)
         return self._push()
 
+    @_serialised
     def restore(self, pushed: Sequence[str], expected: Mapping[str, str | None]) -> str:
         """Cleanup: revert pushed commits (newest first), then verify the files at the head."""
         reverts = [self.revert(sha) for sha in reversed(pushed)]

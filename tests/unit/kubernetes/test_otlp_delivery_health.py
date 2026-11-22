@@ -53,9 +53,7 @@ def resource(**attributes: str) -> dict[str, Any]:
 
 def sample(*metrics: dict[str, Any]) -> dict[str, Any]:
     return {
-        "resourceMetrics": [
-            {"resource": resource(), "scopeMetrics": [{"metrics": list(metrics)}]}
-        ]
+        "resourceMetrics": [{"resource": resource(), "scopeMetrics": [{"metrics": list(metrics)}]}]
     }
 
 
