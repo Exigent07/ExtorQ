@@ -40,7 +40,7 @@ export interface DetectionsQuery extends FacetSelection {
 }
 
 /** Alerts per API page (the API's maximum). */
-export const ALERTS_PER_REQUEST = 200;
+export { ALERTS_PER_REQUEST } from "@/lib/filters";
 /** Values kept per multi-valued parameter (the API accepts 5 severities and 6 statuses). */
 const MAX_VALUES = 12;
 const MAX_VALUE_LENGTH = 200;

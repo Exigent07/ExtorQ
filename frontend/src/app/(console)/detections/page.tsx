@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/console/page-header";
 import { SectionCard } from "@/components/console/section-card";
 import { EmptyState, ErrorState, Notice } from "@/components/console/states";
 import { AlertsTable } from "@/components/views/detections/alerts-table";
-import type { FacetOption } from "@/components/views/detections/facet-filter";
+import type { FacetOption } from "@/components/console/data-table";
 import { DetectionsKpiRow } from "@/components/views/detections/kpi-row";
 import {
   alertFigures,
@@ -24,10 +24,9 @@ import { RulesTable } from "@/components/views/detections/rules-table";
 import { DetectionsProvider, DetectionsTabs, TimeRangeToggle } from "@/components/views/detections/workspace";
 import { TIME_RANGES } from "@/lib/filters";
 import { formatCount } from "@/lib/format";
-import { listRules } from "@/lib/server/api";
+import { listAlerts, listRules } from "@/lib/server/api";
 import { requireSession } from "@/lib/server/session";
 
-import { listAlertsInRange } from "./data";
 
 export const metadata: Metadata = { title: "Detections" };
 
@@ -48,14 +47,14 @@ export default async function DetectionsPage({ searchParams }: PageProps<"/detec
     status: query.status,
     sim: query.sim,
   };
-  const [inRange, rules] = await Promise.all([listAlertsInRange(session, { range: query.range }), listRules(session)]);
+  const [inRange, rules] = await Promise.all([listAlerts(session, { range: query.range }), listRules(session)]);
 
   const complete = inRange.ok && !inRange.data.page.has_more;
   let table = inRange;
   let serverFiltered = false;
   if (inRange.ok && !complete && (hasFacetFilters(selection) || query.offset > 0)) {
     const filters = apiFilters(selection);
-    table = await listAlertsInRange(session, {
+    table = await listAlerts(session, {
       range: query.range,
       offset: query.offset,
       severity: filters.severity,

@@ -4,13 +4,14 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Card } from "@/components/ui/card";
+import { formatCount } from "@/lib/format";
 
 import { StatusDot, type Tone } from "./status-badge";
 
 /**
- * A headline figure on a shadcn Card: label, a 30px semibold value (tabular), an optional unit or denominator
+ * A headline figure on a shadcn Card: label, a 30px semibold value (proportional figures), an optional unit or denominator
  * in grey, one sub-label that states what the number is made of, an optional visual on the
- * right (sparkline, coverage mark, split bar) and an optional status dot with its word.
+ * right (coverage mark, split bar) and an optional status dot with its word.
  *
  * Values come from the API as they are: pass the DASH for unknown, a real 0 for zero. No
  * delta unless the API gives a comparable earlier value. With `href` the whole card is a link.
@@ -42,7 +43,8 @@ export function KpiCard({
   return (
     <Card
       className={cn(
-        "group/kpi relative min-w-0 gap-3 overflow-visible px-5 text-base transition-colors duration-150",
+        // Phones: a compact two-column grid (label and figure; status, bar and sub-label from sm).
+        "group/kpi relative min-w-0 gap-3 overflow-visible px-4 text-base transition-colors duration-150 max-sm:[--card-spacing:--spacing(4)] sm:px-5",
         href && "hover:bg-[color-mix(in_oklab,var(--card),white_2%)] focus-within:ring-ring/60",
         className,
       )}
@@ -52,17 +54,18 @@ export function KpiCard({
           {Icon ? <Icon className="size-4 flex-none" strokeWidth={1.75} aria-hidden="true" /> : null}
           <span className="truncate">{label}</span>
         </p>
-        {status ? <StatusDot tone={status.tone} label={status.label} className="text-xs" /> : null}
+        {status ? <StatusDot tone={status.tone} label={status.label} className="text-xs max-sm:hidden" /> : null}
       </div>
-      <div className="flex items-end justify-between gap-4">
-        <p className="flex min-w-0 items-baseline gap-1.5">
-          <span className="text-3xl leading-none font-semibold tracking-tight text-foreground tabular-nums">{value}</span>
-          {unit ? <span className="text-base text-muted-foreground tabular-nums">{unit}</span> : null}
+      <div className="flex min-h-8 items-center justify-between gap-4">
+        <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+          <span className="text-2xl leading-none font-semibold tracking-tight text-foreground proportional-nums sm:text-3xl">{value}</span>
+          {unit ? <span className="text-sm text-muted-foreground tabular-nums sm:text-base">{unit}</span> : null}
         </p>
-        {visual ? <div className="flex-none">{visual}</div> : null}
+        {visual ? <div className="flex-none max-sm:hidden">{visual}</div> : null}
       </div>
-      {footer ? <div>{footer}</div> : null}
-      {sub ? <div className="mt-auto text-sm leading-relaxed text-muted-foreground">{sub}</div> : null}
+      {/* The footer slot is reserved, so bars and sub-labels line up across a KPI row. */}
+      <div className="flex h-1.5 items-center max-sm:hidden">{footer ?? null}</div>
+      {sub ? <div className="min-w-0 truncate text-sm leading-relaxed text-muted-foreground max-sm:hidden">{sub}</div> : null}
       {href ? (
         <Link
           href={href}
@@ -71,6 +74,58 @@ export function KpiCard({
         />
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * The parts of a KPI figure on one line ("45 critical · 795 high · 5 unverified"): the KPI
+ * sub-label truncates, it never wraps. `strong` lifts a non-zero count to the foreground;
+ * `tone` colours a non-zero count that is a problem; `hideZero` leaves zero parts out.
+ */
+export function KpiFigures({
+  items,
+  hideZero = false,
+}: {
+  items: { label: string; value: number; strong?: boolean; tone?: "warn" | "bad" }[];
+  hideZero?: boolean;
+}) {
+  const shown = hideZero ? items.filter((item) => item.value > 0) : items;
+  return (
+    <>
+      {shown.map((item, index) => (
+        <span key={item.label}>
+          {index > 0 ? <span className="text-fg-faint"> · </span> : null}
+          <span
+            className={cn(
+              "tabular-nums",
+              item.value > 0 && item.tone === "bad"
+                ? "font-medium text-health-bad"
+                : item.value > 0 && item.tone === "warn"
+                  ? "font-medium text-health-warn"
+                  : item.value > 0 && item.strong
+                    ? "text-foreground"
+                    : "text-fg-2",
+            )}
+          >
+            {formatCount(item.value)}
+          </span>{" "}
+          {item.label}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * "15 / 84": the one way the console writes a part of a whole (KPI units, donut centres, class
+ * rows); the denominator is muted. Numbers are formatted here, so pass raw counts.
+ */
+export function Fraction({ value, total, className }: { value: number; total: number; className?: string }) {
+  return (
+    <span className={cn("whitespace-nowrap tabular-nums", className)}>
+      {formatCount(value)}
+      <span className="text-muted-foreground"> / {formatCount(total)}</span>
+    </span>
   );
 }
 

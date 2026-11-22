@@ -70,7 +70,7 @@ export default async function OverviewPage() {
     <>
       <PageHeader
         title="Overview"
-        subtitle={overviewFinding(data)}
+        subtitle={overviewFinding(data, assets.ok ? assets.data.items : null)}
         freshness={result.receivedAt}
         actions={
           <Button asChild size="lg" className="h-9 px-3.5">

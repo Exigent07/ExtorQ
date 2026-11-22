@@ -11,6 +11,8 @@ export interface ServiceTab {
   label: string;
   /** Count after the label (only when the API reported it). */
   count?: number | null;
+  /** Text in place of the count (e.g. "50+" for a capped list). */
+  countLabel?: string;
   content: ReactNode;
 }
 
@@ -58,7 +60,7 @@ export function ServiceTabs({ tabs, initial, label }: { tabs: ServiceTab[]; init
               {tab.label}
               {tab.count !== undefined && tab.count !== null ? (
                 <span className="rounded-md bg-white/[0.05] px-1.5 text-xs font-normal text-muted-foreground tabular-nums">
-                  {formatCount(tab.count)}
+                  {tab.countLabel ?? formatCount(tab.count)}
                 </span>
               ) : null}
             </TabsTrigger>

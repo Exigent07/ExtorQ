@@ -18,7 +18,7 @@ states are explicit, and nothing is invented to fill a block.
 | Next.js | 16.4.6, App Router, `output: "standalone"`, `src/proxy.ts` | Turbopack build |
 | React / TypeScript | 19.3.1 / 5.9.3 strict (`noUncheckedIndexedAccess`) | |
 | Tailwind CSS | **4.3.3** | 4.3.4+ depends on ESM-only `magic-string@1`, which Node 20.11 cannot `require()` (the build fails). Upgrade only with Node ≥ 20.19 locally. |
-| shadcn/ui | CLI **4.23.0**, style **radix-nova** (Radix base), generated into `src/components/ui` | edited copies (re-apply after `shadcn add --overwrite`, see DESIGN.md §4): `chart.tsx` has no raw-HTML style injection, `table.tsx` has no `"use client"`, `scroll-area.tsx` passes the CSP nonce, `sidebar.tsx` `SidebarInset` is a `<div>`, `use-mobile.ts` uses `useSyncExternalStore`; floating surfaces use `shadow-float`, overlays have no backdrop blur. Run the CLI in a scratch copy of the project so it cannot change pinned dependencies, then copy the files back. |
+| shadcn/ui | CLI **4.23.0**, style **radix-nova** (Radix base), generated into `src/components/ui` | edited copies (re-apply after `shadcn add --overwrite`, see DESIGN.md §4): `chart.tsx` has no raw-HTML style injection, `table.tsx` has no `"use client"`, `scroll-area.tsx` passes the CSP nonce, `sidebar.tsx` `SidebarInset` is a `<div>`, `use-mobile.ts` uses `useSyncExternalStore`; floating surfaces use `shadow-float`, overlays have no backdrop blur; `sm` buttons and toggles use `text-sm` (13px). Run the CLI in a scratch copy of the project so it cannot change pinned dependencies, then copy the files back. |
 | cmdk / get-nonce | 1.1.1 / 1.0.1 | Command palette; `get-nonce` hands the CSP nonce to Radix's modal scroll lock |
 | zod / jose / TanStack Table / Recharts / lucide-react | 4.6.7 / 6.2.17 / 8.21.3 / 3.8.0 / 1.72.0 | |
 | openapi-typescript | 7.13.0 | `pnpm gen:api` → `src/lib/api/openapi.d.ts` |
@@ -40,21 +40,27 @@ EXTORQ_SHOTS_PASSWORD_FILE=../var/secrets/analyst_password \
   node --experimental-websocket scripts/screenshots.mjs --base http://127.0.0.1:3000 \
   --out docs/screenshots name=/path ...                    # headless Chrome PNGs (docs/screenshots)
   # flags: --first-screen (1440x900 viewport only), --anon (signed out, e.g. /login),
-  #        --press Meta+k (open the palette), --click "<css selector>", --scale 2;
-  #        EXTORQ_SHOTS_WIDTH / EXTORQ_SHOTS_HEIGHT for other viewports (390x844 phone)
+  #        --press Meta+k (open the palette; Escape closes a sheet), --click "<css selector>",
+  #        --clicks "<sel>[@@text]|||<sel>" (in order), --focus / --hover "<css selector>"
+  #        (hover cards, tooltips), --audit (sideways scroll, text under 12 px), --scale 2;
+  #        EXTORQ_SHOTS_WIDTH / EXTORQ_SHOTS_HEIGHT for other viewports (390x844 phone).
+  #        Every page also reports console errors, exceptions and CSP violations.
 docker build -t extorq/frontend:0.1.0 .                     # compose builds the same context
 ```
 
-The smoke test covers the overview, every asset class with its four tabs (macOS host, Linux VM,
-kind cluster, Kubernetes node, GitHub repository), a Kubernetes workload, a Kubernetes Service
-and a host service, the investigation of each mandatory rule (VM-001, VM-002, K8S-001, K8S-002,
-GH-001: header, evidence, timeline, coverage, involved services, honest Jev/Gemini states),
-detection filters, health and viewer read-only behaviour. Pin the investigations with
+The smoke test covers the overview, every asset class with its tabs (macOS host, Linux VM,
+kind cluster, Kubernetes node: four tabs; GitHub repository: no Services tab), a Kubernetes
+workload, a Kubernetes Service, a host service and the VM's ssh service (authentication card),
+the investigation of each mandatory rule (VM-001, VM-002, K8S-001, K8S-002, GH-001: header,
+evidence, timeline, coverage, involved services, honest Jev/Gemini states), detection filters,
+health, the "Alert not found" page for an invalid id and viewer read-only behaviour. Pin the investigations with
 `EXTORQ_SMOKE_ALERTS="VM-001=<id>,..."` (otherwise the newest alert per rule in 30 days). It
 paces requests (`EXTORQ_SMOKE_PACE_MS`, default 1500): the API's ClickHouse read identity has a
-SHARED quota of 1200 queries per minute and a console page costs about 10-20 queries; an
-unpaced run once starved every API user for a minute. The API answers 429 + `Retry-After`
-when the quota is exhausted, and the client does not retry 429 (only 502/503/504).
+SHARED quota (6000 queries per minute since migration `0007_api_quota.sql`; it was 1200) and a
+console page costs about 5-20 queries (the API caches aggregate endpoints for 15 s). Keep
+pacing anyway: the quota is shared by every API user and the test suites, and an unpaced run
+at the old quota once starved all of them for a minute. The API answers 429 +
+`Retry-After` when the quota is exhausted, and the client does not retry 429 (only 502/503/504).
 
 Configuration (server-side environment only; there are no `NEXT_PUBLIC_*` variables):
 
@@ -80,8 +86,12 @@ src/app/(console)/              authenticated views (layout re-checks the sessio
                                 (a Kubernetes node's services tab lists the cluster workloads whose
                                 Pods/containers run on it: API `hosted`)
   services/[serviceId]/         service drill-down
-  detections/                   alert history (GET filters) + rules
-  investigations/[alertId]/     investigation
+  detections/                   alert history + rules; URL: `severity`, `rule`, `asset`, `status`
+                                (repeatable: OR within one, AND across), `sim=yes|no`, `range`
+                                (1h|24h|7d|30d), `tab=rules`, `offset` (only past 200 alerts);
+                                allow-listed in `views/detections/model.ts` (parseDetectionsQuery)
+  investigations/[alertId]/     investigation (also reads /health for the AI provider flags, cached 15 s
+                                by the API: an overview the API would refuse is not offered)
   health/                       system health
   actions.ts                    server actions (logout, state change, AI summary, drill-downs)
 src/components/console/         app shell (sidebar, breadcrumbs, command palette, freshness) and shared
@@ -151,13 +161,17 @@ Premium dark security-operations console (Linear / Vercel / Wiz / Datadog dark c
 top highlight, 12px card / 8px control radius, 32px gutters. One brand accent (indigo-violet
 `oklch(0.66 0.19 280)`) for the primary action, active nav, focus rings and chart series 1; colour
 otherwise only carries meaning: severity pills (red/orange/amber/blue/zinc 400 on 10% tint),
-health dots (emerald/amber/red/zinc), service coverage. Geist Sans for UI, Geist Mono for ids
-and UTC times, tabular figures; scale 12/13/14/16/20/24/30 (nothing smaller than 12px). States:
-loading = flat skeletons at real size (no shimmer), empty = dashed frame + one sentence, error
-= inside the failed block with a retry. Gradients only inside charts and the login glow; motion
-150-200 ms on hover/focus/open only. Legacy utility names of the first console (`bg-surface`,
-`text-ink-2`, `border-rule`, ...) remain mapped onto the new palette; new code uses the names in
-DESIGN.md. Shell: shadcn Sidebar (Monitor / Detect / Operate / Analytics), top bar with
+health dots (emerald/amber/red/zinc), service coverage. Geist Sans for UI and every count,
+duration and relative time (tabular figures; KPI figures proportional); Geist Mono only for ids,
+hashes, paths, addresses, event types, raw excerpts and absolute UTC times; scale
+12/13/14/16/20/24/30 (nothing smaller than 12px). One status per object; one format for
+fractions (`Fraction`: "15 / 84"); one line per KPI sub-label (`KpiFigures`). States: loading =
+flat skeletons at real size (no shimmer), empty = dashed frame + one sentence, not found =
+`NotFoundState` with a way back, error = inside the failed block with a retry. Charts use flat
+fills (no per-segment gradients); the only gradient is the login glow; motion 150-200 ms on
+hover/focus/open only. Use the token names in DESIGN.md (the first console's
+legacy utility aliases were removed with the last view that used them). Shell: shadcn Sidebar
+(Monitor / Detect / Operate / Analytics), top bar with
 breadcrumbs, Cmd/Ctrl-K palette, LAB pill and data-freshness indicator (Cmd/Ctrl+B collapses).
 
 ## Adding a view
@@ -170,8 +184,11 @@ breadcrumbs, Cmd/Ctrl-K palette, LAB pill and data-freshness indicator (Cmd/Ctrl
    `loading.tsx` with the skeleton presets. Put the page's one-line finding in `PageHeader`
    (`subtitle`) and pass `freshness={result.receivedAt}`. Lay cards out per DESIGN.md §3
    (`SectionCard`, `KpiCard`, 12-column grid, rows that end level).
-4. Render strings with `UntrustedText`; use `DataTable` (TanStack: sorting, faceted filters,
-   column visibility, pagination, row click) for lists and `DetailSheet` for row details.
+4. Render strings with `UntrustedText`; use `DataTable` for lists (TanStack: sorting, faceted
+   filters, uncontrolled or controlled column filters to mirror the URL, custom search, column
+   visibility, pagination, `rowHref` or a portal-safe `onRowClick`, `rowAnchorId` + `handleRef`
+   `reveal(rowId)` for jump targets) and `DetailSheet` for row details (open it from the row's
+   identity button; `onRowClick` can delegate to that button).
 5. Add the route's markers to `scripts/smoke.mjs`, a unit test for any new pure logic, then run
    lint, typecheck, test, build and the smoke test.
 
@@ -179,13 +196,25 @@ breadcrumbs, Cmd/Ctrl-K palette, LAB pill and data-freshness indicator (Cmd/Ctrl
 
 - `next.config.ts` sets `agentRules: false`: Next.js 16 `next dev` otherwise appends a generated
   block to this file whenever it detects an AI coding agent.
-- Investigation display rules live in `src/lib/investigation.ts` (unit-tested): timeline and
-  correlation rows drop the event type the summary repeats, evidence rows are chronological,
-  AI-provider times are shown in UTC only when they are well-formed ISO instants.
+- Investigation display rules live in `src/lib/investigation.ts` and
+  `src/components/views/investigation/{model,signals}.ts` (unit-tested): timeline and correlation
+  rows drop the event type the summary repeats, evidence rows are chronological, AI-provider times
+  are shown in UTC only when they are well-formed ISO instants. `signals.ts` lifts the decisive
+  part of an alert out of the feature lists: key signals (true risk flags and non-empty risk
+  lists), threshold checks (`threshold_<x>` against `peak_window_<x>`), the ordered stages of a
+  sequence rule (`stage_order` with `*_stage_at` times) and the remaining correlation features
+  grouped by source; a new rule's features show up in the lists until a signal is defined for
+  them. Related observations are grouped by relationship, strength and event type
+  (`groupRelated`), each group opening its members in a sheet.
 - Health shows the ingestion spool backlog once (gateway and writer report the same SQLite
   spool; detector and ai-worker queues are not ingestion) from fresh reports only
-  (`src/lib/health.ts`). Collector counts say when they are inherited from the cluster
-  (`src/lib/assets.ts`).
+  (`src/lib/health.ts`). Pipeline counters are cumulative since each component started (the
+  column headers say so; counters that are 0 on every component are named under the table).
+  Collector counts say when they are inherited from the cluster (`src/lib/assets.ts`), and
+  Kubernetes nodes are counted with their cluster on the Overview and the Assets page alike.
+- Finding titles drop a doubled scanner prefix for display (`displayFindingTitle`), and one
+  advisory reported by several scanners is marked "2 scanners" (`scannersByAdvisory`); the rows
+  and their counts stay as the API reports them.
 
 ## Known limitations
 

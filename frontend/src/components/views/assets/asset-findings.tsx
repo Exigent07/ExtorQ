@@ -1,8 +1,10 @@
 import { FileWarning, Info } from "lucide-react";
+import Link from "next/link";
 
 import { SplitBar } from "@/components/console/kpi-card";
 import { SectionCard } from "@/components/console/section-card";
 import { EmptyState, ErrorState, Notice } from "@/components/console/states";
+import { UntrustedText } from "@/components/console/untrusted-text";
 import type { ApiResult } from "@/lib/api/result";
 import type { FindingListResponse, FindingsSummary } from "@/lib/api/schemas";
 import { formatCount } from "@/lib/format";
@@ -56,11 +58,14 @@ export function AssetFindingsTab({
   summary,
   limit,
   now,
+  clusterFindingsHref,
 }: {
   result: ApiResult<FindingListResponse>;
   summary: FindingsSummary;
   limit: number;
   now: string;
+  /** For a Kubernetes node: the cluster's findings tab (its scans report under the cluster). */
+  clusterFindingsHref?: string | null;
 }) {
   const total = summary.counts.total + (summary.unverified?.total ?? 0);
   return (
@@ -84,7 +89,13 @@ export function AssetFindingsTab({
           "Distinct findings observed within retention"
         )
       }
-      meta={result.ok ? <span>Source: {result.data.source}</span> : null}
+      meta={
+        result.ok && result.data.items.length > 0 ? (
+          <span>
+            <UntrustedText value={[...new Set(result.data.items.map((f) => f.scanner))].sort().join(" · ")} limit={120} plain />
+          </span>
+        ) : null
+      }
       flush
     >
       {!result.ok ? (
@@ -109,10 +120,20 @@ export function AssetFindingsTab({
           ) : null}
           {result.data.items.length === 0 ? (
             <div className="px-5 pb-3">
-              <EmptyState>
-                No finding is stored for this asset. Findings appear after a scanner run covers it; an asset that was never
-                scanned also shows none.
-              </EmptyState>
+              {clusterFindingsHref ? (
+                <EmptyState>
+                  No finding carries this node&apos;s own id: the cluster&apos;s configuration and image scans store their
+                  findings under the cluster.{" "}
+                  <Link href={clusterFindingsHref} className="whitespace-nowrap text-fg-2 underline decoration-fg-faint underline-offset-4 transition-colors duration-150 hover:text-foreground hover:decoration-foreground">
+                    Open the cluster&apos;s findings →
+                  </Link>
+                </EmptyState>
+              ) : (
+                <EmptyState>
+                  No finding is stored for this asset. Findings appear after a scanner run covers it; an asset that was never
+                  scanned also shows none.
+                </EmptyState>
+              )}
             </div>
           ) : (
             <FindingsDataTable findings={result.data.items} now={now} label="Findings of this asset" />

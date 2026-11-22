@@ -18,8 +18,15 @@
  *
  * Flags: --first-screen captures only the first viewport (WIDTH x HEIGHT) instead of the full
  * page; --anon captures without signing in (the login page); --scale 2 for a retina capture;
- * --press Meta+k presses a key combination after load (e.g. to open the command palette);
- * --click "<css selector>" clicks the first matching element after load (e.g. a range toggle).
+ * --press Meta+k presses a key combination after load (e.g. to open the command palette, or
+ * Escape to close a sheet); --click "<css selector>" clicks the first matching element after
+ * load (e.g. a range toggle); --clicks "<sel>[@@text]|||<sel>..." clicks several in order (the
+ * first match whose text contains `text`); --focus "<css selector>" focuses an element (a hover
+ * card trigger, a facet button); --hover "<css selector>" moves the mouse over an element (hover
+ * cards, tooltips); --audit prints layout problems (horizontal page overflow, text under 12 px).
+ *
+ * Every page also reports console errors and warnings, uncaught exceptions and CSP violations
+ * ("no console errors ..." when there were none), so a capture doubles as a runtime check.
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -47,6 +54,10 @@ const FIRST_SCREEN = flag("--first-screen");
 const ANON = flag("--anon");
 const PRESS = option("--press", null);
 const CLICK = option("--click", null);
+const CLICKS = option("--clicks", null);
+const FOCUS = option("--focus", null);
+const HOVER = option("--hover", null);
+const AUDIT = flag("--audit");
 const WIDTH = Number.parseInt(process.env.EXTORQ_SHOTS_WIDTH ?? "1440", 10);
 const HEIGHT = Number.parseInt(process.env.EXTORQ_SHOTS_HEIGHT ?? "900", 10);
 const PACE_MS = Number.parseInt(process.env.EXTORQ_SHOTS_PACE_MS ?? "1500", 10);
@@ -70,6 +81,28 @@ if (pages.length === 0) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const problems = [];
+
+/** Layout audit run in the page: horizontal overflow and text below the 12 px floor. */
+const AUDIT_EXPRESSION = `(() => {
+  const out = [];
+  const doc = document.scrollingElement;
+  if (doc.scrollWidth > window.innerWidth + 1) out.push("page scrolls sideways: " + doc.scrollWidth + "px wide in a " + window.innerWidth + "px viewport");
+  const small = new Map();
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const el = node.parentElement;
+    if (!el || !node.textContent.trim()) continue;
+    if (el.closest(".sr-only,[aria-hidden=true],svg,script,style,noscript")) continue;
+    const box = el.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) continue;
+    const size = parseFloat(getComputedStyle(el).fontSize);
+    if (size < 12) small.set(el.tagName.toLowerCase() + "." + (el.className.baseVal ?? el.className).toString().split(" ").slice(0, 3).join("."), size);
+  }
+  for (const [where, size] of [...small].slice(0, 8)) out.push("text at " + size + "px: " + where);
+  return out;
+})()`;
 
 function attr(tag, name) {
   const match = tag.match(new RegExp(`${name}="([^"]*)"`));
@@ -122,6 +155,15 @@ async function connect(url) {
       if (message.error) reject(new Error(message.error.message));
       else resolve(message.result);
     } else if (message.method) {
+      const params = message.params ?? {};
+      if (message.method === "Log.entryAdded" && ["error", "warning"].includes(params.entry?.level)) {
+        problems.push(`${params.entry.source} ${params.entry.level}: ${String(params.entry.text).slice(0, 300)}`);
+      } else if (message.method === "Runtime.exceptionThrown") {
+        const details = params.exceptionDetails ?? {};
+        problems.push(`exception: ${String(details.exception?.description ?? details.text).slice(0, 300)}`);
+      } else if (message.method === "Runtime.consoleAPICalled" && ["error", "warning", "assert"].includes(params.type)) {
+        problems.push(`console ${params.type}: ${(params.args ?? []).map((a) => a.value ?? a.description ?? "").join(" ").slice(0, 300)}`);
+      }
       for (let i = waiters.length - 1; i >= 0; i -= 1) {
         if (waiters[i].method === message.method) waiters.splice(i, 1)[0].resolve(message.params);
       }
@@ -178,6 +220,8 @@ async function main() {
     session = await connect(target.webSocketDebuggerUrl);
     await session.send("Page.enable");
     await session.send("Network.enable");
+    await session.send("Log.enable");
+    await session.send("Runtime.enable");
     await session.send("Emulation.setDeviceMetricsOverride", {
       width: WIDTH,
       height: HEIGHT,
@@ -206,6 +250,32 @@ async function main() {
           expression: `document.querySelector(${JSON.stringify(CLICK)})?.click()`,
         });
         await sleep(700);
+      }
+      if (CLICKS) {
+        for (const step of CLICKS.split("|||")) {
+          const [selector, text = ""] = step.split("@@");
+          const result = await session.send("Runtime.evaluate", {
+            expression: `(() => { const all = [...document.querySelectorAll(${JSON.stringify(selector)})]; const el = ${JSON.stringify(text)} ? all.find((x) => x.textContent.includes(${JSON.stringify(text)})) : all[0]; if (!el) return "missing"; el.scrollIntoView({ block: "center" }); el.click(); return "ok"; })()`,
+            returnByValue: true,
+          });
+          if (result?.result?.value !== "ok") console.log(`click target not found: ${step}`);
+          await sleep(900);
+        }
+      }
+      if (FOCUS) {
+        await session.send("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(FOCUS)})?.focus()` });
+        await sleep(900);
+      }
+      if (HOVER) {
+        const result = await session.send("Runtime.evaluate", {
+          expression: `(() => { const el = document.querySelector(${JSON.stringify(HOVER)}); if (!el) return null; el.scrollIntoView({ block: "center" }); const r = el.getBoundingClientRect(); return JSON.stringify({ x: r.left + Math.min(r.width / 2, 40), y: r.top + r.height / 2 }); })()`,
+          returnByValue: true,
+        });
+        const point = result?.result?.value ? JSON.parse(result.result.value) : null;
+        if (point) {
+          await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+          await sleep(1200);
+        } else console.log(`hover target not found: ${HOVER}`);
       }
       if (PRESS) {
         const parts = PRESS.split("+");
@@ -236,6 +306,13 @@ async function main() {
       writeFileSync(join(OUT, `${name}.png`), Buffer.from(shot.data, "base64"));
       if (!FIRST_SCREEN) await session.send("Emulation.setDeviceMetricsOverride", viewport);
       console.log(`saved ${join(OUT, `${name}.png`)} (${WIDTH}x${height}) from ${path}`);
+      if (AUDIT) {
+        const audit = await session.send("Runtime.evaluate", { expression: AUDIT_EXPRESSION, returnByValue: true });
+        const found = audit?.result?.value ?? [];
+        console.log(found.length ? `  layout: ${found.join("\n  layout: ")}` : "  layout: no sideways scroll, no text under 12px");
+      }
+      console.log(problems.length ? `  PROBLEMS:\n    ${problems.join("\n    ")}` : "  no console errors, warnings, exceptions or CSP violations");
+      problems.length = 0;
       await sleep(PACE_MS);
     }
   } finally {

@@ -16,6 +16,7 @@ import { assetHref } from "@/lib/security/ids";
 import { AssetIconTile } from "./asset-icon";
 import {
   assetHealth,
+  assetStatus,
   coverageParts,
   itemCount,
   partsInWords,
@@ -82,7 +83,11 @@ function FindingsRow({ detail }: { detail: AssetDetailResponse }) {
       caption={
         <>
           {words || (summary.lifecycle_available ? "No open finding" : "No finding observed")}
-          {unverified > 0 ? ` · ${formatCount(unverified)} unverified` : ""}
+          {unverified > 0 ? (
+            <span className="text-muted-foreground">
+              <span className="text-fg-faint"> | </span>+{formatCount(unverified)} unverified (last scan partial)
+            </span>
+          ) : null}
         </>
       }
     />
@@ -155,9 +160,8 @@ function Footer({ asset, detail, now }: { asset: AssetListItem; detail: AssetDet
   let body: ReactNode;
   if (lifecycle) {
     body = (
-      <span className="flex min-w-0 items-center gap-1.5 text-fg-2">
-        <span className="flex-none">{lifecycle.label}:</span>
-        <span className="min-w-0 truncate text-muted-foreground">{lifecycle.reason ?? lifecycle.meaning}</span>
+      <span className="line-clamp-2 min-w-0 leading-relaxed">
+        <span className="text-fg-2">{lifecycle.label}:</span> {lifecycle.reason ?? lifecycle.meaning}
       </span>
     );
   } else if (health.reason && unhealthy.length > 0) {
@@ -185,8 +189,8 @@ function Footer({ asset, detail, now }: { asset: AssetListItem; detail: AssetDet
     );
   }
   return (
-    <footer className="mt-auto flex min-h-11 items-center justify-between gap-3 border-t border-hairline-soft px-5 py-2.5 text-xs text-muted-foreground">
-      <span className="min-w-0 flex-1 truncate">{body}</span>
+    <footer className="mt-auto flex min-h-11 items-end justify-between gap-3 border-t border-hairline-soft px-5 py-2.5 text-xs text-muted-foreground">
+      <span className={cn("min-w-0 flex-1", lifecycle ? "" : "truncate")}>{body}</span>
       <span
         aria-hidden="true"
         className="flex-none font-medium transition-colors duration-150 group-hover/card:text-foreground"
@@ -221,8 +225,10 @@ export function AssetCard({
   context?: ReactNode;
   className?: string;
 }) {
-  const health = assetHealth(asset);
-  const name = asset.display_name ?? asset.name;
+  const status = assetStatus(asset);
+  // A node's display name repeats its cluster ("extorq-lab node extorq-lab-control-plane"); the
+  // context line already says "Node of extorq-lab", so the title is the node's own name.
+  const name = asset.asset_type === "kubernetes_node" ? asset.name : (asset.display_name ?? asset.name);
   const href = assetHref(asset.asset_id);
   const inherited = asset.collectors_inherited > 0;
   const retired = asset.lifecycle_state === "retired";
@@ -253,20 +259,21 @@ export function AssetCard({
             </span>
           </p>
         </div>
-        {retired ? (
-          // Above the stretched link so the hint stays reachable.
+        {status.kind === "lifecycle" ? (
+          // One status per card: the lifecycle state (the footer gives the API's reason). Above
+          // the stretched link so its hint stays reachable.
           <span className="relative z-10 flex-none">
-            <LifecycleBadge state={asset.lifecycle_state} reason={asset.lifecycle_reason} />
+            <LifecycleBadge state={status.state} reason={asset.lifecycle_reason} />
           </span>
         ) : (
-          <StatusDot tone={health.tone} label={health.label} className="mt-0.5 text-xs" />
+          <StatusDot tone={status.health.tone} label={status.health.label} className="mt-0.5 text-xs" />
         )}
       </header>
 
       <dl className="mx-5 mt-4 grid grid-cols-3 divide-x divide-hairline-soft rounded-lg bg-white/[0.02] ring-1 ring-hairline-soft ring-inset">
         <Metric label={inherited ? "Collectors (cluster)" : "Collectors fresh"}>
           {asset.collectors_total === 0 ? (
-            <span className="text-muted-foreground">0</span>
+            <span className="text-base font-normal text-muted-foreground">No collector</span>
           ) : (
             <>
               <span className={asset.collectors_stale > 0 ? "text-health-warn" : undefined}>

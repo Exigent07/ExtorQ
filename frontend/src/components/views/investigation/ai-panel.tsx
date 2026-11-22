@@ -2,6 +2,7 @@ import { cn } from "cn";
 import { BrainCircuit, CircleCheck, FileWarning, Sparkles, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { Disclosure } from "@/components/console/disclosure";
 import { EvidenceChip } from "@/components/console/evidence-chip";
 import { Hint } from "@/components/console/hint";
 import { IdText } from "@/components/console/id-text";
@@ -15,9 +16,18 @@ import { formatCount, formatMs, formatProbability, formatUtc, humanize } from "@
 import { providerTime } from "@/lib/investigation";
 import { shortId } from "@/lib/security/display";
 
-import { aiStatusText, QUESTION_LABEL, questionTypeLabel, recommendationLabel } from "./ai-labels";
+import { aiStatusText, QUESTION_LABEL, questionTypeLabel, rationaleLabel, recommendationLabel } from "./ai-labels";
 import { Eyebrow } from "./marks";
-import { choiceOptions, JEV_BANDS, jevZone, percent, statementChips } from "./model";
+import {
+  choiceOptions,
+  JEV_BANDS,
+  jevZone,
+  percent,
+  type ProviderAvailability,
+  statementChips,
+  summaryUnavailableReason,
+} from "./model";
+import { MoreChips } from "./more-chips";
 import { SummaryRequestButton } from "./summary-request";
 
 /** The label every AI block carries: advisory, never authoritative. */
@@ -84,16 +94,19 @@ function ContextMeter({ value }: { value: number }) {
         aria-label="Sufficient-context probability"
         className="relative h-2.5"
       >
-        <span className="absolute inset-y-0 left-0 rounded-l-full bg-white/[0.06]" style={{ width: `calc(${low}% - 1px)` }} />
-        <span className="absolute inset-y-0 bg-health-warn/[0.22]" style={{ left: `${low}%`, width: `calc(${high - low}% - 1px)` }} />
-        <span className="absolute inset-y-0 right-0 rounded-r-full bg-white/[0.12]" style={{ width: `${100 - high}%` }} />
+        <span className="absolute inset-y-0 left-0 rounded-l-full bg-white/[0.05]" style={{ width: `calc(${low}% - 1px)` }} />
+        <span
+          className="absolute inset-y-0 bg-white/[0.11] ring-1 ring-hairline-strong ring-inset"
+          style={{ left: `${low}%`, width: `calc(${high - low}% - 1px)` }}
+        />
+        <span className="absolute inset-y-0 right-0 rounded-r-full bg-white/[0.05]" style={{ width: `${100 - high}%` }} />
         <span
           aria-hidden="true"
-          className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand shadow-card ring-[3px] ring-card"
+          className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground shadow-card ring-[3px] ring-card"
           style={{ left: `${percent(value)}%` }}
         />
       </div>
-      <div aria-hidden="true" className="relative h-4 font-mono text-xs text-muted-foreground tabular-nums">
+      <div aria-hidden="true" className="relative h-4 text-xs text-muted-foreground tabular-nums">
         <span className="absolute left-0">0</span>
         <span className="absolute -translate-x-1/2" style={{ left: `${low}%` }}>
           {formatProbability(JEV_BANDS.insufficientBelow)}
@@ -131,7 +144,7 @@ function AnswerBar({ answer }: { answer: JevAnswer }) {
         <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
           {options.map((o) => (
             <span key={o.label} className={o.chosen ? "text-foreground" : "text-muted-foreground"}>
-              {recommendationLabel(o.label)} <span className="font-mono tabular-nums">{formatProbability(o.probability)}</span>
+              {recommendationLabel(o.label)} <span className="tabular-nums">{formatProbability(o.probability)}</span>
             </span>
           ))}
         </span>
@@ -175,14 +188,23 @@ function JevBody({ triage }: { triage: JevTriageResult }) {
             <div className="grid gap-2">
               <Eyebrow>Rationale codes</Eyebrow>
               <div className="flex flex-wrap gap-1.5">
-                {triage.rationale_codes.map((code) => (
-                  <span
-                    key={code}
-                    className="inline-flex h-6 items-center rounded-md bg-white/[0.03] px-1.5 font-mono text-xs text-fg-2 ring-1 ring-hairline-strong ring-inset"
-                  >
-                    <UntrustedText value={code} limit={48} plain />
-                  </span>
-                ))}
+                {triage.rationale_codes.map((code) => {
+                  const label = rationaleLabel(code);
+                  return label ? (
+                    <Hint key={code} content={<span className="font-mono">{code}</span>}>
+                      <span className="inline-flex h-6 items-center rounded-md bg-white/[0.03] px-2 text-xs text-fg-2 ring-1 ring-hairline-strong ring-inset">
+                        {label}
+                      </span>
+                    </Hint>
+                  ) : (
+                    <span
+                      key={code}
+                      className="inline-flex h-6 items-center rounded-md bg-white/[0.03] px-1.5 font-mono text-xs text-fg-2 ring-1 ring-hairline-strong ring-inset"
+                    >
+                      <UntrustedText value={code} limit={48} plain />
+                    </span>
+                  );
+                })}
               </div>
             </div>
           ) : null}
@@ -197,7 +219,7 @@ function JevBody({ triage }: { triage: JevTriageResult }) {
                     {QUESTION_LABEL[answer.question_id] ?? <UntrustedText value={answer.question_id} limit={64} />}
                     <span className="ml-2 text-xs text-muted-foreground">{questionTypeLabel(answer.type)}</span>
                   </span>
-                  <span className={cn("flex-none text-xs text-foreground tabular-nums", typeof answer.value === "number" && "font-mono")}>
+                  <span className="flex-none text-xs text-foreground tabular-nums">
                     {answerText(answer)}
                   </span>
                 </div>
@@ -211,7 +233,28 @@ function JevBody({ triage }: { triage: JevTriageResult }) {
   );
 }
 
-function JevCard({ assessment, currentInputHash }: { assessment: AIAssessment | null; currentInputHash: string | null }) {
+/** "Jev is disabled now" beside the advisory label when the API reports the provider off. */
+function ProviderOff({ name, availability }: { name: string; availability: ProviderAvailability }) {
+  if (availability.enabled !== false) return null;
+  return (
+    <Hint content={`${name} is turned off in the AI settings this API process reads (System health, AI providers). Stored assessments stay readable.`}>
+      <span className="inline-flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
+        <span aria-hidden="true" className="size-1.5 rounded-full bg-health-off" />
+        {name} disabled now
+      </span>
+    </Hint>
+  );
+}
+
+function JevCard({
+  assessment,
+  currentInputHash,
+  availability,
+}: {
+  assessment: AIAssessment | null;
+  currentInputHash: string | null;
+  availability: ProviderAvailability;
+}) {
   const outdated = assessment !== null && currentInputHash !== null && assessment.context_input_hash !== currentInputHash;
   return (
     <SectionCard
@@ -219,7 +262,12 @@ function JevCard({ assessment, currentInputHash }: { assessment: AIAssessment | 
       titleId="jev-title"
       icon={BrainCircuit}
       description="Typed triage questions answered by TypeSafe Jev over the investigation context"
-      meta={<AdvisoryBadge />}
+      meta={
+        <span className="flex items-center gap-3">
+          <ProviderOff name="Jev" availability={availability} />
+          <AdvisoryBadge />
+        </span>
+      }
       footer={
         assessment ? (
           <Footer
@@ -245,8 +293,11 @@ function JevCard({ assessment, currentInputHash }: { assessment: AIAssessment | 
     >
       {!assessment ? (
         <EmptyState>
-          No Jev triage exists for this alert. The ai-worker assesses new alerts only when Jev is enabled and within its budget; the
-          deterministic investigation stands on its own.
+          No Jev triage exists for this alert.{" "}
+          {availability.enabled === false
+            ? "Jev is disabled on this deployment, so the ai-worker does not assess new alerts; "
+            : "The ai-worker assesses new alerts only when Jev is enabled and within its budget; "}
+          the deterministic investigation stands on its own.
         </EmptyState>
       ) : (
         <div className="grid gap-5">
@@ -297,18 +348,29 @@ function Chips({ statement, evidenceRows }: { statement: Pick<EvidenceStatement,
       </span>
     );
   }
+  const render = (chip: (typeof chips)[number]) =>
+    chip.kind === "context" ? (
+      <ContextChip key={`c:${chip.id}`} eventId={chip.id} />
+    ) : (
+      <EvidenceChip key={`${chip.kind}:${chip.id}`} eventId={chip.id} verified={chip.kind === "evidence"} />
+    );
+  // Unverified ids are never folded away: they carry the warning.
+  const shown = chips.filter((chip, index) => index < CHIP_PREVIEW || chip.kind === "unverified");
+  const rest = chips.filter((chip, index) => index >= CHIP_PREVIEW && chip.kind !== "unverified");
   return (
     <span className="flex flex-wrap gap-1.5">
-      {chips.map((chip) =>
-        chip.kind === "context" ? (
-          <ContextChip key={`c:${chip.id}`} eventId={chip.id} />
-        ) : (
-          <EvidenceChip key={`${chip.kind}:${chip.id}`} eventId={chip.id} verified={chip.kind === "evidence"} />
-        ),
-      )}
+      {shown.map(render)}
+      {rest.length > 0 ? (
+        <MoreChips count={rest.length} title={`All ${formatCount(chips.length)} cited ids of this statement`}>
+          {rest.map(render)}
+        </MoreChips>
+      ) : null}
     </span>
   );
 }
+
+/** Cited ids shown per statement before the rest move into a "+N more" hover card. */
+const CHIP_PREVIEW = 3;
 
 function Statement({ statement, evidenceRows }: { statement: EvidenceStatement; evidenceRows: ReadonlySet<string> }) {
   return (
@@ -365,8 +427,12 @@ function SummaryBody({ summary, evidenceRows }: { summary: InvestigationSummary;
         </ul>
       </Section>
       {summary.timeline.length > 0 ? (
-        <Section title="Timeline as summarised">
-          <ol className="divide-y divide-hairline-soft">
+        <Disclosure
+          label="Timeline as summarised"
+          meta={formatCount(summary.timeline.length)}
+          triggerClassName="font-semibold text-foreground"
+        >
+          <ol className="mt-3 divide-y divide-hairline-soft">
             {summary.timeline.map((item, i) => (
               <li key={i} className="grid gap-x-4 gap-y-1.5 py-2.5 first:pt-0 last:pb-0 sm:grid-cols-[10.5rem_minmax(0,1fr)]">
                 <span className="font-mono text-xs text-muted-foreground tabular-nums">
@@ -381,7 +447,7 @@ function SummaryBody({ summary, evidenceRows }: { summary: InvestigationSummary;
               </li>
             ))}
           </ol>
-        </Section>
+        </Disclosure>
       ) : null}
       {summary.related_activity.length > 0 ? (
         <Section title="Related activity">
@@ -409,16 +475,15 @@ function EvidenceCheck({ assessment, summary }: { assessment: AIAssessment; summ
       <span className="font-medium text-fg-2">Evidence check</span>
       {v ? (
         <>
-          <span className="inline-flex items-center gap-1.5 text-fg-2">
+          <span className="inline-flex items-center gap-1.5 text-fg-2 tabular-nums">
             <CircleCheck className="size-3.5 text-health-ok" aria-hidden="true" />
-            <span className="font-mono tabular-nums">{formatCount(v.evidence_ids_verified)}</span> of{" "}
-            <span className="font-mono tabular-nums">{formatCount(v.evidence_ids_cited)}</span> cited ids verified
+            {formatCount(v.evidence_ids_verified)} of {formatCount(v.evidence_ids_cited)} cited ids verified
           </span>
-          <span className={v.evidence_ids_rejected > 0 ? "text-health-warn" : "text-muted-foreground"}>
-            <span className="font-mono tabular-nums">{formatCount(v.evidence_ids_rejected)}</span> rejected
+          <span className={cn("tabular-nums", v.evidence_ids_rejected > 0 ? "text-health-warn" : "text-muted-foreground")}>
+            {formatCount(v.evidence_ids_rejected)} rejected
           </span>
-          <span className={v.statements_without_evidence > 0 ? "text-health-warn" : "text-muted-foreground"}>
-            <span className="font-mono tabular-nums">{formatCount(v.statements_without_evidence)}</span> statements without evidence
+          <span className={cn("tabular-nums", v.statements_without_evidence > 0 ? "text-health-warn" : "text-muted-foreground")}>
+            {formatCount(v.statements_without_evidence)} statements without evidence
           </span>
         </>
       ) : (
@@ -426,6 +491,17 @@ function EvidenceCheck({ assessment, summary }: { assessment: AIAssessment; summ
       )}
       <span className="text-muted-foreground">
         Model&apos;s own confidence: <span className="text-fg-2">{humanize(summary.overall_confidence)}</span>
+      </span>
+      <span className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline-soft pt-2 text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <CircleCheck className="size-3 text-health-ok" aria-hidden="true" /> evidence row of this alert (jumps to it)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <CircleCheck className="size-3 text-fg-2" aria-hidden="true" /> verified related observation
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <TriangleAlert className="size-3 text-health-warn" aria-hidden="true" /> unverified id
+        </span>
       </span>
     </div>
   );
@@ -435,24 +511,32 @@ function GeminiCard({
   alertId,
   assessment,
   canRequest,
+  availability,
   evidenceRows,
   currentInputHash,
 }: {
   alertId: string;
   assessment: AIAssessment | null;
   canRequest: boolean;
+  availability: ProviderAvailability;
   evidenceRows: ReadonlySet<string>;
   currentInputHash: string | null;
 }) {
   const summary = assessment?.status === "ok" ? (assessment.summary ?? null) : null;
   const outdated = assessment !== null && currentInputHash !== null && assessment.context_input_hash !== currentInputHash;
+  const unavailable = summaryUnavailableReason(availability);
   return (
     <SectionCard
       title="Gemini overview"
       titleId="gemini-title"
       icon={Sparkles}
       description="A narrative overview of the investigation context; every statement cites evidence ids checked by the backend"
-      meta={<AdvisoryBadge />}
+      meta={
+        <span className="flex items-center gap-3">
+          <ProviderOff name="Gemini" availability={availability} />
+          <AdvisoryBadge />
+        </span>
+      }
       footer={
         assessment ? (
           <Footer
@@ -477,9 +561,12 @@ function GeminiCard({
       }
     >
       <div className="grid gap-6">
-        <SummaryRequestButton alertId={alertId} canRequest={canRequest} hasSummary={Boolean(summary)} />
+        <SummaryRequestButton alertId={alertId} canRequest={canRequest} hasSummary={Boolean(summary)} unavailable={unavailable} />
         {!assessment ? (
-          <EmptyState>No overview has been generated for this alert.</EmptyState>
+          <EmptyState>
+            No overview has been generated for this alert.
+            {unavailable ? " None can be requested while Gemini is unavailable; the deterministic investigation stands on its own." : ""}
+          </EmptyState>
         ) : !summary ? (
           <Notice icon={FileWarning}>
             The latest request did not produce an overview: {aiStatusText(assessment.status).toLowerCase()}.
@@ -493,8 +580,8 @@ function GeminiCard({
           <>
             {outdated ? (
               <Notice tone="warn" icon={TriangleAlert}>
-                Generated from an earlier version of the investigation context (its input hash differs). Generate a new overview for the
-                current one.
+                Generated from an earlier version of the investigation context (its input hash differs).
+                {unavailable ? " A new overview cannot be requested while Gemini is unavailable." : " Generate a new overview for the current one."}
               </Notice>
             ) : null}
             <EvidenceCheck assessment={assessment} summary={summary} />
@@ -520,6 +607,8 @@ export function AiPanel({
   evidenceRows,
   triage,
   summary,
+  triageAvailability,
+  summaryAvailability,
 }: {
   alertId: string;
   assessments: AIAssessment[];
@@ -529,15 +618,19 @@ export function AiPanel({
   evidenceRows: ReadonlySet<string>;
   triage: AIAssessment | null;
   summary: AIAssessment | null;
+  /** Provider flags from System health (null fields when health could not be read). */
+  triageAvailability: ProviderAvailability;
+  summaryAvailability: ProviderAvailability;
 }) {
   return (
     <div className="grid gap-6">
       {assessmentsError ? <ErrorState what="the AI assessments" error={assessmentsError} /> : null}
-      <JevCard assessment={triage} currentInputHash={currentInputHash} />
+      <JevCard assessment={triage} currentInputHash={currentInputHash} availability={triageAvailability} />
       <GeminiCard
         alertId={alertId}
         assessment={summary}
         canRequest={canRequest}
+        availability={summaryAvailability}
         evidenceRows={evidenceRows}
         currentInputHash={currentInputHash}
       />

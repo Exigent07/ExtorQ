@@ -1,7 +1,8 @@
-import { Activity, CircleX, Clock, Cpu, FileWarning, ListChecks, Radio } from "lucide-react";
+import { Activity, CircleX, Clock, Cpu, ListChecks, Radio } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { Fraction } from "@/components/console/kpi-card";
 import { CardLink, SectionCard } from "@/components/console/section-card";
 import { StatusDot, type Tone } from "@/components/console/status-badge";
 import type { CollectionHealthSummary } from "@/lib/api/schemas";
@@ -30,10 +31,15 @@ function Row({
   );
 }
 
-function Count({ value, tone }: { value: number; tone: Tone }) {
+/**
+ * The value column: a plain figure; a status dot only when the value is abnormal (never a
+ * green dot on a zero).
+ */
+function Value({ children, tone }: { children: ReactNode; tone: Tone | null }) {
   return (
-    <span className={value > 0 ? (tone === "bad" ? "font-medium text-health-bad" : "font-medium text-health-warn") : "text-fg-2"}>
-      <span className="tabular-nums">{formatCount(value)}</span>
+    <span className="inline-flex items-center gap-2 tabular-nums">
+      {tone && tone !== "ok" ? <StatusDot tone={tone} label="" className="gap-0" /> : null}
+      <span className={tone && tone !== "ok" ? "font-medium text-foreground" : "text-fg-2"}>{children}</span>
     </span>
   );
 }
@@ -63,43 +69,39 @@ export function CollectionHealthCard({ summary, className }: { summary: Collecti
           {summary.no_collector_reports ? (
             <StatusDot tone="bad" label="No collector has reported" />
           ) : (
-            <StatusDot
-              tone={collectorsTone}
-              label={`${formatCount(summary.collectors_ok)} of ${formatCount(summary.collectors_total)}`}
-              className="tabular-nums"
-            />
+            <Value tone={summary.collectors_ok < summary.collectors_total ? collectorsTone : null}>
+              <Fraction value={summary.collectors_ok} total={summary.collectors_total} />
+            </Value>
           )}
         </Row>
         <Row icon={Clock} label="Stale collectors" detail="No successful collection within 3 intervals">
-          <Count value={summary.collectors_stale} tone="warn" />
+          <Value tone={summary.collectors_stale > 0 ? "warn" : null}>{formatCount(summary.collectors_stale)}</Value>
         </Row>
         <Row icon={CircleX} label="Failing collectors" detail="Last report failed or degraded">
-          <Count value={summary.collectors_failing} tone="bad" />
+          <Value tone={summary.collectors_failing > 0 ? "bad" : null}>{formatCount(summary.collectors_failing)}</Value>
         </Row>
         <Row icon={Cpu} label="Pipeline components not OK" detail="Stale, failing or disabled">
           {summary.no_pipeline_reports ? (
             <StatusDot tone="bad" label="No pipeline reports" />
           ) : (
-            <StatusDot
-              tone={pipelineTone}
-              label={`${formatCount(summary.pipeline_unhealthy)} of ${formatCount(summary.pipeline_components)}`}
-              className="tabular-nums"
-            />
+            <Value tone={summary.pipeline_unhealthy > 0 ? pipelineTone : null}>
+              {formatCount(summary.pipeline_unhealthy)} <span className="text-muted-foreground">of {formatCount(summary.pipeline_components)}</span>
+            </Value>
           )}
         </Row>
-        <Row icon={ListChecks} label="Rules failing (last run)">
+        <Row
+          icon={ListChecks}
+          label="Rule failures"
+          detail={summary.no_rule_runs ? undefined : `${formatCount(summary.rules_total)} rules: last run, and runs in 24 h`}
+        >
           {summary.no_rule_runs ? (
             <StatusDot tone="warn" label="No rule has run yet" />
           ) : (
-            <StatusDot
-              tone={rulesTone}
-              label={`${formatCount(summary.rules_failing)} of ${formatCount(summary.rules_total)}`}
-              className="tabular-nums"
-            />
+            <Value tone={summary.rules_failing > 0 || summary.rule_failures_24h > 0 ? rulesTone === "bad" ? "bad" : "warn" : null}>
+              {formatCount(summary.rules_failing)} <span className="text-muted-foreground">last run ·</span>{" "}
+              {formatCount(summary.rule_failures_24h)} <span className="text-muted-foreground">in 24 h</span>
+            </Value>
           )}
-        </Row>
-        <Row icon={FileWarning} label="Rule failures, last 24 h">
-          <Count value={summary.rule_failures_24h} tone="bad" />
         </Row>
       </ul>
     </SectionCard>

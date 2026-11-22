@@ -1,6 +1,7 @@
 import { Fingerprint, Layers, ScrollText } from "lucide-react";
 import Link from "next/link";
 
+import { Disclosure } from "@/components/console/disclosure";
 import { SectionCard } from "@/components/console/section-card";
 import { EmptyState, ErrorState, Notice } from "@/components/console/states";
 import { CoverageBadge } from "@/components/console/status-badge";
@@ -8,13 +9,24 @@ import { Timestamp } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import type { ApiFailure } from "@/lib/api/result";
 import type { AlertDetailResponse, InvestigationContext } from "@/lib/api/schemas";
-import { assetTypeLabel, formatCount } from "@/lib/format";
+import { assetTypeLabel, formatCount, formatDuration, formatWindowLength } from "@/lib/format";
 import { assetHref, serviceHref } from "@/lib/security/ids";
 import { categoryLabel, serviceKindLabel } from "@/lib/services";
 
 import { FeatureTable } from "./feature-value";
+import { KeySignals } from "./key-signals";
 import { Eyebrow, KeyChip } from "./marks";
-import { featureLabel } from "./model";
+import { featureLabel, secondsBetween } from "./model";
+import {
+  contextFeatureGroups,
+  DETECTOR_LABEL,
+  type FeatureGroup,
+  keySignals,
+  remainingDetectorFeatures,
+  sequenceStages,
+  thresholdChecks,
+  thresholdKeys,
+} from "./signals";
 
 /**
  * Overview tab: why the rule fired (its logic and what the detector found), the entities
@@ -34,6 +46,25 @@ export function OverviewPanel({
   const ruleDescription = detail.rule?.description ?? context?.rule.description ?? null;
   const entities = Object.entries(alert.entities);
   const detectorFeatures = context?.alert.features ?? alert.features ?? null;
+  const contextFeatures = context?.features ?? null;
+
+  // The decisive signals first; the lists below keep only what these do not already show.
+  const sequence = sequenceStages(detectorFeatures);
+  const checks = thresholdChecks(detectorFeatures);
+  const signals = keySignals(detectorFeatures, contextFeatures);
+  const windowSeconds = typeof detectorFeatures?.window_seconds === "number" ? detectorFeatures.window_seconds : null;
+  const consumed = new Set<string>([
+    ...(sequence?.consumes ?? []),
+    ...thresholdKeys(checks),
+    ...signals.flatMap((sig) => sig.consumes),
+    // The shared-NAT caveat is stated once, in the header and the context limitations.
+    "d:src_ip_shared_nat",
+    "d:source_ip_shared_nat",
+    ...(checks.length > 0 && windowSeconds !== null ? ["d:window_seconds"] : []),
+  ]);
+  const remaining = remainingDetectorFeatures(detectorFeatures, consumed);
+  const groups = context ? contextFeatureGroups(contextFeatures, detectorFeatures, consumed) : [];
+  const span = secondsBetween(alert.window_start, alert.window_end);
 
   return (
     <div className="grid gap-6">
@@ -57,12 +88,17 @@ export function OverviewPanel({
               <UntrustedText value={alert.summary} limit={900} />
             </p>
           </div>
-          <dl className="grid gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
+          <KeySignals sequence={sequence} checks={checks} signals={signals} windowSeconds={windowSeconds} />
+          <dl className="grid gap-x-6 gap-y-4 border-t border-hairline-soft pt-4 text-sm sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="min-w-0">
-              <dt className="text-xs text-muted-foreground">Detection window (UTC)</dt>
+              <dt className="text-xs text-muted-foreground">Evaluated span (UTC)</dt>
               <dd className="mt-1 grid gap-0.5">
                 <Timestamp value={alert.window_start} />
                 <Timestamp value={alert.window_end} />
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {span !== null ? `${formatDuration(span)} of rule runs` : null}
+                  {windowSeconds !== null ? ` · ${formatWindowLength(windowSeconds)} sliding window` : null}
+                </span>
               </dd>
             </div>
             <div className="min-w-0">
@@ -104,12 +140,20 @@ export function OverviewPanel({
           </div>
           <div className="min-w-0 border-t border-hairline-soft pt-5">
             <Eyebrow>Detector features</Eyebrow>
-            <FeatureTable features={detectorFeatures} empty="The detector recorded no features for this alert." />
+            <FeatureTable
+              features={remaining}
+              labels={DETECTOR_LABEL}
+              empty={
+                Object.keys(detectorFeatures ?? {}).length > 0
+                  ? "Every detector feature is shown under Key signals above."
+                  : "The detector recorded no features for this alert."
+              }
+            />
           </div>
           <div className="min-w-0 border-t border-hairline-soft pt-5">
             <Eyebrow>Correlation context</Eyebrow>
             {context ? (
-              <FeatureTable features={context.features} empty="The investigation context holds no computed features." />
+              <ContextGroups groups={groups} />
             ) : (
               <ErrorState
                 what="the investigation context"
@@ -136,6 +180,39 @@ export function OverviewPanel({
           <InvolvedServices context={context} />
         )}
       </SectionCard>
+    </div>
+  );
+}
+
+/**
+ * Correlation-layer features grouped by source (SSH, HTTP, application, host changes,
+ * Kubernetes, GitHub, scope); counters that are exactly 0 fold behind one line per page.
+ */
+function ContextGroups({ groups }: { groups: FeatureGroup[] }) {
+  const zeros = groups.flatMap((g) => g.zeros);
+  const shown = groups.filter((g) => g.rows.length > 0);
+  if (shown.length === 0 && zeros.length === 0) {
+    return <FeatureTable entries={[]} empty="The investigation context holds no further computed features." />;
+  }
+  return (
+    <div className="mt-3 grid gap-5">
+      {shown.map((group) => (
+        <div key={group.id} className="grid gap-0.5">
+          <p className="text-sm font-medium text-foreground">{group.title}</p>
+          <FeatureTable entries={group.rows} empty="" />
+        </div>
+      ))}
+      {zeros.length > 0 ? (
+        <Disclosure
+          label={`Show ${formatCount(zeros.length)} zero counter${zeros.length === 1 ? "" : "s"}`}
+          openLabel={`Hide ${formatCount(zeros.length)} zero counter${zeros.length === 1 ? "" : "s"}`}
+          triggerClassName="text-muted-foreground"
+        >
+          <div className="mt-2">
+            <FeatureTable entries={zeros} empty="" />
+          </div>
+        </Disclosure>
+      ) : null}
     </div>
   );
 }

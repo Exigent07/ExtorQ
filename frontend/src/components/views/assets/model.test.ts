@@ -5,9 +5,11 @@ import { describe, it } from "node:test";
 import {
   assetHealth,
   assetsFinding,
+  assetStatus,
   classOf,
   classStatus,
   collectorFreshness,
+  emptyOptionalColumns,
   itemCount,
   openAlertMix,
   relativeParts,
@@ -47,12 +49,43 @@ describe("assetsFinding and classStatus", () => {
     row({ asset_type: "github_account", coverage_status: "missing", collectors_total: 0 }),
   ];
   it("counts monitored assets apart from owner accounts and retired assets", () => {
-    assert.equal(assetsFinding(assets), "1 of 2 monitored assets healthy · 1 stale · 1 GitHub owner account · 1 retired");
+    assert.equal(
+      assetsFinding(assets),
+      "1 of 2 monitored assets healthy · 1 with stale collectors · 1 GitHub owner account · 1 retired",
+    );
     assert.equal(assetsFinding([]), "No asset has reported an inventory yet");
   });
   it("leaves retired assets out of the class verdict", () => {
     assert.deepEqual(classStatus(assets), { tone: "warn", label: "Degraded", summary: "1 of 2 reporting" });
     assert.deepEqual(classStatus([assets[0]!, assets[2]!]), { tone: "ok", label: "Healthy", summary: "1 of 1 reporting" });
+  });
+  it("says 'stale' once for assets the API marks stale, never counting them healthy", () => {
+    assert.equal(
+      assetsFinding([
+        row({ asset_type: "linux_host" }),
+        row({ asset_type: "github_repository", coverage_status: "ok", lifecycle_state: "stale" }),
+        row({ asset_type: "github_repository", coverage_status: "missing", collectors_total: 0, lifecycle_state: "stale" }),
+        row({ asset_type: "github_account", coverage_status: "missing", collectors_total: 0, lifecycle_state: "stale" }),
+      ]),
+      "1 of 3 monitored assets healthy · 2 monitored assets stale · 1 GitHub owner account",
+    );
+  });
+  it("counts a Kubernetes node with its cluster, as the Overview does", () => {
+    assert.equal(
+      assetsFinding([
+        row({ asset_type: "kubernetes_cluster" }),
+        row({ asset_type: "kubernetes_node" }),
+        row({ asset_type: "linux_host", coverage_status: "degraded" }),
+      ]),
+      "1 of 2 monitored assets healthy · 1 degraded · 1 Kubernetes node via its cluster",
+    );
+  });
+  it("counts retired assets the API left out of the list as listed apart", () => {
+    assert.equal(
+      assetsFinding([row({ asset_type: "linux_host" })], 2),
+      "1 of 1 monitored asset healthy · 2 retired (listed apart)",
+    );
+    assert.equal(assetsFinding([], 3), "Only retired assets: 3");
   });
   it("calls a class missing when nothing in it reports", () => {
     assert.equal(classStatus([row({ asset_type: "linux_host", coverage_status: "missing", collectors_total: 0 })]).label, "Missing");
@@ -145,5 +178,27 @@ describe("small helpers", () => {
     ];
     assert.equal(openAlertMix(recent, 1)?.high, 1);
     assert.equal(openAlertMix(recent, 3), null);
+  });
+});
+
+describe("assetStatus: one status per asset", () => {
+  const base = { coverage_status: "missing" as const, collectors_total: 0, collectors_stale: 0 };
+  it("shows the lifecycle state of a stale or retired asset instead of its collector verdict", () => {
+    assert.deepEqual(assetStatus({ ...base, lifecycle_state: "stale" }), { kind: "lifecycle", state: "stale" });
+    assert.deepEqual(assetStatus({ ...base, lifecycle_state: "retired" }), { kind: "lifecycle", state: "retired" });
+  });
+  it("shows health for an active asset", () => {
+    const status = assetStatus({ ...base, lifecycle_state: "active" });
+    assert.equal(status.kind, "health");
+    assert.equal(status.kind === "health" ? status.health.label : null, "No collector");
+  });
+});
+
+describe("emptyOptionalColumns", () => {
+  it("hides actor, source address and service columns only when no loaded row fills them", () => {
+    assert.deepEqual(emptyOptionalColumns([{ actor_name: null, src_ip: null, service_name: null }]), ["actor", "src", "service"]);
+    assert.deepEqual(emptyOptionalColumns([{ k8s_user: "system:admin", src_ip: "10.0.2.2", service_name: "ssh" }, {}]), []);
+    assert.deepEqual(emptyOptionalColumns([{ gh_actor_login: "octo" }]), ["src", "service"]);
+    assert.deepEqual(emptyOptionalColumns([]), ["actor", "src", "service"]);
   });
 });

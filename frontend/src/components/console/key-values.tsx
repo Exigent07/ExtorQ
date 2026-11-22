@@ -34,31 +34,3 @@ export function KeyValueList({
   );
 }
 
-/**
- * A strip of headline figures inside one card, split by hairlines (label over value). Used by
- * detail pages; the Overview uses KpiCard.
- */
-export function MetricStrip({
-  items,
-  className,
-}: {
-  items: { label: string; value: ReactNode; sub?: ReactNode }[];
-  className?: string;
-}) {
-  return (
-    <dl
-      className={cn(
-        "grid grid-cols-2 gap-y-5 rounded-xl bg-card py-5 shadow-card ring-1 ring-hairline sm:flex sm:flex-wrap sm:gap-y-4",
-        className,
-      )}
-    >
-      {items.map((item, index) => (
-        <div key={item.label} className={cn("min-w-0 px-5 sm:flex-1", index > 0 && "sm:border-l sm:border-hairline-soft")}>
-          <dt className="text-sm text-muted-foreground">{item.label}</dt>
-          <dd className="mt-1.5 text-xl font-semibold tracking-tight text-foreground tabular-nums">{item.value}</dd>
-          {item.sub ? <dd className="mt-1 text-xs text-muted-foreground">{item.sub}</dd> : null}
-        </div>
-      ))}
-    </dl>
-  );
-}

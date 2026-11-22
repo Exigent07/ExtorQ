@@ -1,6 +1,6 @@
 import { Inbox, ListChecks, ServerCog, ShieldAlert } from "lucide-react";
 
-import { KpiCard, SplitBar } from "@/components/console/kpi-card";
+import { KpiCard, KpiFigures, SplitBar } from "@/components/console/kpi-card";
 import { SEVERITY_LABEL, SEVERITY_ORDER } from "@/components/console/severity";
 import type { Tone } from "@/components/console/status-badge";
 import { UntrustedText } from "@/components/console/untrusted-text";
@@ -16,21 +16,6 @@ const SEV_FILL: Record<Severity, string> = {
   low: "bg-sev-low",
   info: "bg-sev-info",
 };
-
-function Figures({ items }: { items: { label: string; value: number; strong?: boolean }[] }) {
-  return (
-    <span className="flex flex-wrap gap-x-3 gap-y-1">
-      {items.map((item) => (
-        <span key={item.label} className="whitespace-nowrap">
-          <span className={item.value > 0 && item.strong ? "text-foreground tabular-nums" : "text-fg-2 tabular-nums"}>
-            {formatCount(item.value)}
-          </span>{" "}
-          {item.label}
-        </span>
-      ))}
-    </span>
-  );
-}
 
 /**
  * Detections headline figures for the selected range: alerts by severity, open alerts by
@@ -72,12 +57,15 @@ export function DetectionsKpiRow({
         ? { tone: "warn", label: `${formatCount(rules.overdue)} overdue` }
         : rules.neverRan > 0
           ? { tone: "warn", label: `${formatCount(rules.neverRan)} never ran` }
-          : rules.total > 0
-            ? { tone: "ok", label: "All running" }
-            : undefined;
+          : rules.quietSources > 0
+            ? // A rule whose input went silent is a blind spot, not a green state.
+              { tone: "warn", label: `${formatCount(rules.quietSources)} quiet source${rules.quietSources === 1 ? "" : "s"}` }
+            : rules.total > 0
+              ? { tone: "ok", label: "All running" }
+              : undefined;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <KpiCard
         label="Alerts in range"
         icon={ShieldAlert}
@@ -97,7 +85,7 @@ export function DetectionsKpiRow({
             `No alert with activity in the ${rangeLabel}.`
           ) : (
             <>
-              <Figures
+              <KpiFigures
                 items={present.map((s) => ({
                   label: SEVERITY_LABEL[s].toLowerCase(),
                   value: alerts.bySeverity[s],
@@ -137,7 +125,7 @@ export function DetectionsKpiRow({
         sub={
           alerts ? (
             <>
-              <Figures
+              <KpiFigures
                 items={[
                   { label: "new", value: alerts.untriaged, strong: true },
                   { label: "investigating", value: alerts.investigating },
@@ -213,22 +201,17 @@ export function DetectionsKpiRow({
         }
         sub={
           rules ? (
-            <span className="grid gap-1">
-              <Figures
-                items={[
-                  { label: rules.failures24h === 1 ? "failure" : "failures", value: rules.failures24h, strong: true },
-                  { label: "runs in 24 h", value: rules.runs24h },
-                ]}
-              />
-              <span>
-                <span className="text-fg-2 tabular-nums">{formatCount(rules.quietSources)}</span> with a quiet source
-              </span>
-            </span>
+            <KpiFigures
+              items={[
+                { label: rules.failures24h === 1 ? "failure" : "failures", value: rules.failures24h, strong: true },
+                { label: "runs in 24 h", value: rules.runs24h },
+              ]}
+            />
           ) : (
             "The rule list could not be loaded."
           )
         }
-        href="/health#rule-health-title"
+        href={rules && rules.quietSources > 0 ? "/detections?tab=rules" : "/health#rule-health-title"}
       />
     </div>
   );

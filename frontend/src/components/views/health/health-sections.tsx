@@ -49,6 +49,19 @@ const COMPONENT_NAME: Record<string, string> = {
  */
 export function PipelineCard({ pipeline, now }: { pipeline: PipelineComponentHealth[]; now: string }) {
   const { current, superseded } = currentPipeline(pipeline);
+  // Counters that are 0 (or unknown) on every component are named once below the table instead
+  // of filling a column with zeros.
+  const quiet = {
+    oldest: current.every((p) => !p.oldest_queued_age_seconds),
+    duplicates: current.every((p) => p.duplicate_total === 0),
+    quarantined: current.every((p) => p.quarantined_total === 0),
+    deadLetter: current.every((p) => p.dead_letter_total === 0),
+  };
+  const quietNames = [
+    quiet.duplicates ? "duplicates" : null,
+    quiet.quarantined ? "quarantined" : null,
+    quiet.deadLetter ? "dead letter" : null,
+  ].filter(Boolean);
   return (
     <SectionCard
       title="Ingestion pipeline"
@@ -59,7 +72,12 @@ export function PipelineCard({ pipeline, now }: { pipeline: PipelineComponentHea
         superseded > 0 ? <span className="hidden tabular-nums sm:inline">{plural(superseded, "superseded report")} hidden</span> : null
       }
       flush
-      footer="Counters are cumulative since each component instance started. The gateway and the writer share one ingestion spool."
+      footer={
+        <>
+          Counters are cumulative since each component instance started. The gateway and the writer share one ingestion spool.
+          {quietNames.length > 0 ? ` Zero on every component: ${quietNames.join(", ")}.` : ""}
+        </>
+      }
     >
       {current.length === 0 ? (
         <div className="px-5 pb-3">
@@ -73,14 +91,14 @@ export function PipelineCard({ pipeline, now }: { pipeline: PipelineComponentHea
                 <TableHead>Component</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Queue</TableHead>
-                <TableHead className="hidden text-right @3xl:table-cell">Oldest queued</TableHead>
+                {quiet.oldest ? null : <TableHead className="hidden text-right @3xl:table-cell">Oldest queued</TableHead>}
                 <TableHead className="hidden text-right @2xl:table-cell">Accepted</TableHead>
-                <TableHead className="hidden text-right @5xl:table-cell">Duplicates</TableHead>
-                <TableHead className="hidden text-right @2xl:table-cell">Rejected</TableHead>
-                <TableHead className="hidden text-right @3xl:table-cell">Quarantined</TableHead>
+                {quiet.duplicates ? null : <TableHead className="hidden text-right @5xl:table-cell">Duplicates</TableHead>}
+                <TableHead className="hidden text-right @2xl:table-cell">Rejected (since start)</TableHead>
+                {quiet.quarantined ? null : <TableHead className="hidden text-right @3xl:table-cell">Quarantined</TableHead>}
                 <TableHead className="hidden text-right @4xl:table-cell">Written</TableHead>
-                <TableHead className="hidden text-right @4xl:table-cell">Write errors</TableHead>
-                <TableHead className="hidden text-right @5xl:table-cell">Dead letter</TableHead>
+                <TableHead className="hidden text-right @4xl:table-cell">Write errors (since start)</TableHead>
+                {quiet.deadLetter ? null : <TableHead className="hidden text-right @5xl:table-cell">Dead letter</TableHead>}
                 <TableHead className="text-right">Reported</TableHead>
               </TableRow>
             </TableHeader>
@@ -106,32 +124,41 @@ export function PipelineCard({ pipeline, now }: { pipeline: PipelineComponentHea
                   <TableCell className="text-right">
                     <Num value={p.queue_depth} tone="warn" />
                   </TableCell>
-                  <TableCell className="hidden text-right text-sm tabular-nums @3xl:table-cell">
-                    <span className={p.oldest_queued_age_seconds ? "text-fg-2" : "text-muted-foreground"}>
-                      {formatDuration(p.oldest_queued_age_seconds)}
-                    </span>
-                  </TableCell>
+                  {quiet.oldest ? null : (
+                    <TableCell className="hidden text-right text-sm tabular-nums @3xl:table-cell">
+                      <span className={p.oldest_queued_age_seconds ? "text-fg-2" : "text-muted-foreground"}>
+                        {formatDuration(p.oldest_queued_age_seconds)}
+                      </span>
+                    </TableCell>
+                  )}
                   <TableCell className="hidden text-right @2xl:table-cell">
                     <Num value={p.accepted_total} />
                   </TableCell>
-                  <TableCell className="hidden text-right @5xl:table-cell">
-                    <Num value={p.duplicate_total} />
-                  </TableCell>
+                  {quiet.duplicates ? null : (
+                    <TableCell className="hidden text-right @5xl:table-cell">
+                      <Num value={p.duplicate_total} />
+                    </TableCell>
+                  )}
                   <TableCell className="hidden text-right @2xl:table-cell">
                     <Num value={p.rejected_total} tone="warn" />
                   </TableCell>
-                  <TableCell className="hidden text-right @3xl:table-cell">
-                    <Num value={p.quarantined_total} tone="warn" />
-                  </TableCell>
+                  {quiet.quarantined ? null : (
+                    <TableCell className="hidden text-right @3xl:table-cell">
+                      <Num value={p.quarantined_total} tone="warn" />
+                    </TableCell>
+                  )}
                   <TableCell className="hidden text-right @4xl:table-cell">
                     <Num value={p.written_total} />
                   </TableCell>
                   <TableCell className="hidden text-right @4xl:table-cell">
-                    <Num value={p.write_errors_total} tone="bad" />
+                    {/* Cumulative since start: amber while the component reports OK, red only when it is failing. */}
+                    <Num value={p.write_errors_total} tone={p.status === "failed" ? "bad" : "warn"} />
                   </TableCell>
-                  <TableCell className="hidden text-right @5xl:table-cell">
-                    <Num value={p.dead_letter_total} tone="bad" />
-                  </TableCell>
+                  {quiet.deadLetter ? null : (
+                    <TableCell className="hidden text-right @5xl:table-cell">
+                      <Num value={p.dead_letter_total} tone="bad" />
+                    </TableCell>
+                  )}
                   <TableCell className="text-right text-sm">
                     <RelativeTime value={p.last_reported_at} now={now} side="left" className="text-fg-2" />
                   </TableCell>

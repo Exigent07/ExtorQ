@@ -2,7 +2,7 @@
 
 import { cn } from "cn";
 import { Check, Copy, Maximize2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -96,9 +96,24 @@ export function TruncatedValue({
 }
 
 /**
+ * True while a modal surface (a sheet, a dialog, the palette, a popover) is open that does not
+ * contain `element`: a hover card opened then would sit above it and take its first Escape.
+ */
+function coveredByOverlay(element: Element | null): boolean {
+  if (!element) return false;
+  const open = document.querySelectorAll('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]');
+  return Array.from(open).some((surface) => !surface.contains(element));
+}
+
+/**
  * One-line form for dense rows: CSS ellipsis, the full value in a hover card on hover or
  * keyboard focus (no click, so row links keep working). The full text stays in the DOM, so
  * screen readers read all of it.
+ *
+ * Inside clickable rows the hover card must never outlive the click: a press closes it and
+ * keeps it closed until the pointer leaves (the row may be opening a sheet), and it does not
+ * open while a sheet or dialog that does not contain it is open (it would cover the sheet and
+ * swallow its first Escape).
  */
 export function OneLineValue({
   text,
@@ -113,10 +128,29 @@ export function OneLineValue({
   className?: string;
   mono?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const pressed = useRef(false);
+  const triggerRef = useRef<HTMLSpanElement>(null);
   return (
-    <HoverCard openDelay={350} closeDelay={80}>
+    <HoverCard
+      open={open}
+      onOpenChange={(next) => {
+        if (next && (pressed.current || coveredByOverlay(triggerRef.current))) return;
+        setOpen(next);
+      }}
+      openDelay={350}
+      closeDelay={80}
+    >
       <HoverCardTrigger asChild>
         <span
+          ref={triggerRef}
+          onPointerDown={() => {
+            pressed.current = true;
+            setOpen(false);
+          }}
+          onPointerLeave={() => {
+            pressed.current = false;
+          }}
           tabIndex={0}
           className={cn(
             "block min-w-0 truncate rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50",

@@ -1,17 +1,16 @@
 import { History, Info, UserCheck } from "lucide-react";
-import Link from "next/link";
 
+import { Disclosure } from "@/components/console/disclosure";
 import { IdText } from "@/components/console/id-text";
 import { KeyValueList } from "@/components/console/key-values";
 import { SectionCard } from "@/components/console/section-card";
 import { Timestamp } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import type { AlertDetailResponse, InvestigationContext } from "@/lib/api/schemas";
-import { assetTypeLabel, DASH, formatCount, formatDuration, formatVersion, humanize } from "@/lib/format";
-import { assetHref } from "@/lib/security/ids";
+import { DASH, formatCount, humanize } from "@/lib/format";
 
 import { StatusMark } from "./marks";
-import { actionView, secondsBetween } from "./model";
+import { actionView } from "./model";
 import { StatusForm } from "./status-controls";
 
 /** Analyst status: current state, note and (analysts only) the status + note form. */
@@ -23,7 +22,11 @@ export function AnalystStatusCard({ detail, canEdit }: { detail: AlertDetailResp
   );
 }
 
-/** Identifiers and provenance of the alert and of its investigation context. */
+/**
+ * Facts the header does not show (criticality, last update, services involved), then the
+ * provenance of the alert and of its investigation context, folded: detector and builder
+ * versions and the context's input hash matter for audits, not for triage.
+ */
 export function KeyFactsCard({
   detail,
   context,
@@ -35,60 +38,55 @@ export function KeyFactsCard({
 }) {
   const alert = detail.alert;
   const asset = detail.asset;
-  const window = secondsBetween(alert.window_start, alert.window_end);
   return (
     <SectionCard title="Key facts" titleId="facts-title" icon={Info}>
       <KeyValueList
         rows={[
-          { label: "Alert", value: <IdText id={alert.alert_id} /> },
           {
-            label: "Rule",
-            value: (
-              <span className="font-mono text-xs">
-                {alert.rule_id} {formatVersion(alert.rule_version)}
-              </span>
-            ),
-          },
-          {
-            label: "Asset",
-            value: (
-              <Link href={assetHref(alert.asset_id)} className="inline-block max-w-44 truncate align-bottom hover:text-foreground hover:underline">
-                <UntrustedText value={asset ? asset.name : alert.asset_id} limit={48} plain />
-              </Link>
-            ),
-          },
-          { label: "Asset type", value: assetTypeLabel(asset?.asset_type ?? alert.asset_type) },
-          {
-            label: "Criticality",
+            label: "Asset criticality",
             value: asset ? <UntrustedText value={humanize(asset.criticality)} limit={32} /> : <span className="text-muted-foreground">{DASH}</span>,
           },
-          { label: "Detected", value: <Timestamp value={alert.created_at} /> },
-          { label: "Updated", value: <Timestamp value={alert.updated_at} /> },
-          { label: "Rule window", value: <span className="font-mono text-xs">{formatDuration(window)}</span> },
-          { label: "Services", value: <span className="font-mono text-xs tabular-nums">{formatCount(alert.service_ids.length)}</span> },
-          {
-            label: "Context",
-            value: context ? (
-              contextSource === "built_on_demand" ? "Built on demand" : "Stored"
-            ) : (
-              <span className="text-muted-foreground">Unavailable</span>
-            ),
-          },
-          ...(context
-            ? [
-                {
-                  label: "Builder",
-                  value: (
-                    <span className="font-mono text-xs">
-                      <UntrustedText value={context.builder_version} limit={40} />
-                    </span>
-                  ),
-                },
-                { label: "Input hash", value: <IdText id={context.input_hash} head={10} /> },
-              ]
-            : []),
+          { label: "Services involved", value: <span className="tabular-nums">{formatCount(alert.service_ids.length)}</span> },
+          { label: "Alert updated", value: <Timestamp value={alert.updated_at} /> },
         ]}
       />
+      <Disclosure label="Provenance" className="mt-3 border-t border-hairline-soft pt-3" triggerClassName="text-muted-foreground">
+        <KeyValueList
+          className="mt-1"
+          rows={[
+            { label: "Detected", value: <Timestamp value={alert.created_at} /> },
+            {
+              label: "Detector",
+              value: (
+                <span className="font-mono text-xs">
+                  <UntrustedText value={alert.detector_version} limit={40} />
+                </span>
+              ),
+            },
+            {
+              label: "Context",
+              value: context ? (
+                contextSource === "built_on_demand" ? "Built on demand" : "Stored"
+              ) : (
+                <span className="text-muted-foreground">Unavailable</span>
+              ),
+            },
+            ...(context
+              ? [
+                  {
+                    label: "Builder",
+                    value: (
+                      <span className="font-mono text-xs">
+                        <UntrustedText value={context.builder_version} limit={40} />
+                      </span>
+                    ),
+                  },
+                  { label: "Input hash", value: <IdText id={context.input_hash} head={10} /> },
+                ]
+              : []),
+          ]}
+        />
+      </Disclosure>
     </SectionCard>
   );
 }
@@ -96,6 +94,8 @@ export function KeyFactsCard({
 /** Audit trail of analyst actions on this alert (newest first, as the API returns it). */
 export function ActivityCard({ detail }: { detail: AlertDetailResponse }) {
   const actions = detail.actions;
+  // With no action yet, the Analyst status card already says so ("No analyst has acted yet").
+  if (actions.length === 0) return null;
   return (
     <SectionCard
       title="Analyst activity"

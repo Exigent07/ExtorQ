@@ -2,12 +2,19 @@ import { cn } from "cn";
 
 import { KeyValueList } from "@/components/console/key-values";
 import { EmptyState } from "@/components/console/states";
+import { Timestamp } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
-import { DASH, formatCount } from "@/lib/format";
+import { DASH, formatCount, formatWindowLength } from "@/lib/format";
 
 import { Chip } from "./marks";
 import { type FeatureView, featureLabel, orderFeatures } from "./model";
 import { MoreChips } from "./more-chips";
+import { featureInstant } from "./signals";
+
+/** Identifiers, paths, addresses and hashes keep the mono face; words and phrases are sans. */
+function looksLikeIdentifier(value: string): boolean {
+  return /[/\\:=@]/.test(value) || /^[0-9a-f]{12,}$/i.test(value) || /^\S+\.\S+$/.test(value);
+}
 
 /** Chips shown before the rest of a list moves into the "+N more" hover card. */
 const LIST_PREVIEW = 8;
@@ -52,16 +59,35 @@ export function ValueChips({
  * numbers in the figure face, 0 as 0), lists as chips, flat objects as key/value pairs and
  * deeper structures as a count of fields. Strings are telemetry-derived: UntrustedText.
  */
-export function FeatureValue({ view, label, align = "end" }: { view: FeatureView; label: string; align?: "start" | "end" }) {
+export function FeatureValue({
+  view,
+  label,
+  align = "end",
+  featureKey,
+}: {
+  view: FeatureView;
+  label: string;
+  align?: "start" | "end";
+  /** The feature's key: `*_seconds` numbers read as durations. */
+  featureKey?: string;
+}) {
   switch (view.kind) {
     case "unknown":
       return <span className="text-muted-foreground">{DASH}</span>;
     case "boolean":
       return <span className={view.value ? "text-foreground" : "text-fg-2"}>{view.value ? "Yes" : "No"}</span>;
     case "number":
-      return <span className="font-mono text-foreground tabular-nums">{formatCount(view.value)}</span>;
-    case "text":
-      return <UntrustedText value={view.value} limit={96} mono className="text-foreground" />;
+      return (
+        <span className="text-foreground tabular-nums">
+          {featureKey?.endsWith("_seconds") ? formatWindowLength(view.value) : formatCount(view.value)}
+        </span>
+      );
+    case "text": {
+      const instant = featureInstant(view.value);
+      if (instant) return <Timestamp value={instant} className="text-foreground" />;
+      if (view.value === "") return <span className="text-muted-foreground">Empty</span>;
+      return <UntrustedText value={view.value} limit={96} mono={looksLikeIdentifier(view.value)} className="text-foreground" />;
+    }
     case "list":
       return view.items.length === 0 ? (
         <span className="text-muted-foreground">None</span>
@@ -103,18 +129,25 @@ function isWide(view: FeatureView): boolean {
  */
 export function FeatureTable({
   features,
+  entries,
   empty,
   columns = 2,
+  labels,
 }: {
-  features: Record<string, unknown> | null | undefined;
+  features?: Record<string, unknown> | null | undefined;
+  /** Already classified and ordered rows (grouped lists); takes precedence over `features`. */
+  entries?: [string, FeatureView][];
   empty: string;
   /** 2: balanced columns when the container is wide; 1: always one column (sheets). */
   columns?: 1 | 2;
+  /** Clearer names for some keys. */
+  labels?: Record<string, string>;
 }) {
-  const all = orderFeatures(features);
+  const all = entries ?? orderFeatures(features);
   if (all.length === 0) return <EmptyState className="mt-2">{empty}</EmptyState>;
+  const name = (key: string) => labels?.[key] ?? featureLabel(key);
   const rows = (items: typeof all) =>
-    items.map(([key, view]) => ({ label: featureLabel(key), value: <FeatureValue view={view} label={featureLabel(key)} /> }));
+    items.map(([key, view]) => ({ label: name(key), value: <FeatureValue view={view} label={name(key)} featureKey={key} /> }));
   const scalars = all.filter(([, view]) => !isWide(view));
   const wide = all.filter(([, view]) => isWide(view));
   const half = columns === 2 ? Math.ceil(scalars.length / 2) : scalars.length;
@@ -132,9 +165,9 @@ export function FeatureTable({
         <dl className={cn("divide-y divide-hairline-soft", scalars.length > 0 && "border-t border-hairline-soft")}>
           {wide.map(([key, view]) => (
             <div key={key} className="grid gap-1.5 py-2.5 @2xl:grid-cols-[13rem_minmax(0,1fr)] @2xl:gap-4">
-              <dt className="pt-0.5 text-sm text-muted-foreground">{featureLabel(key)}</dt>
+              <dt className="pt-0.5 text-sm text-muted-foreground">{name(key)}</dt>
               <dd className="min-w-0 text-sm text-fg-2">
-                <FeatureValue view={view} label={featureLabel(key)} align="start" />
+                <FeatureValue view={view} label={name(key)} align="start" featureKey={key} />
               </dd>
             </div>
           ))}

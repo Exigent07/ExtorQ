@@ -3,7 +3,7 @@
  * ranking, Pod/container nesting, the one staleness summary per section, the service page
  * finding. Figures come from the API response; nothing is inferred beyond it.
  */
-import type { ServiceDetailResponse, ServiceInstance } from "@/lib/api/schemas";
+import type { ServiceDetailResponse, ServiceEndpoint, ServiceInstance } from "@/lib/api/schemas";
 import { formatCount, formatRelative, isClosedStatus } from "@/lib/format";
 import { serviceCoverage } from "@/lib/services";
 
@@ -15,6 +15,78 @@ export function widestExposure(service: { endpoints: { exposure: string }[]; exp
   const tokens = [...service.endpoints.map((e) => e.exposure), ...(service.exposures ?? [])];
   if (tokens.length === 0) return "none";
   return tokens.reduce((best, t) => ((EXPOSURE_RANK[t] ?? 3) < (EXPOSURE_RANK[best] ?? 3) ? t : best));
+}
+
+/**
+ * Endpoints in display order: the widest exposure first (the one a reader must see), then
+ * port, protocol and address. Input order does not matter; nothing is dropped.
+ */
+export function sortEndpoints<T extends Pick<ServiceEndpoint, "exposure" | "port" | "protocol" | "address">>(endpoints: T[]): T[] {
+  return [...endpoints].sort(
+    (a, b) =>
+      (EXPOSURE_RANK[a.exposure] ?? 3) - (EXPOSURE_RANK[b.exposure] ?? 3) ||
+      a.port - b.port ||
+      a.protocol.localeCompare(b.protocol) ||
+      (a.address ?? "").localeCompare(b.address ?? ""),
+  );
+}
+
+const KIND_NOUN: Record<string, [string, string]> = {
+  pod: ["Pod", "Pods"],
+  container: ["container", "containers"],
+  process: ["process", "processes"],
+};
+
+/**
+ * "2 Pods · 2 containers": the instances on screen counted by kind, Pods first (unknown kinds
+ * as their token). Empty string for no instance.
+ */
+export function instanceBreakdown(instances: Pick<ServiceInstance, "instance_kind">[]): string {
+  const counts = new Map<string, number>();
+  for (const i of instances) counts.set(i.instance_kind, (counts.get(i.instance_kind) ?? 0) + 1);
+  return [...counts.entries()]
+    .sort((a, b) => (KIND_ORDER[a[0]] ?? 9) - (KIND_ORDER[b[0]] ?? 9) || a[0].localeCompare(b[0]))
+    .map(([kind, n]) => {
+      const noun = KIND_NOUN[kind];
+      return `${formatCount(n)} ${noun ? (n === 1 ? noun[0] : noun[1]) : kind}`;
+    })
+    .join(" · ");
+}
+
+export interface InstanceHeadline {
+  /** The figure: rows of the instances table (Pods with their containers nested), or the API total when the list is capped. */
+  value: number;
+  /** "Pods" when every row is a Pod, otherwise "Instances". */
+  label: string;
+  /** What else the rows hold ("2 containers"), or the breakdown; empty when there is nothing to add. */
+  sub: string;
+  /** True when the API listed fewer instances than it counted (the figure is then the API total). */
+  capped: boolean;
+}
+
+/**
+ * The instance figure exactly as the instances table shows it: a workload's Pods (each Pod's
+ * containers nested under it, counted in the sub-label), a host service's processes. Pods
+ * and containers are never added into one number. When the API capped the list the figure is
+ * its total and the sub-label says how many are listed.
+ */
+export function instanceHeadline(
+  instances: Pick<ServiceInstance, "instance_id" | "instance_kind" | "parent_instance_id">[],
+  total: number,
+): InstanceHeadline {
+  if (total > instances.length) {
+    return { value: total, label: "Instances", sub: `${formatCount(instances.length)} listed`, capped: true };
+  }
+  const ids = new Set(instances.map((i) => i.instance_id));
+  const nested = instances.filter((i) => i.parent_instance_id && i.parent_instance_id !== i.instance_id && ids.has(i.parent_instance_id));
+  const roots = instances.filter((i) => !nested.includes(i));
+  const allPods = roots.length > 0 && roots.every((i) => i.instance_kind === "pod");
+  return {
+    value: roots.length,
+    label: allPods ? "Pods" : "Instances",
+    sub: nested.length > 0 ? instanceBreakdown(nested) : allPods ? "" : instanceBreakdown(roots),
+    capped: false,
+  };
 }
 
 export interface InstanceRow {

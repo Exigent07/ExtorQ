@@ -7,7 +7,7 @@ import Link from "next/link";
 import { type ReactElement, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { loadRawExcerptAction, type RawExcerpt } from "@/app/(console)/actions";
-import { DataTable, type Facet } from "@/components/console/data-table";
+import { clickRowOpener, DataTable, type Facet } from "@/components/console/data-table";
 import { DetailSection, DetailSheet, RawBlock } from "@/components/console/detail-sheet";
 import { KeyValueList } from "@/components/console/key-values";
 import { Timestamp } from "@/components/console/time";
@@ -16,6 +16,8 @@ import { Spinner } from "@/components/ui/spinner";
 import type { EventListItem } from "@/lib/api/schemas";
 import { DASH, humanize } from "@/lib/format";
 import { serviceHref } from "@/lib/security/ids";
+
+import { emptyOptionalColumns } from "./model";
 
 /** The acting principal as the source reported it (never inferred). */
 function actorOf(e: EventListItem): string | null {
@@ -27,6 +29,22 @@ const OUTCOME_TONE: Record<string, string> = {
   denied: "text-health-warn",
   success: "text-fg-2",
 };
+
+const OUTCOME_DOT: Record<string, string> = {
+  failure: "bg-health-warn",
+  denied: "bg-health-warn",
+  success: "bg-fg-faint",
+};
+
+/** The outcome as reported, with a quiet dot (amber for failures and denials). */
+function Outcome({ outcome }: { outcome: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-xs whitespace-nowrap", OUTCOME_TONE[outcome] ?? "text-muted-foreground")}>
+      <span aria-hidden="true" className={cn("size-1.5 flex-none rounded-full", OUTCOME_DOT[outcome] ?? "ring-1 ring-fg-faint ring-inset")} />
+      <UntrustedText value={outcome} plain limit={24} />
+    </span>
+  );
+}
 
 type Field = { label: string; value: string | number | null | undefined; mono?: boolean };
 
@@ -276,6 +294,7 @@ function columns(showService: boolean): ColumnDef<EventListItem, unknown>[] {
             <EventSheet event={e}>
               <button
                 type="button"
+                data-row-open=""
                 className="block w-full min-w-0 truncate rounded-sm text-left font-mono text-xs text-foreground underline-offset-2 outline-none hover:text-brand hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
               >
                 <UntrustedText value={e.event_type} oneLine plain mono />
@@ -298,6 +317,15 @@ function columns(showService: boolean): ColumnDef<EventListItem, unknown>[] {
           <UntrustedText value={row.original.source_type} plain limit={40} />
         </span>
       ),
+    },
+    {
+      // Hidden: the event type as its own value, for the facet (the Event column searches it).
+      id: "type",
+      header: "Event type",
+      accessorFn: (e) => e.event_type,
+      enableHiding: false,
+      enableSorting: false,
+      cell: () => null,
     },
     {
       id: "actor",
@@ -334,11 +362,7 @@ function columns(showService: boolean): ColumnDef<EventListItem, unknown>[] {
       header: "Outcome",
       accessorFn: (e) => e.outcome,
       meta: { className: "w-24", label: "Outcome" },
-      cell: ({ row }) => (
-        <span className={cn("text-xs", OUTCOME_TONE[row.original.outcome] ?? "text-muted-foreground")}>
-          <UntrustedText value={row.original.outcome} plain limit={24} />
-        </span>
-      ),
+      cell: ({ row }) => <Outcome outcome={row.original.outcome} />,
     },
   ];
   if (showService) {
@@ -383,14 +407,20 @@ export function EventsDataTable({
   const cols = useMemo(() => columns(showService), [showService]);
   const facets = useMemo<Facet[]>(() => {
     const sources = [...new Set(events.map((e) => e.source_type))].sort();
+    const types = [...new Set(events.map((e) => e.event_type))].sort();
     const outcomes = [...new Set(events.map((e) => e.outcome))].sort();
     const list: Facet[] = [];
     if (sources.length > 1) list.push({ columnId: "source", title: "Source", options: sources.map((s) => ({ value: s, label: s })) });
+    if (types.length > 1) list.push({ columnId: "type", title: "Event type", options: types.map((t) => ({ value: t, label: t })) });
     if (outcomes.length > 1) {
       list.push({ columnId: "outcome", title: "Outcome", options: outcomes.map((o) => ({ value: o, label: humanize(o) })) });
     }
     return list;
   }, [events]);
+  const initialVisibility = useMemo(
+    () => Object.fromEntries([["type", false], ...emptyOptionalColumns(events).map((id) => [id, false])]),
+    [events],
+  );
 
   return (
     <DataTable
@@ -401,7 +431,9 @@ export function EventsDataTable({
       facets={facets}
       search={{ placeholder: "Search events", columnIds: ["event"] }}
       initialSort={[{ id: "time", desc: true }]}
+      initialColumnVisibility={initialVisibility}
       pageSize={25}
+      onRowClick={clickRowOpener}
       toolbar={toolbar}
       emptyMessage="No event matches the current filters."
     />

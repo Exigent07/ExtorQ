@@ -78,14 +78,15 @@ export function FreshnessIndicator({ className }: { className?: string }) {
               aria-hidden="true"
               className={cn(
                 "size-1.5 rounded-full",
-                pending ? "animate-pulse bg-brand" : stale ? "bg-health-warn" : ageMs === null ? "bg-fg-faint" : "bg-health-ok",
+                pending ? "bg-brand" : stale ? "bg-health-warn" : ageMs === null ? "bg-fg-faint" : "bg-health-ok",
               )}
             />
             {pending ? (
               "Refreshing…"
             ) : at ? (
               <span>
-                Updated <time dateTime={at} className="font-mono text-fg-2 tabular-nums">{formatUtcTime(at)}</time> UTC
+                Updated{" "}
+                <time dateTime={at} className="font-mono text-fg-2 tabular-nums">{formatUtcTime(at)}</time> UTC
               </span>
             ) : (
               "Not loaded"

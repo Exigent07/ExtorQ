@@ -35,7 +35,7 @@ export interface Level {
 export function KubernetesLevels({ levels, label }: { levels: Level[]; label: string }) {
   return (
     <nav aria-label={label}>
-      <ol className="grid gap-2 sm:grid-cols-2 lg:flex lg:items-stretch lg:gap-0">
+      <ol className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:items-stretch lg:gap-0">
         {levels.map((level, index) => {
           const Icon = LEVEL_ICON[level.key];
           const body = (

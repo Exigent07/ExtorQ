@@ -8,7 +8,7 @@ import { useMemo } from "react";
 
 import { DataTable, type FacetOption } from "@/components/console/data-table";
 import { Hint } from "@/components/console/hint";
-import { HealthBadge, LifecycleBadge, StaleBadge, type Tone } from "@/components/console/status-badge";
+import { HealthBadge, LifecycleBadge, StatusPill, type Tone } from "@/components/console/status-badge";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Progress } from "@/components/ui/progress";
@@ -80,6 +80,32 @@ function LastError({ error, tone }: { error: string; tone: Tone }) {
   );
 }
 
+const HEALTH_WORD: Record<string, string> = { ok: "OK", degraded: "degraded", failed: "failed", disabled: "disabled", unknown: "unknown" };
+
+/**
+ * One status per collector: "Stale" when the API marks it stale (its last reported health and
+ * the API's reason in the hint), otherwise its health. Never "OK" and "Stale" side by side.
+ */
+function CollectorState({ c, className }: { c: CollectorStatus; className?: string }) {
+  if (!c.stale) return <HealthBadge status={c.status} className={className} />;
+  const last = HEALTH_WORD[c.status] ?? c.status;
+  return (
+    <Hint
+      content={
+        <span className="grid gap-1">
+          <span>
+            <span className="font-medium text-foreground">Stale.</span> No successful collection within {STALE_INTERVALS} collection
+            intervals; the last health it reported was {last}.
+          </span>
+          {c.stale_reason ? <span className="text-muted-foreground">API: {c.stale_reason}</span> : null}
+        </span>
+      }
+    >
+      <StatusPill tone="warn" label="Stale" />
+    </Hint>
+  );
+}
+
 function Sources({ sources }: { sources: string[] }) {
   if (sources.length === 0) return <span className="text-muted-foreground">{DASH}</span>;
   const [first, ...rest] = sources;
@@ -132,8 +158,7 @@ function columns(now: string): ColumnDef<CollectorStatus, unknown>[] {
         return (
           <div className="grid justify-items-start gap-1.5">
             <span className="flex items-center gap-2">
-              <HealthBadge status={c.status} className="text-sm" />
-              {c.stale ? <StaleBadge reason={c.stale_reason} /> : null}
+              <CollectorState c={c} className="text-sm" />
             </span>
             {c.last_error ? <LastError error={c.last_error} tone={fresh.tone === "bad" ? "bad" : "warn"} /> : null}
           </div>
@@ -151,8 +176,7 @@ function columns(now: string): ColumnDef<CollectorStatus, unknown>[] {
         return (
           <div className="grid min-w-0 gap-1">
             <span className="flex items-center gap-2 @md:hidden">
-              <HealthBadge status={c.status} className="text-xs" />
-              {c.stale ? <StaleBadge reason={c.stale_reason} /> : null}
+              <CollectorState c={c} className="text-xs" />
             </span>
             <span className="flex min-w-0 items-center gap-2">
               <span className="min-w-0 font-mono text-sm text-foreground">
@@ -259,9 +283,7 @@ function columns(now: string): ColumnDef<CollectorStatus, unknown>[] {
       cell: ({ row }) => {
         const n = row.original.records_buffered;
         return (
-          <span className={cn("text-sm tabular-nums", n > 0 ? "font-medium text-health-warn" : "text-muted-foreground")}>
-            {formatCount(n)}
-          </span>
+          <span className={cn("text-sm tabular-nums", n > 0 ? "text-fg-2" : "text-muted-foreground")}>{formatCount(n)}</span>
         );
       },
     },

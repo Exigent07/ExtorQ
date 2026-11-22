@@ -172,6 +172,14 @@ function firstLink(html, prefix) {
   return match ? match[1].replace(/&amp;/g, "&") : null;
 }
 
+/** The first `/services/<id>` link whose visible text is exactly `name` (best effort). */
+function serviceLinkNamed(html, name) {
+  for (const m of html.matchAll(/<a[^>]*href="(\/services\/[0-9a-f]{32})"[^>]*>([\s\S]*?)<\/a>/g)) {
+    if (visibleText(m[2]).trim() === name) return m[1];
+  }
+  return null;
+}
+
 function allLinks(html, prefix) {
   const out = new Set();
   for (const m of html.matchAll(new RegExp(`href="(${prefix}[^"?#]+)"`, "g"))) out.add(m[1].replace(/&amp;/g, "&"));
@@ -250,16 +258,17 @@ async function investigation(rule, cookie, pinned) {
   );
   const evidenceRows = (section(response.text, "evidence-title").match(/id="evidence-[0-9a-f]{32}"/g) ?? []).length;
   record(evidenceRows > 0, `investigation ${rule}: evidence table has rows`, `${evidenceRows} rows`);
-  const jev = visibleText(section(response.text, "jev-title"));
+  // The AI cards are checked on the whole page: React may stream the end of a large card after
+  // later sections (an outlined boundary), so a slice up to the next heading can stop early. The
+  // phrases below appear only in their own card.
   record(
-    jev.includes("No Jev triage exists for this alert") || jev.includes("Recommendation") || jev.includes("did not"),
+    text.includes("No Jev triage exists for this alert") || text.includes("Recommendation") || text.includes("Jev did not produce a triage"),
     `investigation ${rule}: Jev panel is an assessment or an honest empty state`,
   );
-  const gemini = visibleText(section(response.text, "gemini-title"));
   record(
-    gemini.includes("No overview has been generated for this alert") ||
-      gemini.includes("What happened") ||
-      gemini.includes("did not produce an overview"),
+    text.includes("No overview has been generated for this alert") ||
+      text.includes("What happened") ||
+      text.includes("did not produce an overview"),
     `investigation ${rule}: Gemini panel is an overview or an honest empty state`,
   );
   return path;
@@ -282,7 +291,8 @@ async function assetDrilldown(assetsHtml, cookie) {
       services: ["Workloads on node", "Workloads running on this node"],
       overview: ["via the cluster"],
     },
-    { name: "GitHub repository", test: (l) => /^\/assets\/github%3A[^%]+%2F/.test(l), services: ["Services"] },
+    // Repositories carry no services: their page has no Services tab.
+    { name: "GitHub repository", test: (l) => /^\/assets\/github%3A[^%]+%2F/.test(l), services: null },
   ];
   const found = {};
   for (const c of classes) {
@@ -291,8 +301,21 @@ async function assetDrilldown(assetsHtml, cookie) {
       record(false, `asset drill-down: ${c.name}`, "no asset of this class is listed");
       continue;
     }
-    await page(`${c.name} overview`, path, cookie, ["Telemetry sources", "Events by source", "Inventory", "Recent alerts", ...(c.overview ?? [])]);
-    found[c.name] = await page(`${c.name} services`, `${path}?tab=services`, cookie, c.services);
+    const overview = await page(`${c.name} overview`, path, cookie, [
+      "Telemetry sources",
+      "Events by source",
+      "Inventory",
+      "Recent alerts",
+      ...(c.overview ?? []),
+    ]);
+    if (c.services === null) {
+      record(
+        Boolean(overview) && !overview.text.includes(`${path.replace(/&/g, "&amp;")}?tab=services`),
+        `${c.name}: no Services tab`,
+      );
+    } else {
+      found[c.name] = await page(`${c.name} services`, `${path}?tab=services`, cookie, c.services);
+    }
     await page(`${c.name} findings`, `${path}?tab=findings`, cookie, ["Vulnerabilities and misconfigurations"]);
     await page(`${c.name} events`, `${path}?tab=events`, cookie, ["Recent events"]);
   }
@@ -313,8 +336,14 @@ async function assetDrilldown(assetsHtml, cookie) {
     ]);
   } else record(false, "Kubernetes Service detail", "the cluster lists no Kubernetes Service");
   if (hostService) {
-    await page("Linux host service detail", hostService, cookie, ["Coverage", "Telemetry", "Ports and exposure", "Instances", "Authentication activity"]);
+    await page("Linux host service detail", hostService, cookie, ["Coverage", "Telemetry", "Ports and exposure", "Instances"]);
   } else record(false, "Linux host service detail", "the VM lists no service");
+  // The authentication card appears where it informs (SSH, web, FTP, database services or any
+  // service with authentication events): the VM's ssh service must show it.
+  const sshService = serviceLinkNamed(found["Linux VM"]?.text ?? "", "ssh");
+  if (sshService) {
+    await page("Linux ssh service: authentication activity", sshService, cookie, ["Authentication activity", "Failed or denied"]);
+  } else console.log("SKIP  Linux ssh service: the VM lists no service named ssh");
   record(Boolean(nodeWorkload), "Kubernetes node links to the workloads running on it", nodeWorkload ?? "no link");
 }
 
@@ -395,7 +424,7 @@ async function main() {
     await page("asset events", `${assetPath}?tab=events`, cookie, ["Recent events"]);
     const servicePath = services ? firstLink(services.text, "/services/") : null;
     if (servicePath) {
-      await page("service detail", servicePath, cookie, ["Coverage", "Telemetry", "Ports and exposure", "Instances", "Authentication activity", "Alerts", "Findings"]);
+      await page("service detail", servicePath, cookie, ["Coverage", "Telemetry", "Ports and exposure", "Instances", "Alerts", "Findings"]);
     } else {
       console.log("SKIP  service detail: the first asset lists no service");
     }
@@ -403,7 +432,13 @@ async function main() {
     console.log("SKIP  asset detail: no asset is listed yet");
   }
 
-  const detections = await page("detections", "/detections", cookie, ["Detections", "Alert history", "Detection rules"]);
+  const detections = await page("detections", "/detections", cookie, ["Detections", "Alert history", "Detection rules", "Alerts", "Rules"]);
+  if (detections) {
+    // Each alert row offers its evidence as a sheet trigger (no inline "Evidence (n events)" disclosure).
+    const chips = (detections.text.match(/aria-label="Evidence: \d+ events? of [A-Z][A-Z0-9]{1,15}-\d{3}\. Open details"/g) ?? []).length;
+    record(chips > 0, "detections: evidence chips open the evidence sheet", `${chips} chips`);
+    record(!/Evidence \(\d+ events?\)/.test(visibleText(detections.text)), "detections: no inline evidence disclosures");
+  }
   let investigationPath = detections ? firstLink(detections.text, "/investigations/") : null;
   const pinned = pinnedAlerts();
   for (const rule of MANDATORY_RULES) {
@@ -421,9 +456,11 @@ async function main() {
     "AI providers",
   ]);
   await page("filtered detections", "/detections?severity=high&range=24h", cookie, ["Alert history"]);
-  await page("invalid alert id is refused before the API", "/investigations/not-an-id", cookie, ["The alert id in the address is not valid."], {
-    expectErrorState: true,
-  });
+  await page("invalid alert id is refused before the API", "/investigations/not-an-id", cookie, [
+    "Alert not found",
+    "does not hold a valid alert id",
+    "Back to Detections",
+  ]);
 
   const viewerPassword = readPassword("EXTORQ_SMOKE_VIEWER_PASSWORD_FILE");
   if (viewerPassword) {

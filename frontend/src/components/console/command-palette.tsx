@@ -99,7 +99,7 @@ export function CommandPalette({ data, grafanaUrl }: { data: PaletteData | null;
         onClick={() => setOpen(true)}
         aria-label="Search pages, alerts and assets"
         aria-keyshortcuts="Meta+K Control+K"
-        className="group flex h-8 items-center gap-2 rounded-lg px-2 text-sm text-muted-foreground ring-1 ring-hairline transition-colors duration-150 ring-inset hover:bg-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none lg:w-60 lg:justify-start lg:bg-white/[0.02] lg:px-2.5"
+        className="group flex h-8 items-center gap-2 rounded-lg px-2 text-sm text-muted-foreground ring-1 ring-hairline transition-colors duration-150 ring-inset hover:bg-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none lg:w-44 lg:justify-start xl:w-60 lg:bg-white/[0.02] lg:px-2.5"
       >
         <Search className="size-4 flex-none" aria-hidden="true" />
         <span className="hidden lg:inline">Search…</span>

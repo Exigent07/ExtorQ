@@ -11,7 +11,7 @@ import type {
   Relationship,
   TimelineEntry,
 } from "@/lib/api/schemas";
-import { DASH, formatDuration } from "@/lib/format";
+import { DASH, formatCount, formatDuration } from "@/lib/format";
 import { summaryWithoutType } from "@/lib/investigation";
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────────
@@ -394,6 +394,41 @@ export function axisBounds(windowStart: string, windowEnd: string, times: readon
 }
 
 /** Position of a time on the axis in percent (clamped to 0..100). */
+/**
+ * The strip's time domain: the observations (and the alert's first and last seen) padded by
+ * 5 % on each side, at least a minute wide, so a 3-second burst on a 30-minute context window
+ * is not squeezed into one pixel. Falls back to the context window without observations.
+ */
+export function observedBounds(
+  windowStart: string,
+  windowEnd: string,
+  times: readonly string[],
+): { start: number; end: number } {
+  const finite = times.map((t) => Date.parse(t)).filter((t) => !Number.isNaN(t));
+  if (finite.length === 0) return axisBounds(windowStart, windowEnd, []);
+  const min = Math.min(...finite);
+  const max = Math.max(...finite);
+  const pad = Math.max((max - min) * 0.05, 30_000);
+  return { start: min - pad, end: max + pad };
+}
+
+/**
+ * Observations per bucket on the strip's axis (`buckets` equal slices of the domain); each
+ * time falls in exactly one bucket, times outside the domain are clamped to the edge buckets.
+ */
+export function histogram(times: readonly string[], bounds: { start: number; end: number }, buckets = 120): number[] {
+  const counts = new Array<number>(buckets).fill(0);
+  const span = bounds.end - bounds.start;
+  if (span <= 0) return counts;
+  for (const iso of times) {
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) continue;
+    const index = Math.min(buckets - 1, Math.max(0, Math.floor(((t - bounds.start) / span) * buckets)));
+    counts[index] = (counts[index] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export function axisPercent(iso: string, bounds: { start: number; end: number }): number {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return 0;
@@ -455,6 +490,57 @@ export function relatedRows(context: Pick<InvestigationContext, "timeline" | "re
         (KIND_RANK[a.type] ?? 9) - (KIND_RANK[b.type] ?? 9) ||
         Math.abs(a.offsetSeconds) - Math.abs(b.offsetSeconds) ||
         a.eventId.localeCompare(b.eventId),
+    );
+}
+
+export interface RelatedGroup {
+  /** `type|strength|event type`. */
+  id: string;
+  type: string;
+  strength: string;
+  eventType: string | null;
+  /** Members, closest in time to the first evidence first. */
+  rows: RelatedRow[];
+  /** Bases every member shares (identifying first). */
+  bases: string[];
+  minOffset: number;
+  maxOffset: number;
+}
+
+/**
+ * Related observations folded into groups of the same relationship, strength and event type
+ * (88 "unestablished · weak · auth.ssh.login_succeeded" rows become one row with a count);
+ * direct first, then larger groups, then closer in time. Members are kept in full.
+ */
+export function groupRelated(rows: readonly RelatedRow[]): RelatedGroup[] {
+  const byKey = new Map<string, RelatedRow[]>();
+  for (const row of rows) {
+    const key = `${row.type}|${row.strength}|${row.eventType ?? ""}`;
+    byKey.set(key, [...(byKey.get(key) ?? []), row]);
+  }
+  return [...byKey.entries()]
+    .map(([id, members]) => {
+      const sorted = [...members].sort((a, b) => Math.abs(a.offsetSeconds) - Math.abs(b.offsetSeconds) || a.eventId.localeCompare(b.eventId));
+      const first = sorted[0]!;
+      const common = first.bases.filter((basis) => sorted.every((m) => m.bases.includes(basis)));
+      const offsets = sorted.map((m) => m.offsetSeconds);
+      return {
+        id,
+        type: first.type,
+        strength: first.strength,
+        eventType: first.eventType,
+        rows: sorted,
+        bases: common,
+        minOffset: Math.min(...offsets),
+        maxOffset: Math.max(...offsets),
+      };
+    })
+    .sort(
+      (a, b) =>
+        (KIND_RANK[a.type] ?? 9) - (KIND_RANK[b.type] ?? 9) ||
+        b.rows.length - a.rows.length ||
+        Math.abs(a.minOffset) - Math.abs(b.minOffset) ||
+        a.id.localeCompare(b.id),
     );
 }
 
@@ -677,4 +763,62 @@ export function secondsBetween(from: string, to: string): number | null {
 /** Sources stale or with a gap during the window, plus missing-telemetry notes. */
 export function coverageIssues(context: Pick<InvestigationContext, "coverage" | "missing_telemetry">): number {
   return context.coverage.filter((c) => c.stale || c.gap_during_window).length + context.missing_telemetry.length;
+}
+
+// ── AI provider availability ──────────────────────────────────────────────────────
+
+export interface ProviderAvailability {
+  /** The provider's flag as the API process reports it; null when health could not be read. */
+  enabled: boolean | null;
+  /** Whether a key is configured; null when unknown. */
+  configured: boolean | null;
+}
+
+/** Availability of the provider that serves one task (triage = Jev, summary = Gemini). */
+export function providerAvailability(
+  providers: readonly { task: string; enabled?: boolean | null; configured?: boolean | null }[] | null,
+  task: "triage" | "summary",
+): ProviderAvailability {
+  const provider = providers?.find((p) => p.task === task);
+  return { enabled: provider?.enabled ?? null, configured: provider?.configured ?? null };
+}
+
+/**
+ * Why an overview cannot be requested right now, from the API's own provider flags (System
+ * health reads the same ones). Null when it can be requested or when the flags are unknown: the
+ * button then stays available and the API's answer is shown as it comes.
+ */
+export function summaryUnavailableReason(gemini: ProviderAvailability): string | null {
+  if (gemini.enabled === false) {
+    return gemini.configured === false
+      ? "Gemini is disabled and has no API key on this deployment, so the API refuses overview requests."
+      : "Gemini is disabled in the AI settings of this deployment, so the API refuses overview requests.";
+  }
+  if (gemini.configured === false) return "No Gemini API key is configured on this deployment, so the API refuses overview requests.";
+  return null;
+}
+
+/**
+ * "12 evaluation(s) of VM-001" -> "12 evaluations of VM-001", "1 evaluation(s)" -> "1 evaluation":
+ * the "(s)" plural of backend sentences, resolved by the number in front of the word.
+ */
+export function resolvePlurals(text: string): string {
+  return text.replace(/\b(\d+) ([A-Za-z-]+)\(s\)/g, (_, count: string, word: string) =>
+    `${count} ${Number(count) === 1 ? word : `${word}s`}`,
+  );
+}
+
+/**
+ * The evidence events by type, most frequent first, named by the type's last segment
+ * ("9 invalid_user · 8 preauth_closed · 2 max_auth_exceeded"); at most three types, then
+ * "+N types". Empty string for no evidence.
+ */
+export function evidenceMix(evidence: readonly { event_type: string }[], limit = 3): string {
+  const counts = new Map<string, number>();
+  for (const e of evidence) counts.set(e.event_type, (counts.get(e.event_type) ?? 0) + 1);
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const parts = sorted.slice(0, limit).map(([type, n]) => `${formatCount(n)} ${type.split(".").pop() ?? type}`);
+  const more = sorted.length - limit;
+  if (more > 0) parts.push(`+${formatCount(more)} type${more === 1 ? "" : "s"}`);
+  return parts.join(" · ");
 }

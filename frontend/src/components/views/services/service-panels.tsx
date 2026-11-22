@@ -11,7 +11,7 @@ import { RelativeTime } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { ServiceDetailResponse, ServiceRecord } from "@/lib/api/schemas";
-import { DASH, formatCount, formatUtcShort, humanize } from "@/lib/format";
+import { DASH, formatCount, formatUtcShort, humanize, keyLabel } from "@/lib/format";
 import { attributionOf, exposureOf } from "@/lib/services";
 
 import { AlertList } from "../assets/alert-list";
@@ -21,7 +21,7 @@ import { FindingsDataTable } from "../assets/findings-data-table";
 import { windowLabel } from "../assets/model";
 import { FreshnessMeter } from "../assets/telemetry-sources";
 import { InstancesDataTable } from "./instances-data-table";
-import { instanceRows, staleSentence, staleSummary } from "./model";
+import { instanceHeadline, instanceRows, staleSentence, staleSummary } from "./model";
 
 const COLLECTION: Record<string, { label: string; tone: "ok" | "warn" | "off"; detail: string }> = {
   fresh: { label: "Fresh", tone: "ok", detail: "At least one collector reporting this source is fresh." },
@@ -32,6 +32,9 @@ const COLLECTION: Record<string, { label: string; tone: "ok" | "warn" | "off"; d
     detail: "No collector health record mentions this source for the asset; its freshness is unknown.",
   },
 };
+
+/** Service categories where an empty authentication card is still informative. */
+const AUTH_CATEGORIES = new Set(["ssh", "web_application", "http_server", "ftp", "database"]);
 
 function secondsSince(iso: string | null | undefined, now: string): number | null {
   if (!iso) return null;
@@ -139,6 +142,7 @@ export function TelemetryPanel({ data, now }: { data: ServiceDetailResponse; now
         )}
       </SectionCard>
 
+      {auth.total > 0 || AUTH_CATEGORIES.has(s.category) ? (
       <SectionCard
         title="Authentication activity"
         titleId="auth-title"
@@ -199,8 +203,8 @@ export function TelemetryPanel({ data, now }: { data: ServiceDetailResponse; now
                       <TableCell className="font-mono text-xs text-foreground">
                         <UntrustedText value={src.src_ip} plain limit={48} />
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs text-fg-2">{formatCount(src.events)}</TableCell>
-                      <TableCell className={cn("text-right font-mono text-xs", src.failures > 0 ? "text-health-warn" : "text-muted-foreground")}>
+                      <TableCell className="text-right text-sm text-fg-2 tabular-nums">{formatCount(src.events)}</TableCell>
+                      <TableCell className={cn("text-right text-sm tabular-nums", src.failures > 0 ? "text-health-warn" : "text-muted-foreground")}>
                         {formatCount(src.failures)}
                       </TableCell>
                       <TableCell className="text-right">
@@ -214,6 +218,7 @@ export function TelemetryPanel({ data, now }: { data: ServiceDetailResponse; now
           </div>
         )}
       </SectionCard>
+      ) : null}
     </div>
   );
 }
@@ -223,6 +228,7 @@ export function InstancesPanel({ data, now }: { data: ServiceDetailResponse; now
   const s = data.service;
   const kubernetes = s.service_kind === "k8s_workload" || s.service_kind === "k8s_service";
   const rows = instanceRows(data.instances).map((r) => ({ id: r.instance.instance_id, instance: r.instance, children: r.children }));
+  const headline = instanceHeadline(data.instances, data.instances_total);
   const stale = staleSentence(staleSummary(data.instances), now);
   return (
     <SectionCard
@@ -237,8 +243,9 @@ export function InstancesPanel({ data, now }: { data: ServiceDetailResponse; now
       meta={
         data.instances.length > 0 ? (
           <span className="tabular-nums">
-            {formatCount(data.instances.length)}
-            {data.instances_total > data.instances.length ? ` of ${formatCount(data.instances_total)}` : ""} current
+            {headline.capped
+              ? `${formatCount(data.instances.length)} of ${formatCount(data.instances_total)} listed`
+              : `${formatCount(headline.value)} ${headline.label === "Pods" ? (headline.value === 1 ? "Pod" : "Pods") : "current"}${headline.sub ? ` · ${headline.sub}` : ""}`}
           </span>
         ) : null
       }
@@ -309,7 +316,15 @@ export function EndpointsPanel({ service }: { service: ServiceRecord }) {
               return (
                 <TableRow key={`${e.protocol}-${e.address ?? "*"}-${e.port}-${i}`}>
                   <TableCell className="font-mono text-xs text-foreground">
-                    {e.address ? <UntrustedText value={e.address} plain limit={48} /> : <span className="text-muted-foreground">*</span>}
+                    {e.address ? (
+                      <>
+                        {e.address.includes(":") ? "[" : null}
+                        <UntrustedText value={e.address} plain limit={48} />
+                        {e.address.includes(":") ? "]" : null}
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">*</span>
+                    )}
                     {`:${e.port}/${e.protocol}`}
                   </TableCell>
                   <TableCell>
@@ -411,16 +426,29 @@ export function AlertsPanel({ data, now }: { data: ServiceDetailResponse; now: s
   );
 }
 
+/** The API returns at most this many recent events per service (`RECENT_EVENTS_LIMIT`). */
+export const SERVICE_EVENTS_LIMIT = 50;
+
 /** Events the adapter attributed to the service. */
 export function EventsPanel({ data, now }: { data: ServiceDetailResponse; now: string }) {
+  const capped = data.recent_events.length >= SERVICE_EVENTS_LIMIT;
   return (
     <SectionCard
       title="Recent events"
       titleId="service-events-title"
       icon={ScrollText}
       description={`Events the adapter attributed to this service, ${windowLabel(data.telemetry_range, now)}`}
+      meta={capped ? <span>Newest {formatCount(data.recent_events.length)} shown</span> : undefined}
       flush
     >
+      {capped ? (
+        <div className="px-5 pb-3">
+          <Notice icon={Info}>
+            The API returns the newest {formatCount(SERVICE_EVENTS_LIMIT)} events of a service; older events of the window are on the
+            asset&apos;s Events tab.
+          </Notice>
+        </div>
+      ) : null}
       {data.recent_events.length === 0 ? (
         <div className="px-5 pb-3">
           <EmptyState>No event attributed to this service was stored in the telemetry window.</EmptyState>
@@ -451,9 +479,8 @@ export function AttributesPanel({ data }: { data: ServiceDetailResponse }) {
           <KeyValueList
             rows={entries.map(([key, value]) => {
               const text = attributeText(value);
-              const label = humanize(key);
-              return {
-                label: label.charAt(0).toUpperCase() + label.slice(1),
+                            return {
+                label: keyLabel(key),
                 value: text === "" ? <span className="text-muted-foreground">{DASH}</span> : <UntrustedText value={text} limit={240} mono={typeof value !== "string"} />,
               };
             })}

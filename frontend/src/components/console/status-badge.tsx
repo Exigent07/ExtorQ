@@ -1,7 +1,7 @@
 import { cn } from "cn";
 
 import { Badge } from "@/components/ui/badge";
-import type { CoverageStatus, HealthStatus } from "@/lib/api/schemas";
+import type { HealthStatus } from "@/lib/api/schemas";
 import { lifecycleView } from "@/lib/lifecycle";
 import { type CoverageKind, serviceCoverage } from "@/lib/services";
 
@@ -62,26 +62,13 @@ export function StatusPill({ tone, label, className }: { tone: Tone; label: stri
   );
 }
 
-export const COVERAGE: Record<CoverageStatus, { tone: Tone; label: string }> = {
-  ok: { tone: "ok", label: "Healthy" },
-  degraded: { tone: "warn", label: "Degraded" },
-  stale: { tone: "warn", label: "Stale" },
-  missing: { tone: "bad", label: "Missing" },
-};
-
-export const HEALTH: Record<HealthStatus, { tone: Tone; label: string }> = {
+const HEALTH: Record<HealthStatus, { tone: Tone; label: string }> = {
   ok: { tone: "ok", label: "OK" },
   degraded: { tone: "warn", label: "Degraded" },
   failed: { tone: "bad", label: "Failed" },
   disabled: { tone: "off", label: "Disabled" },
   unknown: { tone: "off", label: "Unknown" },
 };
-
-/** Asset / asset-class coverage status (ok, degraded, stale, missing). */
-export function CoverageStatusDot({ status, className }: { status: CoverageStatus; className?: string }) {
-  const { tone, label } = COVERAGE[status];
-  return <StatusDot tone={tone} label={label} className={className} />;
-}
 
 /** Health of a collector, pipeline component, rule or provider. */
 export function HealthBadge({

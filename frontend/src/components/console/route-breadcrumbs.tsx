@@ -43,7 +43,7 @@ export function PageCrumbs({ crumbs }: { crumbs: Crumb[] }) {
   return null;
 }
 
-/** Top-bar trail: nav group › section › current object. */
+/** Top-bar trail: nav group › section › current object (the group, which the sidebar already shows, only from xl). */
 export function RouteBreadcrumbs({ className }: { className?: string }) {
   const pathname = usePathname();
   const override = useContext(CrumbsContext)?.override ?? null;
@@ -57,11 +57,18 @@ export function RouteBreadcrumbs({ className }: { className?: string }) {
           return (
             <Fragment key={`${index}-${crumb.label}`}>
               {index > 0 ? (
-                <BreadcrumbSeparator className={cn(index === 1 && "hidden sm:block", !last && index > 1 && "hidden md:block")} />
+                <BreadcrumbSeparator className={cn(index === 1 && "hidden xl:block", !last && index > 1 && "hidden md:block")} />
               ) : null}
-              <BreadcrumbItem className={cn("min-w-0", index === 0 && "hidden sm:inline-flex", !last && index > 1 && "hidden md:inline-flex")}>
+              <BreadcrumbItem
+                className={cn(
+                  // Parents keep their (capped) width; only the current object's label truncates.
+                  last ? "min-w-0" : "max-w-[16rem] flex-none",
+                  index === 0 && "hidden xl:inline-flex",
+                  !last && index > 1 && "hidden md:inline-flex",
+                )}
+              >
                 {last ? (
-                  <BreadcrumbPage className={cn("truncate font-medium text-foreground", crumb.mono && "font-mono text-[13px]")}>
+                  <BreadcrumbPage className={cn("max-w-[28ch] truncate font-medium text-foreground", crumb.mono && "font-mono text-sm")}>
                     {crumb.label}
                   </BreadcrumbPage>
                 ) : crumb.href ? (
@@ -69,13 +76,13 @@ export function RouteBreadcrumbs({ className }: { className?: string }) {
                     asChild
                     className={cn(
                       "max-w-[16rem] truncate text-muted-foreground transition-colors duration-150 hover:text-foreground",
-                      crumb.mono && "font-mono text-[13px]",
+                      crumb.mono && "font-mono text-sm",
                     )}
                   >
                     <Link href={crumb.href}>{crumb.label}</Link>
                   </BreadcrumbLink>
                 ) : (
-                  <span className={cn("truncate text-muted-foreground", crumb.mono && "font-mono text-[13px]")}>{crumb.label}</span>
+                  <span className={cn("truncate text-muted-foreground", crumb.mono && "font-mono text-sm")}>{crumb.label}</span>
                 )}
               </BreadcrumbItem>
             </Fragment>

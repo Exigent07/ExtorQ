@@ -18,16 +18,33 @@ export function SummaryRequestButton({
   alertId,
   canRequest,
   hasSummary,
+  unavailable = null,
 }: {
   alertId: string;
   canRequest: boolean;
   hasSummary: boolean;
+  /** Why the API would refuse a request right now (provider disabled); the button is then off. */
+  unavailable?: string | null;
 }) {
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ tone: "info" | "error"; text: string } | null>(null);
 
   if (!canRequest) {
     return <p className="text-xs text-muted-foreground">Viewer accounts cannot request AI overviews.</p>;
+  }
+
+  if (unavailable) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Button type="button" variant="outline" disabled aria-describedby={`summary-note-${alertId}`} className="h-8">
+          <Sparkles aria-hidden="true" />
+          {hasSummary ? "Generate a new overview" : "Generate overview"}
+        </Button>
+        <p id={`summary-note-${alertId}`} className="min-w-0 flex-1 text-xs text-muted-foreground">
+          {unavailable} System health lists the AI providers.
+        </p>
+      </div>
+    );
   }
 
   function request() {

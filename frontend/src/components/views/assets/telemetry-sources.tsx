@@ -51,6 +51,11 @@ export function FreshnessMeter({
   const overdue = f.tone === "ok" && lit === 1;
   const tone: Tone = overdue ? "warn" : f.tone;
   const label = overdue ? "Overdue" : f.label;
+  // On schedule: the health column already says OK, so only the recency is shown. The interval
+  // segments appear once a collector is late, overdue or stale.
+  if (tone === "ok" && collector.last_success_at && lit === STALE_FACTOR) {
+    return <RelativeTime value={collector.last_success_at} now={now} className={cn("text-xs", className)} />;
+  }
   const explanation = [
     collector.last_success_at ? null : "No successful collection has been reported.",
     collector.stale_reason ? `${collector.stale_reason.charAt(0).toUpperCase()}${collector.stale_reason.slice(1)}.` : null,
@@ -139,9 +144,9 @@ export function TelemetrySourcesCard({
             <TableRow>
               <TableHead>Collector and sources</TableHead>
               <TableHead>Health</TableHead>
-              <TableHead>Freshness</TableHead>
+              <TableHead className="hidden sm:table-cell">Last success</TableHead>
               <TableHead className="hidden text-right lg:table-cell">Lag</TableHead>
-              <TableHead className="hidden text-right sm:table-cell">Buffered</TableHead>
+              <TableHead className="hidden text-right md:table-cell">Buffered</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -191,16 +196,14 @@ export function TelemetrySourcesCard({
                   <TableCell className="py-3">
                     <HealthBadge status={c.status} className="text-xs" />
                   </TableCell>
-                  <TableCell className="py-3">
+                  <TableCell className="hidden py-3 sm:table-cell">
                     <FreshnessMeter collector={c} now={now} />
                   </TableCell>
-                  <TableCell className="hidden py-3 text-right font-mono text-xs text-fg-2 lg:table-cell">
-                    {formatDuration(c.lag_seconds)}
+                  <TableCell className="hidden py-3 text-right text-sm tabular-nums lg:table-cell">
+                    <span className={c.lag_seconds ? "text-fg-2" : "text-muted-foreground"}>{formatDuration(c.lag_seconds)}</span>
                   </TableCell>
-                  <TableCell className="hidden py-3 text-right font-mono text-xs sm:table-cell">
-                    <span className={c.records_buffered > 0 ? "text-health-warn" : "text-muted-foreground"}>
-                      {formatCount(c.records_buffered)}
-                    </span>
+                  <TableCell className="hidden py-3 text-right text-sm tabular-nums md:table-cell">
+                    <span className={c.records_buffered > 0 ? "text-fg-2" : "text-muted-foreground"}>{formatCount(c.records_buffered)}</span>
                   </TableCell>
                 </TableRow>
               );

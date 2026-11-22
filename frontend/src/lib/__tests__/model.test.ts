@@ -3,41 +3,21 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { zAssetListItem, zServiceItem, zServicesSummary } from "../api/schemas";
-import { alertFiltersToSearch, parseAlertFilters, rangeBounds } from "../filters";
-import { formatCount, formatDuration, formatInterval, formatRelative, formatUtc, formatVersion } from "../format";
+import { alertFiltersToSearch, rangeBounds } from "../filters";
+import {
+  formatCount,
+  formatDuration,
+  formatInterval,
+  formatRelative,
+  formatUtc,
+  formatVersion,
+  formatWindowLength,
+  keyLabel,
+} from "../format";
 import { buildSeverityLanes } from "../series";
 import { attributionOf, coverageCounts, exposureOf, groupServices, serviceCoverage } from "../services";
 
-describe("parseAlertFilters", () => {
-  it("keeps only allow-listed or pattern-valid values", () => {
-    const filters = parseAlertFilters({
-      asset: "linux:lab-vm-01",
-      severity: "high",
-      rule: "VM-001",
-      status: "investigating",
-      range: "24h",
-      offset: "50",
-    });
-    assert.deepEqual(filters, {
-      asset: "linux:lab-vm-01",
-      severity: "high",
-      rule: "VM-001",
-      status: "investigating",
-      range: "24h",
-      offset: 50,
-    });
-  });
-  it("drops invalid values instead of forwarding them upstream", () => {
-    const filters = parseAlertFilters({
-      asset: "../../etc",
-      severity: "urgent",
-      rule: "drop table",
-      status: ["closed_benign", "x"],
-      range: "1y",
-      offset: "-5",
-    });
-    assert.deepEqual(filters, { asset: null, severity: null, rule: null, status: "closed_benign", range: "7d", offset: 0 });
-  });
+describe("alert filter URLs and ranges", () => {
   it("serialises only non-default values", () => {
     assert.equal(alertFiltersToSearch({ range: "7d", offset: 0 }), "");
     assert.equal(alertFiltersToSearch({ severity: "critical", range: "1h", offset: 100 }), "?severity=critical&range=1h&offset=100");
@@ -92,6 +72,12 @@ describe("format", () => {
     assert.equal(formatInterval(60), "every 60 s");
     assert.equal(formatInterval(300), "every 5 min");
     assert.equal(formatInterval(86400), "every 24 h");
+    assert.equal(formatWindowLength(300), "5 min");
+    assert.equal(formatWindowLength(90), "90 s");
+    assert.equal(formatWindowLength(60), "1 min");
+    assert.equal(formatWindowLength(7200), "2 h");
+    assert.equal(formatWindowLength(5400), "1 h 30 min");
+    assert.equal(formatWindowLength(null), "—");
     assert.equal(formatRelative("2026-11-21T12:00:00Z", "2026-11-21T12:04:00Z"), "4 min ago");
     assert.equal(formatRelative(null, "2026-11-21T12:04:00Z"), "—");
   });
@@ -211,5 +197,16 @@ describe("response schemas", () => {
   it("defaults missing coverage counts to zero only where the API documents zero defaults", () => {
     const summary = zServicesSummary.parse({ reported: false, coverage: {}, by_kind: [], removed: 0, truncated: false });
     assert.equal(summary.coverage.total, 0);
+  });
+});
+
+describe("keyLabel", () => {
+  it("spells acronyms and capitalises the first word", () => {
+    assert.equal(keyLabel("os_pretty_name"), "OS pretty name");
+    assert.equal(keyLabel("os_id"), "OS id");
+    assert.equal(keyLabel("boot_id"), "Boot id");
+    assert.equal(keyLabel("unattributed_listeners"), "Unattributed listeners");
+    assert.equal(keyLabel("k8s.node_ip"), "Kubernetes node IP");
+    assert.equal(keyLabel(""), "");
   });
 });

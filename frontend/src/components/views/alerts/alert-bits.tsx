@@ -1,6 +1,6 @@
 import { cn } from "cn";
 
-import { ConfidenceBadge, SimulationBadge } from "@/components/console/badges";
+import { SimulationBadge } from "@/components/console/badges";
 import { Hint } from "@/components/console/hint";
 import { analystStatusLabel, isClosedStatus } from "@/lib/format";
 
@@ -33,7 +33,3 @@ export function AnalystStatusText({ status, recorded }: { status: string; record
   return recorded === false ? <Hint content="No analyst has acted on this alert yet.">{body}</Hint> : body;
 }
 
-/** Evidence confidence (deterministic completeness, not a verdict). */
-export function ConfidenceText({ confidence }: { confidence: string }) {
-  return <ConfidenceBadge confidence={confidence} />;
-}

@@ -1,11 +1,13 @@
 import { FileWarning, RadioTower, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 
+import { Disclosure } from "@/components/console/disclosure";
 import { Hint } from "@/components/console/hint";
+import { SplitBar } from "@/components/console/kpi-card";
 import { CardLink, SectionCard } from "@/components/console/section-card";
 import { SeverityBadge } from "@/components/console/severity";
 import { EmptyState, ErrorState, Notice } from "@/components/console/states";
-import { HealthBadge, StaleBadge, StatusPill } from "@/components/console/status-badge";
+import { HealthBadge, StatusPill } from "@/components/console/status-badge";
 import { RelativeTime, Timestamp } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -16,8 +18,47 @@ import { formatCount, formatDuration } from "@/lib/format";
 import { assetHref } from "@/lib/security/ids";
 
 import { Eyebrow } from "./marks";
+import { resolvePlurals } from "./model";
 
 const MAX_FINDINGS = 10;
+const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
+const SEV_BAR: Record<(typeof SEVERITIES)[number], string> = {
+  critical: "bg-sev-critical",
+  high: "bg-sev-high",
+  medium: "bg-sev-medium",
+  low: "bg-sev-low",
+  info: "bg-sev-info",
+};
+
+/**
+ * One status per source row: stale (with what else is known in its hint), else a gap in the
+ * window, else the reported health. Never two badges for one source.
+ */
+function SourceStatus({ c }: { c: InvestigationContext["coverage"][number] }) {
+  const health = c.status === "unknown" ? "health unknown" : `last health ${c.status}`;
+  if (c.stale) {
+    const detail = [
+      "No successful collection within the staleness budget when the context was built",
+      health,
+      c.gap_during_window ? "a gap was also reported in the alert window" : null,
+    ]
+      .filter(Boolean)
+      .join("; ");
+    return (
+      <Hint content={`${detail}.`}>
+        <StatusPill tone="warn" label="Stale" />
+      </Hint>
+    );
+  }
+  if (c.gap_during_window) {
+    return (
+      <Hint content={`The source reported a gap (lost or delayed data) during the alert window; ${health}.`}>
+        <StatusPill tone="warn" label="Gap in window" />
+      </Hint>
+    );
+  }
+  return <HealthBadge status={c.status} />;
+}
 
 function BulletList({ items, tone = "neutral" }: { items: string[]; tone?: "neutral" | "warn" }) {
   return (
@@ -54,8 +95,16 @@ export function ContextPanel({
   }
   const coverage = context.coverage;
   const gaps = coverage.filter((c) => c.stale || c.gap_during_window).length;
+  const notes = context.missing_telemetry.length;
   const findings = context.findings.slice(0, MAX_FINDINGS);
   const moreFindings = context.findings.length - findings.length;
+  const bySeverity = SEVERITIES.map((sev) => ({ sev, n: context.findings.filter((f) => f.severity === sev).length })).filter(
+    (p) => p.n > 0,
+  );
+  const issueParts = [
+    gaps > 0 ? `${formatCount(gaps)} source${gaps === 1 ? "" : "s"} stale or gapped` : null,
+    notes > 0 ? `${formatCount(notes)} missing-telemetry note${notes === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
 
   return (
     <div className="grid gap-6">
@@ -70,8 +119,8 @@ export function ContextPanel({
           </>
         }
         meta={
-          <span className={gaps > 0 ? "text-health-warn" : undefined}>
-            {gaps > 0 ? `${formatCount(gaps)} source${gaps === 1 ? "" : "s"} stale or gapped` : "No source gap recorded"}
+          <span className={issueParts.length > 0 ? "text-health-warn" : undefined}>
+            {issueParts.length > 0 ? issueParts.join(" · ") : "No gap or missing telemetry recorded"}
           </span>
         }
         flush
@@ -114,21 +163,19 @@ export function ContextPanel({
                     </div>
                   </TableCell>
                   <TableCell className="py-3">
-                    <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <HealthBadge status={c.status} />
-                      {c.stale ? <StaleBadge /> : null}
-                      {c.gap_during_window ? (
-                        <Hint content="The source reported a gap (lost or delayed data) during the alert window.">
-                          <StatusPill tone="warn" label="Gap in window" />
-                        </Hint>
-                      ) : null}
+                    <div className="flex items-center text-sm">
+                      <SourceStatus c={c} />
                     </div>
                   </TableCell>
                   <TableCell className="py-3 text-right">
                     <Timestamp value={c.last_success_at} />
                   </TableCell>
-                  <TableCell className="hidden py-3 text-right font-mono text-xs text-fg-2 sm:table-cell">
-                    {formatDuration(c.lag_seconds)}
+                  <TableCell className="hidden py-3 text-right text-sm text-fg-2 tabular-nums sm:table-cell">
+                    {c.lag_seconds === null || c.lag_seconds === undefined ? (
+                      <span className="text-muted-foreground">{formatDuration(c.lag_seconds)}</span>
+                    ) : (
+                      formatDuration(c.lag_seconds)
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -143,14 +190,18 @@ export function ContextPanel({
                 <span className="grid gap-1">
                   {context.missing_telemetry.map((m, i) => (
                     <span key={i}>
-                      <UntrustedText value={m} limit={320} />
+                      <UntrustedText value={resolvePlurals(m)} limit={320} />
                     </span>
                   ))}
                 </span>
               </Notice>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No missing telemetry was recorded for the alert window.</p>
+            <p className="text-sm text-muted-foreground">
+              {gaps > 0
+                ? "No missing-telemetry note was stored for the alert window; the source status above still reports a gap or staleness."
+                : "No missing telemetry was recorded for the alert window."}
+            </p>
           )}
           {context.limitations.length > 0 ? (
             <div className="grid gap-2">
@@ -193,6 +244,13 @@ export function ContextPanel({
             <CardLink>All findings</CardLink>
           </Link>
         }
+        meta={
+          context.findings.length > 0 ? (
+            <span className="tabular-nums">
+              {formatCount(context.findings.length)} captured{context.truncated.findings ? " (capped)" : ""}
+            </span>
+          ) : undefined
+        }
         flush
       >
         {findings.length === 0 ? (
@@ -200,6 +258,26 @@ export function ContextPanel({
             <EmptyState>No posture finding on this asset was captured in the investigation context.</EmptyState>
           </div>
         ) : (
+          <div className="grid gap-3 px-5 pb-3">
+            <SplitBar
+              parts={bySeverity.map((p) => ({ key: p.sev, value: p.n, className: SEV_BAR[p.sev] }))}
+              label={bySeverity.map((p) => `${p.n} ${p.sev}`).join(", ")}
+            />
+            <p className="text-sm text-fg-2 tabular-nums">
+              {bySeverity.map((p, i) => (
+                <span key={p.sev}>
+                  {i > 0 ? <span className="text-fg-faint"> · </span> : null}
+                  {formatCount(p.n)} <span className="text-muted-foreground">{p.sev}</span>
+                </span>
+              ))}
+              <span className="text-muted-foreground">
+                {" "}
+                on this asset as captured with the context{context.truncated.findings ? " (the builder capped the list)" : ""}. Posture
+                context only: nothing links these findings to the alert.
+              </span>
+            </p>
+            <Disclosure label={`Show the ${formatCount(findings.length)} first findings`} openLabel="Hide the findings">
+              <div className="-mx-5 mt-3">
           <Table aria-label="Findings on the asset" className="table-fixed">
             <TableHeader>
               <TableRow>
@@ -244,14 +322,15 @@ export function ContextPanel({
               })}
             </TableBody>
           </Table>
+              </div>
+              {moreFindings > 0 ? (
+                <p className="pt-3 text-xs text-muted-foreground">
+                  {formatCount(moreFindings)} more in the investigation context. The asset page lists every finding.
+                </p>
+              ) : null}
+            </Disclosure>
+          </div>
         )}
-        {moreFindings > 0 || context.truncated.findings ? (
-          <p className="px-5 pt-3 pb-1 text-xs text-muted-foreground">
-            {moreFindings > 0 ? `${formatCount(moreFindings)} more in the investigation context` : ""}
-            {moreFindings > 0 && context.truncated.findings ? "; " : ""}
-            {context.truncated.findings ? "the context builder capped this list" : ""}. The asset page lists every finding.
-          </p>
-        ) : null}
       </SectionCard>
     </div>
   );

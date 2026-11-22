@@ -9,11 +9,11 @@ import type { FindingsSummary, Severity } from "@/lib/api/schemas";
 import { formatCount } from "@/lib/format";
 
 const BAR: Record<Severity, string> = {
-  critical: "from-sev-critical/45 to-sev-critical",
-  high: "from-sev-high/45 to-sev-high",
-  medium: "from-sev-medium/45 to-sev-medium",
-  low: "from-sev-low/45 to-sev-low",
-  info: "from-sev-info/45 to-sev-info",
+  critical: "bg-sev-critical",
+  high: "bg-sev-high",
+  medium: "bg-sev-medium",
+  low: "bg-sev-low",
+  info: "bg-sev-info",
 };
 
 const DOT: Record<Severity, string> = {
@@ -64,7 +64,7 @@ export function FindingsBySeverityCard({ summary, className }: { summary: Findin
               <span className="h-2 overflow-hidden rounded-full bg-hairline-soft" aria-hidden="true">
                 {count > 0 ? (
                   <span
-                    className={cn("block h-full min-w-1 rounded-full bg-gradient-to-r", BAR[severity])}
+                    className={cn("block h-full min-w-1 rounded-full opacity-90", BAR[severity])}
                     style={{ width: `${width}%` }}
                   />
                 ) : null}
@@ -86,9 +86,7 @@ export function FindingsBySeverityCard({ summary, className }: { summary: Findin
         </p>
       ) : null}
       <LifecycleNotice summary={summary} />
-      <p className="mt-4 text-xs text-muted-foreground">
-        Source <span className="font-mono">{summary.source}</span> · vulnerabilities and misconfigurations are listed on each asset.
-      </p>
+      <p className="mt-4 text-xs text-muted-foreground">Vulnerabilities and misconfigurations from the scanners are listed on each asset.</p>
     </SectionCard>
   );
 }

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/console/page-header";
 import { PageCrumbs } from "@/components/console/route-breadcrumbs";
-import { EmptyState, ErrorState } from "@/components/console/states";
-import { serviceFinding } from "@/components/views/services/model";
+import { EmptyState, ErrorState, NotFoundState } from "@/components/console/states";
+import { instanceHeadline, serviceFinding } from "@/components/views/services/model";
 import { RemovedTag } from "@/components/views/services/service-badges";
 import { ServiceHeaderCard, ServiceTitle } from "@/components/views/services/service-header";
 import {
@@ -13,9 +13,11 @@ import {
   EventsPanel,
   FindingsPanel,
   InstancesPanel,
+  SERVICE_EVENTS_LIMIT,
   TelemetryPanel,
 } from "@/components/views/services/service-panels";
 import { ServiceTabs } from "@/components/views/services/service-tabs";
+import { formatCount } from "@/lib/format";
 import { crumbLabel } from "@/lib/navigation";
 import { assetHref, isAssetId, parseHexIdSegment } from "@/lib/security/ids";
 import { getService } from "@/lib/server/api";
@@ -39,11 +41,10 @@ export default async function ServicePage({ params, searchParams }: PageProps<"/
   if (!serviceId) {
     return (
       <>
-        <PageHeader title="Service" />
-        <ErrorState
-          what="this service"
-          error={{ kind: "not_found", message: "The service id in the address is not valid.", requestId: "-" }}
-        />
+        <PageHeader title="Service not found" />
+        <NotFoundState backHref="/assets" backLabel="Back to Assets">
+          The address does not hold a valid service id (32 hexadecimal characters).
+        </NotFoundState>
       </>
     );
   }
@@ -53,12 +54,16 @@ export default async function ServicePage({ params, searchParams }: PageProps<"/
     const routeMissing = result.error.status === 404 && result.error.detail === "Not Found";
     return (
       <>
-        <PageHeader title="Service" />
+        <PageHeader title={!routeMissing && result.error.kind === "not_found" ? "Service not found" : "Service"} />
         {routeMissing ? (
           <EmptyState compact={false}>
             The analyst API on this deployment does not provide service details yet (
             <span className="font-mono">GET /api/v1/services/&#123;id&#125;</span> answered 404).
           </EmptyState>
+        ) : result.error.kind === "not_found" ? (
+          <NotFoundState backHref="/assets" backLabel="Back to Assets" requestId={result.error.requestId}>
+            No service with this id is in the inventory; it may have been removed, or the link is wrong.
+          </NotFoundState>
         ) : (
           <ErrorState what="this service" error={result.error} />
         )}
@@ -99,11 +104,22 @@ export default async function ServicePage({ params, searchParams }: PageProps<"/
         initial={tab}
         tabs={[
           { key: "telemetry", label: "Telemetry", count: data.telemetry.length, content: <TelemetryPanel data={data} now={now} /> },
-          { key: "instances", label: "Instances", count: data.instances_total, content: <InstancesPanel data={data} now={now} /> },
+          {
+            key: "instances",
+            label: "Instances",
+            count: instanceHeadline(data.instances, data.instances_total).value,
+            content: <InstancesPanel data={data} now={now} />,
+          },
           { key: "endpoints", label: "Ports and exposure", count: s.endpoints.length, content: <EndpointsPanel service={s} /> },
           { key: "findings", label: "Findings", count: data.findings_total, content: <FindingsPanel data={data} now={now} /> },
           { key: "alerts", label: "Alerts", count: data.alerts_total, content: <AlertsPanel data={data} now={now} /> },
-          { key: "events", label: "Events", count: data.recent_events.length, content: <EventsPanel data={data} now={now} /> },
+          {
+            key: "events",
+            label: "Events",
+            count: data.recent_events.length,
+            countLabel: data.recent_events.length >= SERVICE_EVENTS_LIMIT ? `${formatCount(data.recent_events.length)}+` : undefined,
+            content: <EventsPanel data={data} now={now} />,
+          },
           { key: "attributes", label: "Attributes", content: <AttributesPanel data={data} /> },
         ]}
       />

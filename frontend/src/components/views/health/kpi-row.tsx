@@ -1,46 +1,21 @@
-import { KpiCard, SplitBar } from "@/components/console/kpi-card";
+import { KpiCard, KpiFigures, SplitBar } from "@/components/console/kpi-card";
 import type { Tone } from "@/components/console/status-badge";
 import type { HealthResponse } from "@/lib/api/schemas";
-import { DASH, formatCount, formatDuration, formatRelative } from "@/lib/format";
+import { DASH, formatCount, formatDuration } from "@/lib/format";
 import { spoolBacklog } from "@/lib/health";
 
-import { aiStatusLabel, aiSummary, collectorCounts, gatewayRejections, providerName, ruleExecution } from "./model";
-
-function Figures({ items }: { items: { label: string; value: number; tone?: Tone }[] }) {
-  return (
-    <span className="flex flex-wrap gap-x-3 gap-y-1">
-      {items.map((item) => (
-        <span key={item.label} className="whitespace-nowrap">
-          <span
-            className={
-              item.value > 0 && item.tone === "bad"
-                ? "font-medium text-health-bad tabular-nums"
-                : item.value > 0 && item.tone === "warn"
-                  ? "font-medium text-health-warn tabular-nums"
-                  : "text-fg-2 tabular-nums"
-            }
-          >
-            {formatCount(item.value)}
-          </span>{" "}
-          {item.label}
-        </span>
-      ))}
-    </span>
-  );
-}
+import { collectorCounts, gatewayRejections, ruleExecution } from "./model";
 
 /**
  * System health headline figures: collectors healthy and fresh, the ingestion spool backlog,
- * quarantined records and gateway rejections, rule failures and the AI providers (advisory).
+ * quarantined records and gateway rejections, and rule failures (the AI providers have their own card).
  * Each figure is the API's number or a sum of the API's rows; unknown values are a dash.
  */
 export function HealthKpiRow({ data }: { data: HealthResponse }) {
-  const now = data.generated_at;
   const collectors = collectorCounts(data.collectors);
   const spool = spoolBacklog(data.pipeline);
   const gateway = gatewayRejections(data.ingest);
   const rules = ruleExecution(data.rules);
-  const ai = aiSummary(data.ai);
 
   const spoolStatus: { tone: Tone; label: string } =
     spool.depth === null
@@ -63,12 +38,11 @@ export function HealthKpiRow({ data }: { data: HealthResponse }) {
               : { tone: "ok", label: "None" };
 
   return (
-    // 5 cards: one row at xl; 3 + 2 at lg (6-column grid, the second row's cards span half
-    // each); 2 + 2 + 1 at sm (the last card spans the row). Rows always end level.
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6 xl:grid-cols-5">
+    // 4 cards (DESIGN §3): one row at xl, 2 + 2 below. The AI providers have their own card
+    // further down; detection never waits for them.
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <KpiCard
         label="Collectors"
-        className="lg:col-span-2 xl:col-span-1"
         value={formatCount(collectors.healthy)}
         unit={`/ ${formatCount(collectors.total)}`}
         status={{ tone: collectors.tone, label: collectors.label }}
@@ -78,7 +52,7 @@ export function HealthKpiRow({ data }: { data: HealthResponse }) {
             parts={[
               { key: "healthy", value: collectors.healthy, className: "bg-health-ok" },
               { key: "degraded", value: collectors.degraded, className: "bg-health-warn" },
-              { key: "stale", value: collectors.stale, className: "bg-health-warn/60" },
+              { key: "stale", value: collectors.stale, className: "bg-health-warn" },
               { key: "failed", value: collectors.failed, className: "bg-health-bad" },
               { key: "other", value: collectors.other, className: "bg-health-off" },
             ]}
@@ -88,11 +62,11 @@ export function HealthKpiRow({ data }: { data: HealthResponse }) {
           collectors.total === 0 ? (
             "No collector has reported health yet."
           ) : (
-            <Figures
+            <KpiFigures
               items={[
-                { label: "stale", value: collectors.stale, tone: "warn" },
-                { label: "failed", value: collectors.failed, tone: "bad" },
-                ...(collectors.degraded > 0 ? [{ label: "degraded", value: collectors.degraded, tone: "warn" as Tone }] : []),
+                { label: "stale", value: collectors.stale, tone: "warn" as const },
+                { label: "failed", value: collectors.failed, tone: "bad" as const },
+                ...(collectors.degraded > 0 ? [{ label: "degraded", value: collectors.degraded, tone: "warn" as const }] : []),
               ]}
             />
           )
@@ -102,7 +76,6 @@ export function HealthKpiRow({ data }: { data: HealthResponse }) {
 
       <KpiCard
         label="Ingestion spool"
-        className="lg:col-span-2 xl:col-span-1"
         value={spool.depth === null ? DASH : formatCount(spool.depth)}
         unit={spool.depth === null ? undefined : spool.depth === 1 ? "record" : "records"}
         status={spoolStatus}
@@ -110,15 +83,14 @@ export function HealthKpiRow({ data }: { data: HealthResponse }) {
           spool.depth === null
             ? "No current gateway or writer report."
             : spool.oldestSeconds === null
-              ? "Oldest queued: none · shared by gateway and writer"
-              : `Oldest queued ${formatDuration(spool.oldestSeconds)} · shared by gateway and writer`
+              ? "Nothing queued · one spool, gateway and writer"
+              : `Oldest queued ${formatDuration(spool.oldestSeconds)} · one spool`
         }
         href="#pipeline-title"
       />
 
       <KpiCard
         label="Quarantined"
-        className="lg:col-span-2 xl:col-span-1"
         value={data.ingest ? formatCount(data.ingest.quarantined_records) : DASH}
         unit={data.ingest ? (data.ingest.quarantined_records === 1 ? "record" : "records") : undefined}
         status={
@@ -145,7 +117,6 @@ export function HealthKpiRow({ data }: { data: HealthResponse }) {
 
       <KpiCard
         label="Rule failures"
-        className="lg:col-span-3 xl:col-span-1"
         value={formatCount(rules.failures24h)}
         status={ruleStatus}
         sub={
@@ -157,24 +128,6 @@ export function HealthKpiRow({ data }: { data: HealthResponse }) {
         href="#rule-health-title"
       />
 
-      <KpiCard
-        label="AI providers"
-        className="sm:col-span-2 lg:col-span-3 xl:col-span-1"
-        value={formatCount(ai.enabled)}
-        unit={`/ ${formatCount(ai.total)} enabled`}
-        status={ai.total === 0 ? { tone: "off", label: "None" } : ai.enabled === 0 ? { tone: "off", label: "Off" } : { tone: "ok", label: "On" }}
-        sub={
-          ai.lastCall ? (
-            <>
-              Advisory · last call {formatRelative(ai.lastCall.at, now)} ({providerName(ai.lastCall.provider)}
-              {ai.lastCall.status ? `, ${aiStatusLabel(ai.lastCall.status)}` : ""})
-            </>
-          ) : (
-            "Advisory · no assessment recorded. Detection never waits for AI."
-          )
-        }
-        href="#ai-health-title"
-      />
     </div>
   );
 }

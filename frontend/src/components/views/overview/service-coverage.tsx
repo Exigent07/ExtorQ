@@ -2,9 +2,10 @@ import { cn } from "cn";
 import { Layers } from "lucide-react";
 import Link from "next/link";
 
+import { Hint } from "@/components/console/hint";
+import { Fraction } from "@/components/console/kpi-card";
 import { CardLink, SectionCard } from "@/components/console/section-card";
 import { EmptyState } from "@/components/console/states";
-import { Hint } from "@/components/console/hint";
 import type { ServicesSummary } from "@/lib/api/schemas";
 import { formatCount } from "@/lib/format";
 import { SERVICE_GROUPS, serviceKindLabel } from "@/lib/services";
@@ -118,7 +119,7 @@ export function ServiceCoverageCard({
           <div className="flex flex-col items-center gap-6 sm:flex-row">
             <CoverageDonut
               parts={PARTS.map((p) => ({ key: p.key, label: p.label, value: summary.coverage[p.key], color: p.color }))}
-              centerValue={`${formatCount(covered)}/${formatCount(summary.coverage.total)}`}
+              centerValue={<Fraction value={covered} total={summary.coverage.total} />}
               centerLabel="with an enabled adapter"
               label={`Service coverage: ${PARTS.map((p) => `${summary.coverage[p.key]} ${p.label.toLowerCase()}`).join(", ")}`}
             />
@@ -152,8 +153,7 @@ export function ServiceCoverageCard({
                       {SERVICE_GROUPS.find((g) => g.kind === k.service_kind)?.title ?? serviceKindLabel(k.service_kind)}
                     </span>
                     <span className="flex-none text-muted-foreground tabular-nums">
-                      <span className="text-fg-2">{formatCount(k.coverage.monitored)}</span>/{formatCount(k.coverage.total)}{" "}
-                      monitored
+                      <Fraction value={k.coverage.monitored} total={k.coverage.total} className="text-fg-2" /> monitored
                       {gaps > 0 ? (
                         <>
                           {" · "}

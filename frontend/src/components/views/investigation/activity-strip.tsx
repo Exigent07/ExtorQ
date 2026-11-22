@@ -2,8 +2,15 @@ import { cn } from "cn";
 
 import { formatCount, formatUtc, formatUtcTime } from "@/lib/format";
 
+/** A bucket width in words ("15 s", "1.5 s", "2 min"). */
+function formatSpan(seconds: number): string {
+  if (seconds < 10) return `${(Math.round(seconds * 10) / 10).toString()} s`;
+  if (seconds < 120) return `${Math.round(seconds)} s`;
+  return `${Math.round(seconds / 60)} min`;
+}
+
 import { relationshipLabel } from "./labels";
-import { axisBounds, axisPercent, axisTicks, type TimelineRow } from "./model";
+import { axisPercent, axisTicks, histogram, observedBounds, type TimelineRow } from "./model";
 
 const LANES = [
   { kind: "evidence", tick: "bg-brand" },
@@ -12,10 +19,15 @@ const LANES = [
   { kind: "unestablished", tick: "bg-fg-faint" },
 ] as const;
 
+const BUCKETS = 60;
+/** Bar height in px for a lane's busiest bucket; a single observation stays visible at 3 px. */
+const MAX_BAR = 14;
+
 /**
  * Every entry of the investigation context on one UTC time axis, one lane per relationship
- * (evidence, direct, candidate, unestablished), with the alert's first-to-last-seen span
- * shaded. Positions come from the real event times; nothing is binned or interpolated.
+ * (evidence, direct, candidate, unestablished): a histogram of real event times in 60 equal
+ * buckets (bar height = observations in the bucket, relative to the lane's busiest), with the alert's
+ * first-to-last-seen span shaded. The axis spans the observations, padded 5 %.
  */
 export function ActivityStrip({
   rows,
@@ -30,7 +42,11 @@ export function ActivityStrip({
   firstSeen: string;
   lastSeen: string;
 }) {
-  const bounds = axisBounds(windowStart, windowEnd, rows.map((r) => r.time));
+  const bounds = observedBounds(windowStart, windowEnd, [...rows.map((r) => r.time), firstSeen, lastSeen]);
+  const lanes = LANES.map((lane) => histogram(rows.filter((r) => r.kind === lane.kind).map((r) => r.time), bounds, BUCKETS));
+  // Each lane on its own scale (its busiest bucket is full height): the strip shows when each kind
+  // of observation happened; the totals on the right give the sizes.
+  const peaks = lanes.map((lane) => Math.max(1, ...lane));
   const { ticks, stepSeconds } = axisTicks(bounds, 6);
   const spanStart = axisPercent(firstSeen, bounds);
   const spanEnd = axisPercent(lastSeen, bounds);
@@ -49,25 +65,29 @@ export function ActivityStrip({
         {LANES.map((lane, index) => (
           <div key={lane.kind} className="contents">
             <span className="text-xs text-muted-foreground">{relationshipLabel(lane.kind)}</span>
-            <span className="relative h-4">
-              <span aria-hidden="true" className="absolute inset-x-0 top-1/2 h-px bg-hairline-strong" />
+            <span className="relative h-5">
+              <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-px bg-hairline-strong" />
               <span
                 aria-hidden="true"
-                className="absolute inset-y-[-3px] rounded-sm bg-brand/[0.08]"
-                style={{ left: `${spanStart}%`, width: `${Math.max(0.4, spanEnd - spanStart)}%` }}
+                className="absolute -inset-y-0.5 rounded-sm bg-brand/[0.1]"
+                style={{ left: `${spanStart}%`, width: `${Math.max(0, spanEnd - spanStart)}%`, minWidth: "2px" }}
               />
-              {rows
-                .filter((r) => r.kind === lane.kind)
-                .map((r) => (
+              {(lanes[index] ?? []).map((n, bucket) =>
+                n > 0 ? (
                   <span
-                    key={r.key}
+                    key={bucket}
                     aria-hidden="true"
-                    className={cn("absolute top-0.5 h-3 w-[2px] -translate-x-1/2 rounded-full", lane.tick)}
-                    style={{ left: `${axisPercent(r.time, bounds)}%` }}
+                    className={cn("absolute bottom-0 rounded-t-[1px]", lane.tick)}
+                    style={{
+                      left: `${(bucket / BUCKETS) * 100}%`,
+                      width: `max(3px, calc(${100 / BUCKETS}% - 2px))`,
+                      height: `${Math.max(3, Math.round((n / (peaks[index] ?? 1)) * MAX_BAR))}px`,
+                    }}
                   />
-                ))}
+                ) : null,
+              )}
             </span>
-            <span className={cn("text-right font-mono text-xs tabular-nums", (counts[index] ?? 0) > 0 ? "text-fg-2" : "text-muted-foreground")}>
+            <span className={cn("text-right text-xs tabular-nums", (counts[index] ?? 0) > 0 ? "text-fg-2" : "text-muted-foreground")}>
               {formatCount(counts[index] ?? 0)}
             </span>
           </div>
@@ -77,7 +97,7 @@ export function ActivityStrip({
           {ticks.map((t) => (
             <span
               key={t}
-              className="absolute top-0 -translate-x-1/2 font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums"
+              className="absolute top-0 -translate-x-1/2 text-xs whitespace-nowrap text-muted-foreground tabular-nums"
               style={{ left: `${axisPercent(new Date(t).toISOString(), bounds)}%` }}
             >
               {tickLabel(t)}
@@ -91,7 +111,10 @@ export function ActivityStrip({
           <span aria-hidden="true" className="h-2.5 w-4 rounded-sm bg-brand/[0.16]" />
           Alert first to last seen
         </span>
-        <span>Times in UTC · context window as built by the correlation layer</span>
+        <span>
+          Bars count observations per {formatSpan((bounds.end - bounds.start) / BUCKETS / 1000)}, each lane on its own scale · times
+          in UTC
+        </span>
       </figcaption>
     </figure>
   );

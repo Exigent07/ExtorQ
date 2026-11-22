@@ -51,17 +51,18 @@ function tickStarts(rows: ActivityRow[], bucketSeconds: number): string[] {
     .map((row) => row.start);
 }
 
-/** Rounded top only on the topmost non-empty segment of a column (4px radius). */
+/** Flat severity fill, 1px card-coloured seams, rounded top only on the topmost segment (4px). */
 function SegmentShape(props: {
   x?: number;
   y?: number;
   width?: number;
   height?: number;
   fill?: string;
+  fillOpacity?: number;
   payload?: ActivityRow;
   severity: Severity;
 }) {
-  const { x = 0, y = 0, width = 0, height = 0, fill, payload, severity } = props;
+  const { x = 0, y = 0, width = 0, height = 0, fill, fillOpacity, payload, severity } = props;
   if (!payload || height <= 0 || width <= 0) return null;
   const above = STACK.slice(STACK.indexOf(severity) + 1);
   const isTop = above.every((s) => payload[s] === 0);
@@ -69,7 +70,7 @@ function SegmentShape(props: {
   const path = r
     ? `M${x},${y + height}V${y + r}Q${x},${y} ${x + r},${y}H${x + width - r}Q${x + width},${y} ${x + width},${y + r}V${y + height}Z`
     : `M${x},${y + height}V${y}H${x + width}V${y + height}Z`;
-  return <path d={path} fill={fill} stroke="var(--card)" strokeWidth={1} />;
+  return <path d={path} fill={fill} fillOpacity={fillOpacity} stroke="var(--card)" strokeWidth={1} />;
 }
 
 function TooltipBody({ row, bucketSeconds }: { row: ActivityRow; bucketSeconds: number }) {
@@ -115,7 +116,10 @@ export function AlertActivityCard({
   week: ActivitySeries | null;
   className?: string;
 }) {
-  const [range, setRange] = useState<RangeKey>("24h");
+  // A 24 h view with alerts in fewer than 6 of its hourly buckets is mostly empty plot: open on
+  // 7 days then (the toggle still offers 24 h).
+  const sparseDay = day.rows.filter((row) => row.total > 0).length < 6;
+  const [range, setRange] = useState<RangeKey>(sparseDay && week && week.total > day.total ? "7d" : "24h");
   const series = range === "7d" && week ? week : day;
   const max = Math.max(0, ...series.rows.map((r) => r.total));
   const ticks = tickStarts(series.rows, series.bucketSeconds);
@@ -180,15 +184,7 @@ export function AlertActivityCard({
 
       <figure className="relative m-0 flex min-h-[220px] flex-1 flex-col">
         <ChartContainer config={CONFIG} className="aspect-auto min-h-[220px] w-full flex-1" initialDimension={{ width: 720, height: 260 }}>
-          <BarChart data={series.rows} margin={{ top: 6, right: 4, bottom: 0, left: -8 }} barCategoryGap="16%" maxBarSize={28}>
-            <defs>
-              {STACK.map((s) => (
-                <linearGradient key={s} id={`activity-fill-${s}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={`var(--color-${s})`} stopOpacity={0.95} />
-                  <stop offset="100%" stopColor={`var(--color-${s})`} stopOpacity={0.55} />
-                </linearGradient>
-              ))}
-            </defs>
+          <BarChart data={series.rows} margin={{ top: 6, right: 4, bottom: 0, left: -8 }} barCategoryGap="16%" maxBarSize={22}>
             <CartesianGrid vertical={false} stroke="var(--xq-grid)" strokeDasharray="3 4" />
             <YAxis
               allowDecimals={false}
@@ -223,7 +219,8 @@ export function AlertActivityCard({
                 key={s}
                 dataKey={s}
                 stackId="alerts"
-                fill={`url(#activity-fill-${s})`}
+                fill={`var(--color-${s})`}
+                fillOpacity={0.9}
                 isAnimationActive={false}
                 shape={(props: object) => <SegmentShape {...props} severity={s} />}
               />

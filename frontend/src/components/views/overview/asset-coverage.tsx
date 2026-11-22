@@ -2,6 +2,7 @@ import { cn } from "cn";
 import { Boxes, FolderGit2, Laptop, type LucideIcon, Server, Waypoints } from "lucide-react";
 import Link from "next/link";
 
+import { Fraction } from "@/components/console/kpi-card";
 import { CardLink, SectionCard } from "@/components/console/section-card";
 import { StatusDot } from "@/components/console/status-badge";
 import { RelativeTime } from "@/components/console/time";
@@ -76,7 +77,7 @@ export function AssetCoverageCard({
             {retiredText ? (
               <>
                 {" "}
-                <Link href="/assets?retired=1" className="text-fg-2 underline-offset-2 hover:text-foreground hover:underline">
+                <Link href="/assets?retired=1#retired-assets" className="text-fg-2 underline-offset-2 hover:text-foreground hover:underline">
                   {retiredText}
                 </Link>{" "}
                 (no collector reports, not observed within the retirement window).
@@ -135,7 +136,7 @@ export function AssetCoverageCard({
                   <span className="text-xs text-muted-foreground">
                     {row.coverage ? (
                       <span className="tabular-nums">
-                        <span className="text-fg-2">{formatCount(row.reporting)}</span>/{formatCount(row.total)} reporting
+                        <Fraction value={row.reporting} total={row.total} className="text-fg-2" /> reporting
                       </span>
                     ) : null}
                     {row.coverage ? " · " : null}

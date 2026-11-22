@@ -70,7 +70,7 @@ function columns(now: string): ColumnDef<RuleListItem, unknown>[] {
       accessorFn: (r) => r.rule_id,
       header: "Rule",
       enableHiding: false,
-      meta: { className: "min-w-[180px] whitespace-normal" },
+      meta: { className: "min-w-[180px] whitespace-normal @5xl:min-w-[340px]" },
       cell: ({ row }) => {
         const r = row.original;
         return (
@@ -132,7 +132,13 @@ function columns(now: string): ColumnDef<RuleListItem, unknown>[] {
         return (
           <div className="grid justify-items-start gap-1">
             {r.enabled ? (
-              <span className="text-sm text-fg-2">{ruleStatusLabel(r.status)}</span>
+              r.status === "experimental" ? (
+                <span className="inline-flex h-5 items-center rounded-md px-1.5 text-xs text-fg-2 ring-1 ring-hairline-strong ring-inset">
+                  {ruleStatusLabel(r.status)}
+                </span>
+              ) : (
+                <span className="text-sm text-foreground">{ruleStatusLabel(r.status)}</span>
+              )
             ) : (
               <StatusPill tone="off" label="Disabled" />
             )}
@@ -213,7 +219,7 @@ function columns(now: string): ColumnDef<RuleListItem, unknown>[] {
       id: "missing",
       accessorFn: (r) => r.last_run?.missing_sources.length ?? -1,
       header: () => (
-        <Hint content="Required or optional source types with no events at all in the rule's last evaluation window. A quiet source can hide detections; it is not a rule failure.">
+        <Hint content="Source types with no event in the rule's last evaluation window (required or optional inputs). A quiet source can hide detections: a blind spot, not a rule failure.">
           <span className="underline decoration-hairline-strong decoration-dotted underline-offset-4">Quiet sources</span>
         </Hint>
       ),
@@ -228,7 +234,8 @@ function columns(now: string): ColumnDef<RuleListItem, unknown>[] {
           <ul aria-label="Sources without events" className="flex flex-wrap gap-1">
             {missing.slice(0, 4).map((source) => (
               <li key={source}>
-                <Token muted>
+                <Token className="gap-1.5 text-fg-2 ring-hairline-strong">
+                  <span aria-hidden="true" className="size-1.5 flex-none rounded-full bg-health-warn" />
                   <UntrustedText value={source} plain limit={40} />
                 </Token>
               </li>

@@ -12,7 +12,7 @@ import { assetHref } from "@/lib/security/ids";
 
 import { AssetCard } from "./asset-card";
 import { AssetIconTile, CLASS_ICON } from "./asset-icon";
-import { type AssetClass, assetHealth, classStatus } from "./model";
+import { type AssetClass, assetStatus, classStatus } from "./model";
 
 /**
  * Owner accounts of a class (GitHub accounts): context for the repositories, never monitored
@@ -23,7 +23,9 @@ function OwnerAccountsCard({ accounts, repositories }: { accounts: AssetListItem
   const rowLink =
     "flex min-h-9 items-center justify-between gap-3 px-3.5 py-1.5 transition-colors duration-150 outline-none hover:bg-hover focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset";
   return (
-    <article className="flex h-full min-w-0 flex-col rounded-xl bg-card shadow-card ring-1 ring-hairline">
+    // A context panel, not a monitored-asset card: no card fill, its own height (top-aligned
+    // beside the repository cards), so it never stretches into a blank band.
+    <article className="flex min-w-0 flex-col self-start rounded-xl bg-white/[0.012] ring-1 ring-hairline">
       <header className="flex items-start gap-3 px-5 pt-5 pb-4">
         <AssetIconTile assetType="github_account" />
         <div className="min-w-0 flex-1">
@@ -43,18 +45,25 @@ function OwnerAccountsCard({ accounts, repositories }: { accounts: AssetListItem
                   <UntrustedText value={account.display_name ?? account.name} oneLine plain />
                 </span>
                 <span className="flex flex-none items-center gap-2">
-                  <LifecycleBadge state={account.lifecycle_state} plain />
-                  <StatusDot
-                    tone={account.collectors_total > 0 ? (account.coverage_status === "ok" ? "ok" : "warn") : "off"}
-                    label={account.collectors_total > 0 ? `${formatCount(account.collectors_total)} collectors` : "No collector"}
-                    className="text-xs text-muted-foreground"
-                  />
+                  {account.lifecycle_state && account.lifecycle_state !== "active" ? (
+                    <LifecycleBadge state={account.lifecycle_state} plain />
+                  ) : (
+                    <StatusDot
+                      tone={account.collectors_total > 0 ? (account.coverage_status === "ok" ? "ok" : "warn") : "off"}
+                      label={
+                        account.collectors_total > 0
+                          ? `${formatCount(account.collectors_total)} collector${account.collectors_total === 1 ? "" : "s"}`
+                          : "No collector"
+                      }
+                      className="text-xs text-muted-foreground"
+                    />
+                  )}
                 </span>
               </Link>
               {owned.length > 0 ? (
                 <ul aria-label="Repositories of this account">
                   {owned.map((repo) => {
-                    const health = assetHealth(repo);
+                    const status = assetStatus(repo);
                     return (
                       <li key={repo.asset_id}>
                         <Link href={assetHref(repo.asset_id)} className={rowLink}>
@@ -65,8 +74,11 @@ function OwnerAccountsCard({ accounts, repositories }: { accounts: AssetListItem
                             </span>
                           </span>
                           <span className="flex flex-none items-center gap-2">
-                            <LifecycleBadge state={repo.lifecycle_state} plain />
-                            <StatusDot tone={health.tone} label={health.label} className="text-xs text-muted-foreground" />
+                            {status.kind === "lifecycle" ? (
+                              <LifecycleBadge state={status.state} plain />
+                            ) : (
+                              <StatusDot tone={status.health.tone} label={status.health.label} className="text-xs text-muted-foreground" />
+                            )}
                           </span>
                         </Link>
                       </li>
@@ -78,7 +90,7 @@ function OwnerAccountsCard({ accounts, repositories }: { accounts: AssetListItem
           );
         })}
       </ul>
-      <footer className="mt-auto px-5 pt-4 pb-5 text-xs leading-relaxed text-muted-foreground">
+      <footer className="px-5 pt-3 pb-4 text-xs leading-relaxed text-muted-foreground">
         Accounts own the repositories. ExtorQ monitors repositories, not accounts, so no collector is expected for an
         account.
       </footer>

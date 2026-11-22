@@ -22,10 +22,6 @@ export const CLASS_ICON: Record<ClassKey, LucideIcon> = {
   other: Box,
 };
 
-export function assetIcon(assetType: string): LucideIcon {
-  return TYPE_ICON[assetType] ?? Box;
-}
-
 /** The asset type's icon on a quiet raised tile (cards, headers, rows). Decorative. */
 export function AssetIconTile({
   assetType,

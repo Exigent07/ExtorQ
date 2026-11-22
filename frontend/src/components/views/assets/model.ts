@@ -145,6 +145,18 @@ export function assetHealth(asset: Pick<AssetListItem, "coverage_status" | "coll
   return { tone: COVERAGE_TONE[status] ?? "off", label: "Healthy", reason: null };
 }
 
+/**
+ * The one status shown for an asset in a list or card: its lifecycle state when the API marks
+ * it stale or retired (not observed recently says more than a collector verdict), otherwise
+ * its health. Never both, so a stale asset does not carry two "Stale" marks.
+ */
+export function assetStatus(
+  asset: Pick<AssetListItem, "coverage_status" | "collectors_total" | "collectors_stale" | "lifecycle_state">,
+): { kind: "lifecycle"; state: string } | { kind: "health"; health: AssetHealth } {
+  if (asset.lifecycle_state && asset.lifecycle_state !== "active") return { kind: "lifecycle", state: asset.lifecycle_state };
+  return { kind: "health", health: assetHealth(asset) };
+}
+
 /** Collectors that are stale or not OK, for the reason line (names are telemetry: render as text). */
 export function unhealthyCollectors(collectors: CollectorStatus[]): CollectorStatus[] {
   return collectors.filter((c) => c.stale || c.status !== "ok");
@@ -154,31 +166,43 @@ export function unhealthyCollectors(collectors: CollectorStatus[]): CollectorSta
 
 /**
  * One line for the page subtitle: how many monitored assets are healthy and what the others
- * are. Context assets (GitHub accounts) are not monitored and are counted apart.
+ * are. Context assets (GitHub accounts) are not monitored and are counted apart; retired assets
+ * (in the rows, or left out by the API and listed apart: `retiredApart`) are counted, never
+ * dropped silently.
  */
 export function assetsFinding(
   all: Pick<AssetListItem, "asset_type" | "coverage_status" | "collectors_total" | "lifecycle_state">[],
+  retiredApart = 0,
 ): string {
-  const retired = all.filter((a) => a.lifecycle_state === "retired").length;
+  const retired = all.filter((a) => a.lifecycle_state === "retired").length + Math.max(0, retiredApart);
   const assets = all.filter((a) => a.lifecycle_state !== "retired");
   if (assets.length === 0) {
     return retired > 0 ? `Only retired assets: ${formatCount(retired)}` : "No asset has reported an inventory yet";
   }
-  const monitored = assets.filter((a) => !isContextAsset(a.asset_type));
-  const context = assets.length - monitored.length;
-  const count = (test: (a: (typeof monitored)[number]) => boolean) => monitored.filter(test).length;
+  // Kubernetes nodes report through their cluster (inherited collectors): counted with it, as on
+  // the Overview, and named apart so the two pages give the same "x of y".
+  const nodes = assets.filter((a) => a.asset_type === "kubernetes_node").length;
+  const monitored = assets.filter((a) => !isContextAsset(a.asset_type) && a.asset_type !== "kubernetes_node");
+  const context = assets.length - monitored.length - nodes;
+  // A stale asset (not observed recently; the API's lifecycle) is said once as "stale", the word
+  // its card shows; collector verdicts are stated for the assets still observed.
+  const stale = monitored.filter((a) => a.lifecycle_state === "stale").length;
+  const observed = monitored.filter((a) => a.lifecycle_state !== "stale");
+  const count = (test: (a: (typeof monitored)[number]) => boolean) => observed.filter(test).length;
   const healthy = count((a) => a.coverage_status === "ok");
   const parts = [`${formatCount(healthy)} of ${formatCount(monitored.length)} monitored asset${monitored.length === 1 ? "" : "s"} healthy`];
   const degraded = count((a) => a.coverage_status === "degraded");
-  const stale = count((a) => a.coverage_status === "stale");
+  const staleCollectors = count((a) => a.coverage_status === "stale");
   const noCollector = count((a) => a.coverage_status === "missing" && a.collectors_total === 0);
   const missing = count((a) => a.coverage_status === "missing" && a.collectors_total > 0);
+  if (stale > 0) parts.push(`${formatCount(stale)} monitored asset${stale === 1 ? "" : "s"} stale`);
   if (degraded > 0) parts.push(`${formatCount(degraded)} degraded`);
-  if (stale > 0) parts.push(`${formatCount(stale)} stale`);
+  if (staleCollectors > 0) parts.push(`${formatCount(staleCollectors)} with stale collectors`);
   if (noCollector > 0) parts.push(`${formatCount(noCollector)} without a collector`);
   if (missing > 0) parts.push(`${formatCount(missing)} missing`);
+  if (nodes > 0) parts.push(`${formatCount(nodes)} Kubernetes node${nodes === 1 ? "" : "s"} via ${nodes === 1 ? "its" : "their"} cluster`);
   if (context > 0) parts.push(`${formatCount(context)} GitHub owner account${context === 1 ? "" : "s"}`);
-  if (retired > 0) parts.push(`${formatCount(retired)} retired`);
+  if (retired > 0) parts.push(`${formatCount(retired)} retired${retiredApart > 0 ? " (listed apart)" : ""}`);
   return parts.join(" · ");
 }
 
@@ -399,6 +423,23 @@ export function itemCount(itemType: string, count: number): string {
 export function itemLabel(itemType: string): string {
   const noun = ITEM_NOUN[itemType]?.[1] ?? itemType.replace(/[_.]+/g, " ");
   return noun.charAt(0).toUpperCase() + noun.slice(1);
+}
+
+// ── Event tables ──────────────────────────────────────────────────────────────────
+
+/**
+ * Optional event columns that no loaded row fills (no actor, no source address, no service):
+ * hidden at first so a table of system events is not a wall of dashes; the column menu brings
+ * them back. Ids are the EventsDataTable column ids.
+ */
+export function emptyOptionalColumns(
+  events: { actor_name?: string | null; k8s_user?: string | null; gh_actor_login?: string | null; src_ip?: string | null; service_name?: string | null }[],
+): string[] {
+  const empty: string[] = [];
+  if (!events.some((e) => e.actor_name || e.k8s_user || e.gh_actor_login)) empty.push("actor");
+  if (!events.some((e) => e.src_ip)) empty.push("src");
+  if (!events.some((e) => e.service_name)) empty.push("service");
+  return empty;
 }
 
 /** Split "4 min ago" into a figure and its unit for KPI display ("4 min" + "ago"). */

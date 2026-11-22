@@ -1,27 +1,17 @@
 "use client";
 
-import { Check, ChevronDown, Lock } from "lucide-react";
-import { startTransition, useActionState, useId, useState } from "react";
+import { Check, Lock } from "lucide-react";
+import { useActionState, useId, useState } from "react";
 
 import { type StateActionResult, updateAlertStateAction } from "@/app/(console)/actions";
 import { Timestamp } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ANALYST_STATUSES, type AnalystStateView } from "@/lib/api/schemas";
-import { analystStatusLabel } from "@/lib/format";
 
 import { StatusMark } from "./marks";
 
@@ -40,60 +30,6 @@ function Outcome({ result, pending }: { result: StateActionResult; pending: bool
 }
 
 /**
- * Quick status change in the header (analysts only; the page does not render it for
- * viewers, the server action re-checks the role and the API enforces it again). One pick
- * records one audited change; `expected_updated_at` turns a concurrent change into a
- * conflict instead of a silent overwrite. Notes are added in the Analyst status card.
- */
-export function StatusPicker({ alertId, state }: { alertId: string; state: AnalystStateView }) {
-  const [result, dispatch, pending] = useActionState(updateAlertStateAction.bind(null, alertId), initial);
-
-  function choose(status: string) {
-    if (status === state.status) return;
-    const form = new FormData();
-    form.set("status", status);
-    form.set("expected_updated_at", state.updated_at ?? "");
-    startTransition(() => dispatch(form));
-  }
-
-  return (
-    <div className="flex flex-col items-start gap-1 lg:items-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="outline"
-            className="h-9 gap-2 px-3"
-            disabled={pending}
-            aria-label={`Analyst status: ${analystStatusLabel(state.status)}. Change the status`}
-          >
-            {pending ? <Spinner className="size-3.5" /> : null}
-            <StatusMark status={state.status} className="text-foreground" />
-            <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-64">
-          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Set the analyst status</DropdownMenuLabel>
-          <DropdownMenuRadioGroup value={state.status} onValueChange={choose}>
-            {ANALYST_STATUSES.map((status) => (
-              <DropdownMenuRadioItem key={status} value={status}>
-                <StatusMark status={status} className="text-foreground" />
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-          <DropdownMenuSeparator />
-          <p className="px-2 py-1.5 text-xs leading-relaxed text-muted-foreground">
-            Each change is recorded in the audit log. Add a note in the Analyst status card.
-          </p>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <span aria-live="polite" className="min-h-4 text-xs">
-        <Outcome result={result} pending={pending} />
-      </span>
-    </div>
-  );
-}
-
-/**
  * The Analyst status card body: current state, and for analysts the status + note form (a
  * real form: it also works as a no-JavaScript post, and the smoke test replays it as the
  * viewer to prove the server action refuses). Viewers see the state read-only.
@@ -101,8 +37,17 @@ export function StatusPicker({ alertId, state }: { alertId: string; state: Analy
 export function StatusForm({ alertId, state, canEdit }: { alertId: string; state: AnalystStateView; canEdit: boolean }) {
   const [result, formAction, pending] = useActionState(updateAlertStateAction.bind(null, alertId), initial);
   const [status, setStatus] = useState<string>(state.status);
+  const [note, setNote] = useState("");
   const statusId = useId();
   const noteId = useId();
+  // Saving records an audited action: only offered once the status or the note changed.
+  const dirty = status !== state.status || note.trim() !== "";
+  // A saved note is in the audit log now: clear the field for the next one.
+  const [seenSave, setSeenSave] = useState(result.savedAt);
+  if (result.savedAt !== seenSave) {
+    setSeenSave(result.savedAt);
+    if (result.ok) setNote("");
+  }
 
   return (
     <div className="grid gap-4">
@@ -175,10 +120,19 @@ export function StatusForm({ alertId, state, canEdit }: { alertId: string; state
             <Label htmlFor={noteId} className="text-xs font-normal text-muted-foreground">
               Note (optional, recorded in the audit log)
             </Label>
-            <Textarea id={noteId} name="note" rows={3} maxLength={2048} placeholder="What did you check?" className="min-h-20 text-sm" />
+            <Textarea
+              id={noteId}
+              name="note"
+              rows={3}
+              maxLength={2048}
+              placeholder="What did you check?"
+              className="min-h-20 text-sm"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" disabled={pending} className="h-8 px-3">
+            <Button type="submit" disabled={pending || !dirty} className="h-8 px-3">
               {pending ? <Spinner className="size-3.5" /> : null}
               {pending ? "Saving" : "Save status"}
             </Button>

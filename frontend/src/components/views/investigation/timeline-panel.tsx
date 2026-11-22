@@ -1,17 +1,18 @@
-import { ArrowUpRight, GitCommitVertical, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, GitCommitVertical } from "lucide-react";
 
 import { SectionCard } from "@/components/console/section-card";
 import { EmptyState, Notice } from "@/components/console/states";
 import { Timeline, type TimelineItem as SharedTimelineItem } from "@/components/console/timeline";
 import { UntrustedText } from "@/components/console/untrusted-text";
-import type { EvidenceEvent, InvestigationContext } from "@/lib/api/schemas";
+import type { InvestigationContext } from "@/lib/api/schemas";
 import { formatCount, formatDuration, formatUtcTime } from "@/lib/format";
 
 import { ActivityStrip } from "./activity-strip";
 import { BurstRows } from "./burst-rows";
 import { TabLink } from "./investigation-tabs";
-import { basisLabel, orderedBases, strengthLabel } from "./labels";
-import { buildTimeline, natSharedCount, offsetLabel, relatedRows, secondsBetween, TIMELINE_LIMITS, type TimelineItem, type TimelineRow } from "./model";
+import { StrengthMeter } from "./correlation-table";
+import { basisLabel, orderedBases } from "./labels";
+import { buildTimeline, offsetLabel, secondsBetween, TIMELINE_LIMITS, type TimelineItem, type TimelineRow } from "./model";
 import { RelationshipHover } from "./relationship";
 
 function EvidenceJump({ eventId, evidenceIds }: { eventId: string; evidenceIds: ReadonlySet<string> }) {
@@ -39,15 +40,18 @@ function relDetail(row: TimelineRow) {
     : null;
 }
 
-/** "Weak · same principal" (strength and the most telling basis), with the explanation on hover. */
+/** Strength as a dot meter, the most telling basis and the offset; the explanation on hover. */
 function LinkSummary({ row }: { row: TimelineRow }) {
   const detail = relDetail(row);
   if (!detail) return null;
   const top = orderedBases(detail.bases)[0];
   return (
-    <RelationshipHover rel={detail}>
-      {strengthLabel(detail.strength)}
-      {top ? ` · ${basisLabel(top)}` : ""} · {offsetLabel(detail.offsetSeconds)}
+    <RelationshipHover rel={detail} className="gap-2 no-underline">
+      <StrengthMeter strength={detail.strength} />
+      <span className="text-muted-foreground underline decoration-fg-faint decoration-dotted underline-offset-4">
+        {top ? `${basisLabel(top)} · ` : ""}
+        <span className="tabular-nums">{offsetLabel(detail.offsetSeconds)}</span>
+      </span>
     </RelationshipHover>
   );
 }
@@ -101,18 +105,20 @@ function toTimelineItem(item: TimelineItem, evidenceIds: ReadonlySet<string>): S
       </>
     ),
     title: (
-      <span className="flex flex-wrap items-baseline gap-x-2">
-        <code className="font-mono text-xs text-foreground">
-          <UntrustedText value={item.eventType} limit={64} />
-        </code>
-        <span className="text-sm text-fg-2">
-          {formatCount(item.rows.length)} observations
-          {span === null ? "" : span < 1 ? " within one second" : ` in ${formatDuration(span)}`}
-        </span>
-      </span>
-    ),
-    description: (
-      <BurstRows count={item.rows.length}>
+      <BurstRows
+        count={item.rows.length}
+        summary={
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            <code className="font-mono text-xs text-foreground">
+              <UntrustedText value={item.eventType} limit={64} />
+            </code>
+            <span className="text-sm text-fg-2 tabular-nums">
+              {formatCount(item.rows.length)} observations
+              {span === null ? "" : span < 1 ? " within one second" : ` in ${formatDuration(span)}`}
+            </span>
+          </span>
+        }
+      >
         {item.rows.map((row) => (
           <li key={row.key} className="flex min-w-0 items-center gap-3 px-3 py-1.5">
             <time dateTime={row.time} className="flex-none font-mono text-xs text-muted-foreground tabular-nums">
@@ -137,21 +143,16 @@ function toTimelineItem(item: TimelineItem, evidenceIds: ReadonlySet<string>): S
  */
 export function TimelinePanel({
   context,
-  evidence,
   evidenceIds,
   firstSeen,
   lastSeen,
 }: {
   context: InvestigationContext;
-  evidence: readonly EvidenceEvent[];
   evidenceIds: ReadonlySet<string>;
   firstSeen: string;
   lastSeen: string;
 }) {
   const model = buildTimeline(context);
-  const related = relatedRows(context);
-  const nat = natSharedCount(related);
-  const natIps = [...new Set(evidence.map((e) => e.src_ip).filter((ip): ip is string => Boolean(ip)))].slice(0, 4);
   const linked = model.totals.direct + model.totals.candidate;
   const hiddenCandidates = model.totals.candidate - model.drawn.candidate;
   const hiddenUnestablished = model.totals.unestablished - model.drawn.unestablished;
@@ -172,25 +173,6 @@ export function TimelinePanel({
         <EmptyState>The investigation context holds no timeline entries.</EmptyState>
       ) : (
         <div className="grid gap-6">
-          {nat > 0 ? (
-            <Notice tone="warn" icon={TriangleAlert}>
-              {formatCount(nat)} related observation{nat === 1 ? " matches" : "s match"} the evidence through a source IP shared by NAT
-              {natIps.length > 0 ? (
-                <>
-                  {" "}
-                  (evidence source IP{natIps.length === 1 ? "" : "s"}{" "}
-                  {natIps.map((ip, i) => (
-                    <span key={ip} className="font-mono">
-                      {i > 0 ? ", " : ""}
-                      <UntrustedText value={ip} limit={45} />
-                    </span>
-                  ))}
-                  )
-                </>
-              ) : null}
-              . Such an address does not identify one origin, so a match on it never establishes a link on its own.
-            </Notice>
-          ) : null}
           <ActivityStrip
             rows={model.rows}
             windowStart={context.window_start}

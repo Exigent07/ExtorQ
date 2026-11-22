@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { SectionCard } from "@/components/console/section-card";
 import { EmptyState, ErrorState, Notice } from "@/components/console/states";
+import { UntrustedText } from "@/components/console/untrusted-text";
 import type { ApiResult } from "@/lib/api/result";
 import type { AssetDetailResponse, AssetServicesResponse, ServiceItem } from "@/lib/api/schemas";
 import { formatCount } from "@/lib/format";
@@ -71,25 +72,32 @@ function NodeWorkloads({ data, detail, now }: { data: AssetServicesResponse; det
   const stale = staleSentence(staleSummary(instances), now);
   const partial = hosted.filter((h) => h.instances_on_asset > h.instances.length);
   const cluster = detail.asset.parent_asset_id && isAssetId(detail.asset.parent_asset_id) ? detail.asset.parent_asset_id : null;
-  const levels: Level[] = [
-    { key: "cluster", label: "Cluster", count: cluster ? 1 : null, description: "Owns the workloads", href: cluster ? assetHref(cluster) : null },
-    { key: "nodes", label: "This node", count: 1, description: "An asset of its own", current: true },
-    { key: "workloads", label: "Workloads with Pods here", count: hosted.length, description: "From the cluster's inventory", href: "#hosted-title" },
-    { key: "pods", label: "Pods on this node", count: pods, description: "Instances of those workloads" },
-    { key: "containers", label: "Containers", count: containers, description: "Inside those Pods" },
-  ];
 
   return (
     <div className="grid gap-6">
-      <KubernetesLevels levels={levels} label="Kubernetes levels of this node" />
       <SectionCard
         title="Workloads running on this node"
         titleId="hosted-title"
         icon={Workflow}
-        description="Workloads belong to the cluster's inventory; the Pods and containers listed are the ones reported on this node."
-        meta={
-          <span className="tabular-nums">
-            {formatCount(hosted.length)} workload{hosted.length === 1 ? "" : "s"} · {formatCount(pods)} Pod{pods === 1 ? "" : "s"}
+        description={
+          <span className="flex flex-wrap items-center gap-x-1.5 tabular-nums">
+            {cluster ? (
+              <Link href={assetHref(cluster)} className="font-mono text-xs text-fg-2 underline-offset-2 hover:text-foreground hover:underline">
+                <UntrustedText value={cluster} plain limit={64} />
+              </Link>
+            ) : null}
+            {cluster ? <span className="text-fg-faint">›</span> : null}
+            <span className="text-fg-2">this node</span>
+            <span className="text-fg-faint">·</span>
+            {formatCount(hosted.length)} workload{hosted.length === 1 ? "" : "s"} · {formatCount(pods)} Pod{pods === 1 ? "" : "s"} ·{" "}
+            {formatCount(containers)} container{containers === 1 ? "" : "s"}
+          </span>
+        }
+        footer={
+          <span className="text-xs leading-relaxed text-muted-foreground">
+            Workloads belong to the cluster&apos;s inventory; the Pods and containers listed are the ones reported on this node. No
+            host service is reported for the node itself: node-level discovery (kubelet, container runtime) is not collected, so its
+            own services are unknown, not absent.
           </span>
         }
         flush
@@ -116,10 +124,6 @@ function NodeWorkloads({ data, detail, now }: { data: AssetServicesResponse; det
           <InstancesDataTable rows={rows} now={now} kubernetes showNode={false} label="Pods and containers on this node" />
         )}
       </SectionCard>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        No host service is reported for this node itself: node-level discovery (kubelet, container runtime) is not
-        collected, so its own services are unknown, not absent.
-      </p>
     </div>
   );
 }
@@ -169,9 +173,10 @@ function ClusterServices({
     },
     {
       key: "pods",
-      label: "Pods",
+      label: "Pods and containers",
       count: pods,
-      description: "In the inventory; listed per workload",
+      description: onlyNode ? "Pods in the inventory; per node with their containers" : "Pods in the inventory; listed per workload",
+      href: onlyNode ? `${assetHref(onlyNode)}?tab=services` : null,
     },
   ];
   const toggle = <RemovedToggle baseHref={baseHref} removed={data.summary.removed} includeRemoved={includeRemoved} />;

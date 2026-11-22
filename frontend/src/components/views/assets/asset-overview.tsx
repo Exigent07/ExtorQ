@@ -4,7 +4,7 @@ import Link from "next/link";
 
 import { Hint } from "@/components/console/hint";
 import { KeyValueList } from "@/components/console/key-values";
-import { KpiCard, SplitBar } from "@/components/console/kpi-card";
+import { KpiCard, KpiFigures, SplitBar } from "@/components/console/kpi-card";
 import { CardLink, SectionCard } from "@/components/console/section-card";
 import { EmptyState } from "@/components/console/states";
 import { StatusDot } from "@/components/console/status-badge";
@@ -13,7 +13,7 @@ import { UntrustedText } from "@/components/console/untrusted-text";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AssetDetailResponse, AssetListItem } from "@/lib/api/schemas";
 import { collectorsSummary } from "@/lib/assets";
-import { DASH, formatCount, formatRelative, formatUtcShort, humanize } from "@/lib/format";
+import { DASH, formatCount, formatRelative, formatUtcShort, keyLabel } from "@/lib/format";
 import { assetHref } from "@/lib/security/ids";
 import { SERVICE_GROUPS, serviceKindLabel } from "@/lib/services";
 
@@ -33,19 +33,9 @@ import {
 
 const RECENT_ALERT_ROWS = 6;
 
-function Figures({ items }: { items: { label: string; value: number; strong?: boolean }[] }) {
-  const shown = items.filter((item) => item.value > 0);
-  if (shown.length === 0) return null;
-  return (
-    <span className="flex flex-wrap gap-x-3 gap-y-1">
-      {shown.map((item) => (
-        <span key={item.label} className="whitespace-nowrap">
-          <span className={cn("tabular-nums", item.strong ? "text-foreground" : "text-fg-2")}>{formatCount(item.value)}</span>{" "}
-          {item.label}
-        </span>
-      ))}
-    </span>
-  );
+/** A split bar only when it shows a proportion (two or more non-zero parts). */
+function proportion(parts: { value: number }[]): boolean {
+  return parts.filter((p) => p.value > 0).length > 1;
 }
 
 /**
@@ -73,7 +63,7 @@ export function AssetKpis({
   const unverified = fs.unverified?.total ?? 0;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <KpiCard
         label="Collectors fresh"
         icon={Activity}
@@ -81,13 +71,15 @@ export function AssetKpis({
         unit={a.collectors_total === 0 ? undefined : `/ ${formatCount(a.collectors_total)}`}
         status={{ tone: health.tone, label: health.label }}
         footer={
-          <SplitBar
-            label={`${fresh} fresh, ${a.collectors_stale} stale`}
-            parts={[
-              { key: "fresh", value: fresh, className: "bg-health-ok" },
-              { key: "stale", value: a.collectors_stale, className: "bg-health-warn" },
-            ]}
-          />
+          a.collectors_stale > 0 && fresh > 0 ? (
+            <SplitBar
+              label={`${fresh} fresh, ${a.collectors_stale} stale`}
+              parts={[
+                { key: "fresh", value: fresh, className: "bg-health-ok" },
+                { key: "stale", value: a.collectors_stale, className: "bg-health-warn" },
+              ]}
+            />
+          ) : undefined
         }
         sub={
           a.collectors_total === 0
@@ -107,10 +99,10 @@ export function AssetKpis({
         sub={
           a.last_event_at ? (
             <>
-              Newest stored event, <span className="font-mono text-fg-2">{formatUtcShort(a.last_event_at)}</span> UTC
+              Newest event <span className="text-fg-2 tabular-nums">{formatUtcShort(a.last_event_at)} UTC</span>
             </>
           ) : a.asset_type === "kubernetes_node" ? (
-            "No event carries the node's own id; Kubernetes events are stored under the cluster."
+            "Its events are stored under the cluster"
           ) : (
             "No event is stored for this asset."
           )
@@ -122,19 +114,19 @@ export function AssetKpis({
         value={formatCount(a.open_alerts)}
         status={a.open_alerts === 0 ? { tone: "ok", label: "None open" } : undefined}
         footer={
-          mix ? (
+          mix && proportion(severityParts(mix)) ? (
             <SplitBar label={partsInWords(severityParts(mix)) || "no open alert"} parts={severityParts(mix)} />
           ) : undefined
         }
         sub={
-          mix ? (
-            <Figures
+          a.open_alerts === 0 ? (
+            "No open alert for this asset."
+          ) : mix ? (
+            <KpiFigures hideZero
               items={severityParts(mix).map((p) => ({ label: p.label, value: p.value, strong: p.key === "critical" || p.key === "high" }))}
             />
-          ) : a.open_alerts > 0 ? (
-            "Open alerts of every age; the severity mix is on the Detections page."
           ) : (
-            "No open alert for this asset."
+            "Severity mix on the Detections page"
           )
         }
         href={alertsHref}
@@ -143,12 +135,12 @@ export function AssetKpis({
         label={fs.lifecycle_available ? "Open findings" : "Observed findings"}
         icon={FileWarning}
         value={formatCount(fs.counts.total)}
-        footer={<SplitBar label={partsInWords(findingParts) || "no finding"} parts={findingParts} />}
+        footer={proportion(findingParts) ? <SplitBar label={partsInWords(findingParts) || "no finding"} parts={findingParts} /> : undefined}
         sub={
           fs.counts.total === 0 && unverified === 0 ? (
             fs.lifecycle_available ? "No open finding." : "No finding observed."
           ) : (
-            <Figures
+            <KpiFigures hideZero
               items={[
                 { label: "critical", value: fs.counts.critical, strong: true },
                 { label: "high", value: fs.counts.high, strong: true },
@@ -266,9 +258,21 @@ function attributeValue(value: unknown): string {
 }
 
 /** The asset's reported attributes (telemetry: plain text, full values on hover). */
-export function AttributesCard({ detail, className }: { detail: AssetDetailResponse; className?: string }) {
-  const entries = Object.entries(detail.asset.attributes ?? {}).slice(0, 16);
+export function AttributesCard({
+  detail,
+  className,
+  columns: columnCount = 3,
+}: {
+  detail: AssetDetailResponse;
+  className?: string;
+  /** 3: full-width card (balanced columns); 1: a rail card. */
+  columns?: 1 | 3;
+}) {
+  const entries = Object.entries(detail.asset.attributes ?? {}).slice(0, 18);
   const total = Object.keys(detail.asset.attributes ?? {}).length;
+  // Column-major, so the list reads top to bottom, then left to right.
+  const perColumn = Math.ceil(entries.length / columnCount);
+  const columns = Array.from({ length: columnCount }, (_, c) => entries.slice(c * perColumn, (c + 1) * perColumn));
   return (
     <SectionCard
       title="Attributes"
@@ -281,23 +285,30 @@ export function AttributesCard({ detail, className }: { detail: AssetDetailRespo
       {entries.length === 0 ? (
         <EmptyState>The collector reported no attributes for this asset.</EmptyState>
       ) : (
-        <KeyValueList
-          rows={entries.map(([key, value]) => {
-            const text = attributeValue(value);
-            const label = humanize(key);
-            return {
-              label: label.charAt(0).toUpperCase() + label.slice(1),
-              value:
-                text === "" ? (
-                  <span className="text-muted-foreground">{DASH}</span>
-                ) : (
-                  <span className="flex justify-end">
-                    <UntrustedText value={text} oneLine mono={typeof value !== "string"} className="max-w-56" />
-                  </span>
-                ),
-            };
-          })}
-        />
+        <div className={cn("grid gap-x-10", columnCount === 3 && "md:grid-cols-3")}>
+          {columns.map((column, c) =>
+            column.length === 0 ? null : (
+              <KeyValueList
+                key={c}
+                className={c > 0 ? "border-t border-hairline-soft md:border-t-0" : undefined}
+                rows={column.map(([key, value]) => {
+                  const text = attributeValue(value);
+                  return {
+                    label: keyLabel(key),
+                    value:
+                      text === "" ? (
+                        <span className="text-muted-foreground">{DASH}</span>
+                      ) : (
+                        <span className="flex min-w-0 justify-end">
+                          <UntrustedText value={text} oneLine className="max-w-56 text-right" />
+                        </span>
+                      ),
+                  };
+                })}
+              />
+            ),
+          )}
+        </div>
       )}
     </SectionCard>
   );

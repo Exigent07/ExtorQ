@@ -6,17 +6,17 @@ import Link from "next/link";
 import { type ReactNode, useMemo } from "react";
 
 import { DataTable, type Facet } from "@/components/console/data-table";
-import { coverageSwatchClass, CoverageBadge } from "@/components/console/status-badge";
+import { coverageSwatchClass } from "@/components/console/status-badge";
 import { RelativeTime } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import type { ServiceItem } from "@/lib/api/schemas";
 import { DASH, formatCount } from "@/lib/format";
 import { serviceHref } from "@/lib/security/ids";
 import { categoryLabel, type CoverageKind, serviceCoverage, serviceKindLabel } from "@/lib/services";
 
-import { EndpointLine } from "./service-badges";
+import { CoverageCell } from "./coverage-cell";
 import { EXPOSURE_RANK, widestExposure } from "./model";
+import { PortsCell } from "./ports-cell";
 
 export type ServicesVariant = "host" | "k8s_workload" | "k8s_service";
 
@@ -46,39 +46,11 @@ const EXPOSURE_LABEL: Record<string, string> = {
   none: "No port observed",
 };
 
-/** Ports of a service: the first endpoint inline, every endpoint in a hover card. */
-function Ports({ service }: { service: ServiceItem }) {
-  const endpoints = service.endpoints;
-  if (endpoints.length === 0) return <span className="text-xs text-muted-foreground">None observed</span>;
-  const first = endpoints[0]!;
-  const line = <EndpointLine endpoint={first} compact />;
-  if (endpoints.length === 1) return <div className="min-w-0">{line}</div>;
+function RemovedChip() {
   return (
-    <div className="flex min-w-0 flex-col items-start gap-1">
-      {line}
-      <HoverCard openDelay={250} closeDelay={80}>
-        <HoverCardTrigger asChild>
-          <button
-            type="button"
-            className="rounded-sm text-xs text-muted-foreground underline decoration-dotted underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
-          >
-            +{formatCount(endpoints.length - 1)} more
-          </button>
-        </HoverCardTrigger>
-        <HoverCardContent align="start" className="w-[min(30rem,calc(100vw-2rem))] p-0">
-          <p className="border-b border-hairline px-3 py-2 text-xs text-muted-foreground">
-            {formatCount(endpoints.length)} listening endpoints · attribution as reported
-          </p>
-          <ul className="max-h-72 divide-y divide-hairline-soft overflow-y-auto">
-            {endpoints.map((endpoint, i) => (
-              <li key={`${endpoint.protocol}-${endpoint.address ?? "*"}-${endpoint.port}-${i}`} className="px-3 py-2">
-                <EndpointLine endpoint={endpoint} compact />
-              </li>
-            ))}
-          </ul>
-        </HoverCardContent>
-      </HoverCard>
-    </div>
+    <span className="inline-flex h-5 flex-none items-center rounded-md px-1.5 text-xs text-muted-foreground ring-1 ring-hairline-strong ring-inset">
+      Removed
+    </span>
   );
 }
 
@@ -94,6 +66,8 @@ function nameColumn(variant: ServicesVariant): ColumnDef<ServiceItem, unknown> {
       const s = row.original;
       const href = serviceHref(s.service_id);
       const product = [s.product, s.version].filter(Boolean).join(" ");
+      // The key repeats the name for most Kubernetes objects ("ns/name"): shown only when it adds.
+      const key = s.service_key !== s.name ? s.service_key : null;
       return (
         <div className={cn("min-w-0", !s.present && "opacity-70")}>
           <div className="flex min-w-0 items-center gap-2">
@@ -109,27 +83,27 @@ function nameColumn(variant: ServicesVariant): ColumnDef<ServiceItem, unknown> {
                 <UntrustedText value={s.name} plain limit={120} />
               </span>
             )}
-            {!s.present ? (
-              <span className="inline-flex h-5 flex-none items-center rounded-md px-1.5 text-xs text-muted-foreground ring-1 ring-hairline-strong ring-inset">
-                Removed
-              </span>
-            ) : null}
+            {!s.present ? <RemovedChip /> : null}
           </div>
-          <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-            <span className="min-w-0 truncate font-mono">
-              <UntrustedText value={s.service_key} oneLine mono />
-            </span>
-            {product ? (
-              <>
+          {key || product ? (
+            <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              {key ? (
+                <span className="min-w-0 truncate font-mono">
+                  <UntrustedText value={key} oneLine mono />
+                </span>
+              ) : null}
+              {key && product ? (
                 <span aria-hidden="true" className="text-fg-faint">
                   ·
                 </span>
-                <span className="max-w-[45%] flex-none truncate">
+              ) : null}
+              {product ? (
+                <span className={cn("truncate", key ? "max-w-[45%] flex-none" : "min-w-0")}>
                   <UntrustedText value={product} plain limit={64} />
                 </span>
-              </>
-            ) : null}
-          </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       );
     },
@@ -157,40 +131,21 @@ const categoryColumn: ColumnDef<ServiceItem, unknown> = {
     ),
 };
 
-function coverageColumn(variant: ServicesVariant): ColumnDef<ServiceItem, unknown> {
-  return {
+const coverageColumn: ColumnDef<ServiceItem, unknown> = {
   id: "coverage",
   header: "Coverage",
   accessorFn: (s) => serviceCoverage(s).kind,
   sortingFn: (a, b) => COVERAGE_ORDER[serviceCoverage(a.original).kind] - COVERAGE_ORDER[serviceCoverage(b.original).kind],
-  meta: { label: "Coverage" },
-  cell: ({ row }) => {
-    const s = row.original;
-    const kind = serviceCoverage(s).kind;
-    // The collector's note explains a gap (and what a Kubernetes Service is); for monitored and
-    // unsupported host services the state says it all.
-    const showNote =
-      s.coverage_note && (kind === "degraded" || kind === "unmonitored" || kind === "planned" || variant === "k8s_service");
-    return (
-      <div className="flex max-w-60 min-w-0 flex-col items-start gap-1">
-        <CoverageBadge service={s} className="text-xs" />
-        {showNote ? (
-          <span className="block w-full min-w-0 text-xs text-muted-foreground">
-            <UntrustedText value={s.coverage_note} oneLine />
-          </span>
-        ) : null}
-      </div>
-    );
-  },
-  };
-}
+  meta: { className: "w-36", label: "Coverage" },
+  cell: ({ row }) => <CoverageCell service={row.original} />,
+};
 
 const portsColumn: ColumnDef<ServiceItem, unknown> = {
   id: "ports",
   header: "Ports",
   accessorFn: (s) => s.endpoints.length,
-  meta: { className: "hidden md:table-cell", label: "Ports" },
-  cell: ({ row }) => <Ports service={row.original} />,
+  meta: { className: "hidden w-56 min-w-56 md:table-cell", label: "Ports" },
+  cell: ({ row }) => <PortsCell endpoints={row.original.endpoints} />,
 };
 
 /** Hidden column: the widest exposure of the service's endpoints (facet only). */
@@ -228,32 +183,40 @@ function instancesColumn(variant: ServicesVariant): ColumnDef<ServiceItem, unkno
   };
 }
 
+/**
+ * Telemetry sources of the service and, when the collector reported it, the time of its latest
+ * telemetry. No source at all is said in words; an unreported time is left out, not guessed.
+ */
 function telemetryColumn(now: string): ColumnDef<ServiceItem, unknown> {
   return {
     id: "telemetry",
-    header: "Last telemetry",
-    accessorFn: (s) => (s.last_telemetry_at ? Date.parse(s.last_telemetry_at) : -1),
-    meta: { align: "right", className: "hidden w-32 sm:table-cell", label: "Last telemetry" },
+    header: "Telemetry",
+    accessorFn: (s) => (s.last_telemetry_at ? Date.parse(s.last_telemetry_at) : s.telemetry_sources.length > 0 ? 0 : -1),
+    meta: { align: "right", className: "hidden w-32 sm:table-cell", label: "Telemetry" },
     cell: ({ row }) => {
       const s = row.original;
+      const sources = s.telemetry_sources.length;
+      if (sources === 0 && !s.last_telemetry_at) return <span className="text-xs whitespace-nowrap text-muted-foreground">No sources</span>;
       return (
         <div className="text-right">
-          <RelativeTime value={s.last_telemetry_at} now={now} className="text-xs" />
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {s.telemetry_sources.length === 0
-              ? "no sources"
-              : `${formatCount(s.telemetry_sources.length)} source${s.telemetry_sources.length === 1 ? "" : "s"}`}
-          </div>
+          <span className="text-xs whitespace-nowrap text-fg-2">
+            {formatCount(sources)} source{sources === 1 ? "" : "s"}
+          </span>
+          {s.last_telemetry_at ? (
+            <div className="mt-0.5 text-xs whitespace-nowrap text-muted-foreground">
+              last <RelativeTime value={s.last_telemetry_at} now={now} className="text-muted-foreground" />
+            </div>
+          ) : null}
         </div>
       );
     },
   };
 }
 
-function columnsFor(variant: ServicesVariant, now: string): ColumnDef<ServiceItem, unknown>[] {
+function columnsFor(variant: ServicesVariant, now: string, showKind: boolean): ColumnDef<ServiceItem, unknown>[] {
   const cols: ColumnDef<ServiceItem, unknown>[] = [nameColumn(variant)];
-  if (variant === "host") cols.push(kindColumn);
-  cols.push(categoryColumn, coverageColumn(variant));
+  if (showKind) cols.push(kindColumn);
+  cols.push(categoryColumn, coverageColumn);
   if (variant !== "k8s_workload") cols.push(portsColumn);
   if (variant !== "k8s_service") cols.push(instancesColumn(variant));
   cols.push(telemetryColumn(now), exposureColumn, reportColumn);
@@ -263,8 +226,10 @@ function columnsFor(variant: ServicesVariant, now: string): ColumnDef<ServiceIte
 /**
  * Services of one level of an asset as a data table: coverage, kind, category, exposure and
  * discovery-report facets (counts from these rows), search over name, key and product, sort on
- * every column, row click opening the service. Coverage carries the API's reasons in its hint;
- * an "unknown" port attribution is printed as such.
+ * every column, row click opening the service. Coverage carries its meaning, the API's reasons
+ * and the collector's note in a hover card; ports show exposure and owner attribution as
+ * reported ("Owner unknown" is never shown as an owner). The kind column appears only when the
+ * rows mix kinds.
  */
 export function ServicesDataTable({
   services,
@@ -279,7 +244,9 @@ export function ServicesDataTable({
   label: string;
   toolbar?: ReactNode;
 }) {
-  const cols = useMemo(() => columnsFor(variant, now), [variant, now]);
+  const serviceKinds = useMemo(() => [...new Set(services.map((s) => s.service_kind))], [services]);
+  const showKind = variant === "host" && serviceKinds.length > 1;
+  const cols = useMemo(() => columnsFor(variant, now, showKind), [variant, now, showKind]);
   const facets = useMemo<Facet[]>(() => {
     const kinds = new Set(services.map((s) => serviceCoverage(s).kind));
     const list: Facet[] = [
@@ -296,8 +263,7 @@ export function ServicesDataTable({
           })),
       },
     ];
-    const serviceKinds = [...new Set(services.map((s) => s.service_kind))];
-    if (variant === "host" && serviceKinds.length > 1) {
+    if (showKind) {
       list.push({ columnId: "kind", title: "Kind", options: serviceKinds.map((k) => ({ value: k, label: serviceKindLabel(k) })) });
     }
     const categories = [...new Set(services.map((s) => s.category))].sort((a, b) => categoryLabel(a).localeCompare(categoryLabel(b)));
@@ -323,7 +289,7 @@ export function ServicesDataTable({
       });
     }
     return list;
-  }, [services, variant]);
+  }, [services, variant, showKind, serviceKinds]);
 
   return (
     <DataTable

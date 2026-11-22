@@ -8,7 +8,7 @@ import { RelativeTime } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AlertListItem } from "@/lib/api/schemas";
-import { analystStatusLabel, formatCount, isClosedStatus } from "@/lib/format";
+import { analystStatusLabel, isClosedStatus } from "@/lib/format";
 import { investigationHref } from "@/lib/security/ids";
 
 const STATUS_DOT: Record<string, string> = {
@@ -57,10 +57,10 @@ export function AlertList({
     <Table aria-label={label}>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-24">Severity</TableHead>
-          <TableHead>Alert</TableHead>
+          <TableHead className="hidden w-24 sm:table-cell">Severity</TableHead>
+          <TableHead className="max-sm:pl-(--table-edge)">Alert</TableHead>
           <TableHead className="hidden w-32 md:table-cell">State</TableHead>
-          <TableHead className="w-24 text-right">Last seen</TableHead>
+          <TableHead className="hidden w-24 text-right sm:table-cell">Last seen</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -68,10 +68,15 @@ export function AlertList({
           const href = investigationHref(alert.alert_id);
           return (
             <TableRow key={alert.alert_id}>
-              <TableCell className="align-top">
+              <TableCell className="hidden align-top sm:table-cell">
                 <SeverityBadge severity={alert.severity} />
               </TableCell>
-              <TableCell className="max-w-0 min-w-56 whitespace-normal">
+              <TableCell className="max-w-0 min-w-56 whitespace-normal max-sm:min-w-0 max-sm:pl-(--table-edge) max-sm:pr-(--table-edge)">
+                {/* Phones: severity and recency move into the cell (their columns are hidden). */}
+                <div className="mb-1.5 flex items-center gap-2 sm:hidden">
+                  <SeverityBadge severity={alert.severity} />
+                  <RelativeTime value={alert.last_seen} now={now} className="text-xs" />
+                </div>
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="flex-none font-mono text-xs text-muted-foreground">{alert.rule_id}</span>
                   {href ? (
@@ -101,7 +106,7 @@ export function AlertList({
               <TableCell className="hidden align-top text-xs md:table-cell">
                 <AnalystState status={alert.analyst_status} recorded={alert.analyst_state_recorded} />
               </TableCell>
-              <TableCell className="align-top text-right">
+              <TableCell className="hidden align-top text-right sm:table-cell">
                 <RelativeTime value={alert.last_seen} now={now} className="text-xs" />
               </TableCell>
             </TableRow>
@@ -112,8 +117,3 @@ export function AlertList({
   );
 }
 
-/** "Showing 8 of 20" footer text for a capped alert list (null when nothing is cut). */
-export function alertListCap(shown: number, total: number, window: string): string | null {
-  if (total <= shown) return null;
-  return `Showing ${formatCount(shown)} of ${formatCount(total)} ${window}`;
-}

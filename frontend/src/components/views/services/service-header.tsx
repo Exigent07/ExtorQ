@@ -12,7 +12,7 @@ import { assetHref, isAssetId } from "@/lib/security/ids";
 import { categoryLabel, discoveryLabel, serviceCoverage, serviceKindLabel } from "@/lib/services";
 
 import { AssetIconTile } from "../assets/asset-icon";
-import { lastTelemetry } from "./model";
+import { instanceHeadline, lastTelemetry } from "./model";
 import { ReportStaleTag, ServiceCoveragePill } from "./service-badges";
 
 const KIND_ICON: Record<string, LucideIcon> = {
@@ -44,10 +44,20 @@ function Fact({ label, children, className }: { label: string; children: ReactNo
   return (
     <div className={cn("min-w-0", className)}>
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 min-w-0 truncate text-sm text-fg-2">{children}</dd>
+      <dd className="mt-1 line-clamp-2 min-w-0 text-sm break-words text-fg-2">{children}</dd>
     </div>
   );
 }
+
+/** True when the collector note only repeats the coverage sentence (every word already in it). */
+function noteRepeats(note: string, sentence: string): boolean {
+  const words = (text: string) => text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const have = new Set(words(sentence));
+  const noteWords = words(note);
+  return noteWords.length > 0 && noteWords.every((w) => have.has(w));
+}
+
+const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"] as const;
 
 function Figure({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
@@ -106,10 +116,25 @@ export function ServiceHeaderCard({ data, now }: { data: ServiceDetailResponse; 
   const badge = serviceCoverage(s);
   const assetName = data.asset ? (data.asset.display_name ?? data.asset.name) : s.asset_id;
   const assetType = data.asset?.asset_type ?? "";
-  const openAlerts = data.alerts.filter((a) => !isClosedStatus(a.analyst_status)).length;
+  const open = data.alerts.filter((a) => !isClosedStatus(a.analyst_status));
+  const openAlerts = open.length;
+  const alertMix = SEVERITY_ORDER.map((sev) => [sev, open.filter((a) => a.severity === sev).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([sev, n]) => `${formatCount(n)} ${sev}`)
+    .join(" · ");
+  const exposedAny = s.endpoints.filter((e) => e.exposure === "any").length;
   const confirmed = s.endpoints.filter((e) => e.attribution === "confirmed").length;
+  // Coverage says "monitored" from the adapter and collector state; a declared source with no
+  // collector health is said next to it, so the word never claims more than the data shows.
+  const declared = data.telemetry.filter((t) => t.declared);
+  const unhealthDeclared = declared.filter((t) => t.collection === "no_collector_health").length;
+  const staleDeclared = declared.filter((t) => t.collection === "stale").length;
+  const last = lastTelemetry(data);
+  const quietSeconds = last ? (Date.parse(now) - Date.parse(last)) / 1000 : null;
+  const collectorsFresh = declared.length > 0 && declared.every((t) => t.collection === "fresh");
   const product = [s.product, s.version].filter(Boolean).join(" ");
   const logical = s.service_kind === "k8s_service";
+  const headline = instanceHeadline(data.instances, data.instances_total);
 
   return (
     <section aria-label="Service identity and coverage" className="mb-6 rounded-xl bg-card shadow-card ring-1 ring-hairline">
@@ -121,7 +146,7 @@ export function ServiceHeaderCard({ data, now }: { data: ServiceDetailResponse; 
               className="flex min-w-0 items-center gap-2 text-fg-2 underline-offset-2 transition-colors duration-150 hover:text-foreground hover:underline"
             >
               {assetType ? <AssetIconTile assetType={assetType} size="sm" className="size-5 rounded-md" /> : null}
-              <span className="min-w-0 truncate">
+              <span className="line-clamp-2 min-w-0">
                 <UntrustedText value={assetName} plain limit={64} />
               </span>
             </Link>
@@ -134,24 +159,34 @@ export function ServiceHeaderCard({ data, now }: { data: ServiceDetailResponse; 
           {s.category === "unknown" ? <span className="text-muted-foreground">Unknown</span> : categoryLabel(s.category)}
         </Fact>
         <Fact label="Product and version">
-          {product ? <UntrustedText value={product} oneLine /> : <span className="text-muted-foreground">Not observed</span>}
+          {product ? <UntrustedText value={product} limit={80} /> : <span className="text-muted-foreground">Not observed</span>}
         </Fact>
         <Fact label="Adapter">
           {s.adapter_id ? (
-            <span className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate font-mono text-xs text-foreground">
-                <UntrustedText value={s.adapter_id} plain limit={48} />
-              </span>
-              <span className="flex-none text-xs text-muted-foreground">
+            <span className="min-w-0">
+              <span className="font-mono text-xs break-all text-foreground">
+                <UntrustedText value={s.adapter_id} limit={64} mono />
+              </span>{" "}
+              <span className="text-xs whitespace-nowrap text-muted-foreground">
                 · <UntrustedText value={s.adapter_support} plain limit={24} />
               </span>
             </span>
+          ) : s.adapter_support === "none" ? (
+            <span className="text-muted-foreground">No adapter for this type</span>
+          ) : s.adapter_support === "planned" ? (
+            <span className="text-muted-foreground">Planned, not built yet</span>
           ) : (
-            <span className="text-muted-foreground">None ({s.adapter_support})</span>
+            <span className="text-muted-foreground">
+              None · <UntrustedText value={s.adapter_support} plain limit={24} />
+            </span>
           )}
         </Fact>
         <Fact label="Discovered via">
-          {s.discovered_via.length > 0 ? s.discovered_via.map(discoveryLabel).join(", ") : <span className="text-muted-foreground">{DASH}</span>}
+          {s.discovered_via.length > 0 ? (
+            <UntrustedText value={s.discovered_via.map(discoveryLabel).join(", ")} limit={120} />
+          ) : (
+            <span className="text-muted-foreground">{DASH}</span>
+          )}
         </Fact>
         <Fact label="Configuration">
           <ConfigRefs refs={s.config_refs} />
@@ -179,7 +214,15 @@ export function ServiceHeaderCard({ data, now }: { data: ServiceDetailResponse; 
         </span>
         <div className="min-w-0 text-sm leading-relaxed text-fg-2">
           {badge.detail}
-          {s.coverage_note ? (
+          {unhealthDeclared > 0 || staleDeclared > 0 ? (
+            <span className="mt-1 flex items-center gap-1.5 text-xs text-health-warn">
+              <span aria-hidden="true" className="size-1.5 flex-none rounded-full bg-health-warn" />
+              {unhealthDeclared > 0
+                ? `${formatCount(unhealthDeclared)} of ${formatCount(declared.length)} declared source${declared.length === 1 ? "" : "s"} ${unhealthDeclared === 1 ? "has" : "have"} no collector health, so ${unhealthDeclared === 1 ? "its" : "their"} freshness is unknown.`
+                : `${formatCount(staleDeclared)} of ${formatCount(declared.length)} declared source${declared.length === 1 ? " is" : "s are"} stale.`}
+            </span>
+          ) : null}
+          {s.coverage_note && !noteRepeats(s.coverage_note, badge.detail) ? (
             <span className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs text-muted-foreground">
               <span className="flex-none">Collector note:</span>
               <span className="min-w-0">
@@ -192,29 +235,63 @@ export function ServiceHeaderCard({ data, now }: { data: ServiceDetailResponse; 
 
       <dl className="grid grid-cols-2 border-t border-hairline-soft sm:flex">
         <Figure
-          label="Instances"
-          value={logical && data.instances_total === 0 ? <span className="text-muted-foreground">{DASH}</span> : formatCount(data.instances_total)}
-          sub={logical ? "logical object, no instances" : "currently observed"}
+          label={headline.label}
+          value={logical && data.instances_total === 0 ? <span className="text-muted-foreground">{DASH}</span> : formatCount(headline.value)}
+          sub={
+            logical && data.instances_total === 0
+              ? "logical object, no instances"
+              : data.instances.length === 0
+                ? "none currently observed"
+                : headline.sub || undefined
+          }
         />
-        <Figure label="Ports" value={formatCount(s.endpoints.length)} sub={`${formatCount(confirmed)} with a confirmed owner`} />
         <Figure
-          label="Last telemetry"
-          value={<RelativeTime value={lastTelemetry(data)} now={now} className="text-foreground" />}
-          sub="newest attributed event or report"
+          label="Ports"
+          value={formatCount(s.endpoints.length)}
+          sub={
+            s.endpoints.length === 0
+              ? undefined
+              : exposedAny > 0
+                ? `${formatCount(exposedAny)} on all interfaces`
+                : `${formatCount(confirmed)} with a confirmed owner`
+          }
+        />
+        <Figure
+          label="Last service event"
+          value={<RelativeTime value={last} now={now} className="text-foreground" />}
+          sub={
+            last === null
+              ? "nothing attributed yet"
+              : collectorsFresh && quietSeconds !== null && quietSeconds > 3600
+                ? "collectors fresh · service quiet"
+                : "newest attributed event or report"
+          }
         />
         <Figure
           label="Alerts"
           value={formatCount(data.alerts_total)}
           sub={
-            data.alerts.length < data.alerts_total
-              ? `${formatCount(openAlerts)} open among the ${formatCount(data.alerts.length)} listed`
-              : `${formatCount(openAlerts)} open`
+            data.alerts_total === 0
+              ? undefined
+              : data.alerts.length < data.alerts_total
+                ? `${formatCount(openAlerts)} open among the ${formatCount(data.alerts.length)} listed`
+                : openAlerts === 0
+                  ? "none open"
+                  : alertMix
+                    ? `open: ${alertMix}`
+                    : `${formatCount(openAlerts)} open`
           }
         />
         <Figure
           label="Findings"
           value={formatCount(data.findings_total)}
-          sub={data.findings_lifecycle_available ? "attributed to this service" : "observed, lifecycle unavailable"}
+          sub={
+            data.findings_total === 0
+              ? undefined
+              : data.findings_lifecycle_available
+                ? "attributed to this service"
+                : "observed, lifecycle unavailable"
+          }
         />
       </dl>
     </section>

@@ -129,7 +129,7 @@
   --xq-cov-degraded: var(--xq-warn);
   --xq-cov-unmonitored: oklch(0.75 0.183 55.934);
   --xq-cov-planned: oklch(0.552 0.016 285.938);
-  --xq-cov-unsupported: oklch(0.37 0.013 285.805);
+  --xq-cov-unsupported: oklch(0.442 0.017 285.786); /* zinc-600: visible against cards, not a track */
 
   /* Charts */
   --xq-grid: rgb(255 255 255 / 0.06);
@@ -335,9 +335,12 @@
 }
 
 @layer components {
-  /* Evidence rows targeted from an AI statement chip or the timeline. */
+  /* Jump targets: evidence rows reached from an AI statement chip or the timeline, and any
+     DataTable row with an anchor id. */
   .evidence-row:target,
-  .evidence-row:focus-visible {
+  .evidence-row:focus-visible,
+  .anchor-row:target,
+  .anchor-row:focus-visible {
     background: var(--xq-raised);
     box-shadow: inset 2px 0 0 var(--xq-brand);
     outline: none;

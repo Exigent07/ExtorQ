@@ -195,8 +195,40 @@ export function collectionKpi(summary: CollectionHealthSummary): CollectionKpi {
 
 // ── Page finding ────────────────────────────────────────────────────────────────
 
+const CLASS_PLURAL: Record<string, string> = {
+  macos_host: "macOS hosts",
+  linux_host: "Linux VMs",
+  kubernetes_cluster: "Kubernetes clusters",
+  github_repository: "GitHub repositories",
+};
+
+/**
+ * The cause of an unhealthy class in words: "2 stale GitHub repositories" when every asset of
+ * the class that is not healthy is lifecycle-stale (not observed recently, the Assets page's
+ * word), otherwise the class's coverage verdict.
+ */
+function classCause(
+  coverage: AssetClassCoverage,
+  assets: readonly Pick<AssetListItem, "asset_type" | "coverage_status" | "lifecycle_state">[] | null,
+): string {
+  const label = assetTypeLabel(coverage.asset_type);
+  if (assets) {
+    const notOk = assets.filter(
+      (a) => a.asset_type === coverage.asset_type && a.lifecycle_state !== "retired" && a.coverage_status !== "ok",
+    );
+    if (notOk.length > 0 && notOk.every((a) => a.lifecycle_state === "stale")) {
+      const many = CLASS_PLURAL[coverage.asset_type] ?? `${label} assets`;
+      return `${formatCount(notOk.length)} stale ${notOk.length === 1 ? label : many}`;
+    }
+  }
+  return `${label} coverage ${coverage.status}`;
+}
+
 /** One line computed from the data: what most needs attention right now. */
-export function overviewFinding(data: Pick<OverviewResponse, "open_alerts" | "asset_coverage">): string {
+export function overviewFinding(
+  data: Pick<OverviewResponse, "open_alerts" | "asset_coverage">,
+  assets: readonly Pick<AssetListItem, "asset_type" | "coverage_status" | "lifecycle_state">[] | null = null,
+): string {
   const parts: string[] = [];
   const open = data.open_alerts;
   const serious = open.critical + open.high;
@@ -208,11 +240,14 @@ export function overviewFinding(data: Pick<OverviewResponse, "open_alerts" | "as
   const unhealthy = data.asset_coverage.filter((c) => c.expected && c.status !== "ok");
   if (unhealthy.length === 0 && data.asset_coverage.length > 0) parts.push("all monitored classes reporting");
   else if (unhealthy.length > 0) {
-    const names = unhealthy.slice(0, 2).map((c) => assetTypeLabel(c.asset_type));
-    const more = unhealthy.length > 2 ? ` and ${unhealthy.length - 2} more` : "";
-    const statuses = new Set(unhealthy.map((c) => c.status));
-    const word = statuses.size === 1 ? [...statuses][0] : "not healthy";
-    parts.push(`${names.join(" and ")}${more} coverage ${word}`);
+    const causes = unhealthy.map((c) => classCause(c, assets));
+    if (causes.every((c) => c.endsWith(" coverage degraded")) && causes.length > 1) {
+      const names = unhealthy.slice(0, 2).map((c) => assetTypeLabel(c.asset_type));
+      const more = unhealthy.length > 2 ? ` and ${unhealthy.length - 2} more` : "";
+      parts.push(`${names.join(" and ")}${more} coverage degraded`);
+    } else {
+      parts.push(causes.slice(0, 2).join(" · ") + (causes.length > 2 ? ` · ${causes.length - 2} more classes` : ""));
+    }
   }
   return parts.join(" · ");
 }

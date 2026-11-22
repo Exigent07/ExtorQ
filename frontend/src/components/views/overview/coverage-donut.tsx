@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Cell, Pie, PieChart } from "recharts";
 
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
@@ -25,7 +26,7 @@ export function CoverageDonut({
   label,
 }: {
   parts: DonutPart[];
-  centerValue: string;
+  centerValue: ReactNode;
   centerLabel: string;
   /** Accessible summary of the parts. */
   label: string;
@@ -71,7 +72,7 @@ export function CoverageDonut({
         </PieChart>
       </ChartContainer>
       <figcaption className="absolute inset-[26px] flex flex-col items-center justify-center rounded-full text-center">
-        <span className="text-2xl leading-none font-semibold tracking-tight text-foreground tabular-nums">{centerValue}</span>
+        <span className="text-xl leading-none font-semibold tracking-tight text-foreground tabular-nums">{centerValue}</span>
         <span className="mt-1 max-w-[96px] text-xs leading-tight text-muted-foreground">{centerLabel}</span>
       </figcaption>
     </figure>

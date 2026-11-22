@@ -89,32 +89,3 @@ export function PanelSkeleton({ rows = 4, className, tall = false }: { rows?: nu
   );
 }
 
-/** Page-level skeleton: the title row, an optional KPI strip and a set of cards. */
-export function PageSkeleton({
-  label,
-  strip = false,
-  panels = 2,
-  columns = 1,
-}: {
-  label: string;
-  strip?: boolean;
-  panels?: number;
-  columns?: 1 | 2 | 3;
-}) {
-  return (
-    <div role="status" aria-live="polite" aria-busy="true">
-      <span className="sr-only">Loading {label}</span>
-      <HeaderSkeleton />
-      {strip ? (
-        <div className="mb-6">
-          <KpiRowSkeleton />
-        </div>
-      ) : null}
-      <div className={cn("grid gap-6", columns === 2 && "xl:grid-cols-2", columns === 3 && "xl:grid-cols-3")}>
-        {Array.from({ length: panels }, (_, i) => (
-          <PanelSkeleton key={i} rows={i === 0 ? 6 : 4} />
-        ))}
-      </div>
-    </div>
-  );
-}

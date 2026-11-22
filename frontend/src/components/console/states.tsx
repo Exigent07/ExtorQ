@@ -1,5 +1,6 @@
 import { cn } from "cn";
-import { CircleAlert, type LucideIcon } from "lucide-react";
+import { ArrowLeft, CircleAlert, type LucideIcon, SearchX } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -79,6 +80,45 @@ export function ErrorState({
         </AlertAction>
       ) : null}
     </Alert>
+  );
+}
+
+/**
+ * A missing object (the API answered 404, or the address holds no valid id): a calm empty
+ * state with one sentence and a way back, never a red failure. Errors (5xx, timeouts) keep
+ * using ErrorState.
+ */
+export function NotFoundState({
+  children,
+  backHref,
+  backLabel,
+  requestId,
+}: {
+  children: ReactNode;
+  backHref: string;
+  backLabel: string;
+  /** The API's request id of the 404, for support (omitted for invalid addresses). */
+  requestId?: string | null;
+}) {
+  return (
+    <div className="mt-6 flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-hairline-strong px-6 py-14 text-center">
+      <span className="flex size-10 items-center justify-center rounded-lg bg-white/[0.04] text-fg-2 ring-1 ring-hairline ring-inset">
+        <SearchX className="size-5" strokeWidth={1.75} aria-hidden="true" />
+      </span>
+      <p className="max-w-[60ch] text-sm leading-relaxed text-fg-2">{children}</p>
+      {requestId && requestId !== "-" ? (
+        <p className="text-xs text-muted-foreground">
+          Not found · request <span className="font-mono">{requestId.slice(0, 8)}</span>
+        </p>
+      ) : null}
+      <Link
+        href={backHref}
+        className="mt-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm text-foreground ring-1 ring-hairline-strong ring-inset transition-colors duration-150 hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
+      >
+        <ArrowLeft className="size-3.5" aria-hidden="true" />
+        {backLabel}
+      </Link>
+    </div>
   );
 }
 

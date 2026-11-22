@@ -6,7 +6,7 @@ import { ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { type ReactElement, useMemo } from "react";
 
-import { DataTable, type Facet } from "@/components/console/data-table";
+import { clickRowOpener, DataTable, type Facet } from "@/components/console/data-table";
 import { DetailSection, DetailSheet, RawBlock } from "@/components/console/detail-sheet";
 import { Hint } from "@/components/console/hint";
 import { KeyValueList } from "@/components/console/key-values";
@@ -14,7 +14,7 @@ import { SEVERITY_LABEL, SEVERITY_ORDER, SeverityBadge, SeverityDot } from "@/co
 import { RelativeTime, Timestamp } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import type { FindingItem } from "@/lib/api/schemas";
-import { FINDING_STATE } from "@/lib/findings";
+import { advisoryKey, displayFindingTitle, FINDING_STATE, scannersByAdvisory } from "@/lib/findings";
 import { DASH, humanize } from "@/lib/format";
 import { serviceHref } from "@/lib/security/ids";
 
@@ -174,7 +174,11 @@ function FindingSheet({
   );
 }
 
-function columns(now: string, serviceNames: Record<string, string>): ColumnDef<FindingItem, unknown>[] {
+function columns(
+  now: string,
+  serviceNames: Record<string, string>,
+  multiScanner: Map<string, string[]>,
+): ColumnDef<FindingItem, unknown>[] {
   return [
     {
       id: "severity",
@@ -200,15 +204,27 @@ function columns(now: string, serviceNames: Record<string, string>): ColumnDef<F
             <FindingSheet finding={f} now={now} serviceName={f.service_id ? serviceNames[f.service_id] : undefined}>
               <button
                 type="button"
+                data-row-open=""
                 className="block w-full min-w-0 truncate rounded-sm text-left font-medium text-foreground underline-offset-2 outline-none hover:text-brand hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
               >
-                <UntrustedText value={f.title} oneLine plain />
+                <UntrustedText value={displayFindingTitle(f.title)} oneLine plain />
               </button>
             </FindingSheet>
             <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               <span className="max-w-[45%] min-w-0 flex-none truncate font-mono">
                 <UntrustedText value={f.check_id} oneLine plain mono />
               </span>
+              {(() => {
+                const key = advisoryKey(f);
+                const scanners = key ? multiScanner.get(key) : undefined;
+                return scanners ? (
+                  <Hint content={`The same advisory and package are reported by ${scanners.length} scanners as separate findings; the Scanner filter tells them apart.`}>
+                    <span className="inline-flex h-5 flex-none items-center rounded-md px-1.5 text-xs text-fg-2 ring-1 ring-hairline-strong ring-inset">
+                      {scanners.length} scanners
+                    </span>
+                  </Hint>
+                ) : null;
+              })()}
               {resource ? (
                 <>
                   <span aria-hidden="true" className="text-fg-faint">
@@ -283,15 +299,18 @@ export function FindingsDataTable({
   serviceNames?: Record<string, string>;
   label?: string;
 }) {
-  const cols = useMemo(() => columns(now, serviceNames), [now, serviceNames]);
+  const multiScanner = useMemo(() => scannersByAdvisory(findings), [findings]);
+  const cols = useMemo(() => columns(now, serviceNames, multiScanner), [now, serviceNames, multiScanner]);
   const facets = useMemo<Facet[]>(() => {
     const present = (values: string[]) => [...new Set(values)];
     const severities = present(findings.map((f) => f.severity));
     const states = present(findings.map(stateKey));
     const categories = present(findings.map((f) => f.category)).sort();
     const scanners = present(findings.map((f) => f.scanner)).sort();
-    const list: Facet[] = [
-      {
+    // A facet only where the rows differ: one value to choose from filters nothing.
+    const list: Facet[] = [];
+    if (severities.length > 1) {
+      list.push({
         columnId: "severity",
         title: "Severity",
         options: SEVERITY_ORDER.filter((s) => severities.includes(s)).map((s) => ({
@@ -299,15 +318,17 @@ export function FindingsDataTable({
           label: SEVERITY_LABEL[s],
           icon: <SeverityDot severity={s} />,
         })),
-      },
-      {
+      });
+    }
+    if (states.length > 1) {
+      list.push({
         columnId: "state",
         title: "State",
         options: ["open", "unverified", "resolved", "unavailable"]
           .filter((s) => states.includes(s))
           .map((s) => ({ value: s, label: FINDING_STATE[s]?.label ?? "Lifecycle unavailable" })),
-      },
-    ];
+      });
+    }
     if (categories.length > 1) {
       list.push({ columnId: "category", title: "Category", options: categories.map((c) => ({ value: c, label: humanize(c) })) });
     }
@@ -324,6 +345,7 @@ export function FindingsDataTable({
       facets={facets}
       search={{ placeholder: "Search findings", columnIds: ["title"] }}
       pageSize={25}
+      onRowClick={clickRowOpener}
       emptyMessage="No finding matches the current filters."
     />
   );

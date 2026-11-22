@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   type AnalystStatus,
+  type Severity,
   zAlertDetailResponse,
   zAlertListResponse,
   zAlertStateResponse,
@@ -21,8 +22,8 @@ import {
   zTimeSeriesResponse,
 } from "@/lib/api/schemas";
 import type { Session } from "@/lib/auth/token";
-import { ALERT_PAGE_SIZE, type AlertFilters, rangeBounds } from "@/lib/filters";
-import { isAssetId, isHexId } from "@/lib/security/ids";
+import { ALERTS_PER_REQUEST, rangeBounds, type TimeRangeKey } from "@/lib/filters";
+import { isAssetId, isHexId, isRuleId } from "@/lib/security/ids";
 
 import { apiRequest, type ApiResult } from "./api-client";
 import { summaryTimeoutMs } from "./config";
@@ -104,21 +105,39 @@ export function listRules(session: Session) {
   });
 }
 
-export function listAlerts(session: Session, filters: AlertFilters) {
-  const { since, until } = rangeBounds(filters.range);
+/**
+ * Alerts with activity in a time range, up to the API's page maximum (200), so one request
+ * usually holds the whole range and the Detections facets and counts run on complete data.
+ * Severities and statuses go out as the arrays the API accepts. The caller validated every
+ * value (parseDetectionsQuery); rule and asset ids are checked again before they become query
+ * parameters.
+ */
+export function listAlerts(
+  session: Session,
+  query: {
+    range: TimeRangeKey;
+    offset?: number;
+    severity?: Severity[];
+    status?: AnalystStatus[];
+    ruleId?: string | null;
+    assetId?: string | null;
+  },
+) {
+  const { since, until } = rangeBounds(query.range);
   return apiRequest(session, zAlertListResponse, {
     method: "GET",
     path: "/api/v1/alerts",
     route: "/api/v1/alerts",
     query: {
-      asset_id: filters.asset,
-      severity: filters.severity,
-      rule_id: filters.rule,
-      status: filters.status,
       since,
       until,
-      limit: ALERT_PAGE_SIZE,
-      offset: filters.offset,
+      severity: query.severity && query.severity.length > 0 ? query.severity : undefined,
+      status: query.status && query.status.length > 0 ? query.status : undefined,
+      rule_id: query.ruleId && isRuleId(query.ruleId) ? query.ruleId : undefined,
+      asset_id: query.assetId && isAssetId(query.assetId) ? query.assetId : undefined,
+      sort: "last_seen",
+      limit: ALERTS_PER_REQUEST,
+      offset: query.offset && query.offset > 0 ? query.offset : undefined,
     },
   });
 }

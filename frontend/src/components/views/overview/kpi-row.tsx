@@ -1,7 +1,7 @@
 import { Activity, FileWarning, ShieldAlert, Waypoints } from "lucide-react";
 
 import { CoverageMark, type ArcTone } from "@/components/console/brand-mark";
-import { KpiCard, SplitBar } from "@/components/console/kpi-card";
+import { KpiCard, KpiFigures, SplitBar } from "@/components/console/kpi-card";
 import { SEVERITY_LABEL } from "@/components/console/severity";
 import type { CollectionHealthSummary, Severity } from "@/lib/api/schemas";
 import { formatCount } from "@/lib/format";
@@ -23,21 +23,6 @@ const SEV_FILL: Record<Severity, string> = {
 };
 
 const STATUS_LABEL = { ok: "Healthy", warn: "Degraded", bad: "Failing", off: "Unknown" } as const;
-
-function Figures({ items }: { items: { label: string; value: number; strong?: boolean }[] }) {
-  return (
-    <span className="flex flex-wrap gap-x-3 gap-y-1">
-      {items.map((item) => (
-        <span key={item.label} className="whitespace-nowrap">
-          <span className={item.value > 0 && item.strong ? "text-foreground tabular-nums" : "text-fg-2 tabular-nums"}>
-            {formatCount(item.value)}
-          </span>{" "}
-          {item.label}
-        </span>
-      ))}
-    </span>
-  );
-}
 
 /**
  * Headline figures: open alerts by severity, assets reporting per class, critical + high
@@ -64,7 +49,7 @@ export function KpiRow({
   const severityParts = alerts.parts.filter((p) => p.severity !== "info" || p.count > 0);
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <KpiCard
         label="Open alerts"
         icon={ShieldAlert}
@@ -85,7 +70,7 @@ export function KpiRow({
           />
         }
         sub={
-          <Figures
+          <KpiFigures
             items={severityParts.map((p) => ({
               label: SEVERITY_LABEL[p.severity].toLowerCase(),
               value: p.count,
@@ -107,15 +92,15 @@ export function KpiRow({
             <CoverageMark
               tones={{ top: arcTones[0] ?? "off", right: arcTones[1] ?? "off", bottom: arcTones[2] ?? "off", left: arcTones[3] ?? "off" }}
               label={`Coverage by asset class: ${coverageLabel}`}
-              className="size-11"
+              className="size-8"
             />
           ) : null
         }
         sub={
-          <>
+          <span title="Kubernetes nodes report through their cluster and are not counted on their own (the Assets page counts the same way).">
             <span className="text-fg-2 tabular-nums">{formatCount(assets.classesHealthy)}</span> of{" "}
-            {plural(assets.classesTotal, "monitored class", "monitored classes")} healthy
-          </>
+            {plural(assets.classesTotal, "class", "classes")} healthy
+          </span>
         }
         href="/assets"
       />
@@ -136,7 +121,7 @@ export function KpiRow({
           />
         }
         sub={
-          <Figures
+          <KpiFigures
             items={[
               { label: "critical", value: findings.critical, strong: true },
               { label: "high", value: findings.high, strong: true },
@@ -167,13 +152,20 @@ export function KpiRow({
           health.no_collector_reports ? (
             "No collector has reported yet."
           ) : (
-            <Figures
-              items={[
-                { label: "stale", value: health.collectors_stale, strong: true },
-                { label: "failing", value: health.collectors_failing, strong: true },
-                { label: `of ${formatCount(health.pipeline_components)} pipeline parts not OK`, value: health.pipeline_unhealthy, strong: true },
-              ]}
-            />
+            <>
+              <KpiFigures
+                items={[
+                  { label: "stale", value: health.collectors_stale, strong: true },
+                  { label: "failing", value: health.collectors_failing, strong: true },
+                ]}
+              />
+              <span className="text-fg-faint"> · </span>
+              pipeline{" "}
+              <span className={health.pipeline_unhealthy > 0 ? "text-foreground tabular-nums" : "text-fg-2 tabular-nums"}>
+                {formatCount(health.pipeline_components - health.pipeline_unhealthy)} / {formatCount(health.pipeline_components)}
+              </span>{" "}
+              OK
+            </>
           )
         }
         href="/health"

@@ -1,4 +1,3 @@
-import { Boxes, FolderGit2, Laptop, Server } from "lucide-react";
 import type { Metadata } from "next";
 
 import { BrandTile } from "@/components/console/brand-mark";
@@ -7,13 +6,6 @@ import { safeNextPath } from "@/lib/security/redirect";
 import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Sign in" };
-
-const CLASSES = [
-  { icon: Laptop, label: "macOS host" },
-  { icon: Server, label: "Ubuntu VM" },
-  { icon: Boxes, label: "kind cluster" },
-  { icon: FolderGit2, label: "GitHub repo" },
-];
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const params = await searchParams;
@@ -39,19 +31,8 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           Local analyst and viewer accounts. Sessions last 8 hours;
           <br className="hidden sm:block" /> failed attempts are rate limited and logged.
         </p>
+        <p className="mt-4 text-center text-xs text-muted-foreground">Monitors a macOS host, an Ubuntu VM, a kind cluster and GitHub.</p>
       </div>
-
-      <ul
-        aria-label="Monitored asset classes"
-        className="absolute inset-x-0 bottom-6 hidden items-center justify-center gap-5 text-xs text-muted-foreground sm:flex"
-      >
-        {CLASSES.map(({ icon: Icon, label }) => (
-          <li key={label} className="flex items-center gap-1.5">
-            <Icon className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
-            {label}
-          </li>
-        ))}
-      </ul>
     </main>
   );
 }

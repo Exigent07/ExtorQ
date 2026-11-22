@@ -47,6 +47,17 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${d} d ${h % 24} h`;
 }
 
+/** A window length: "5 min", "90 s", "2 h", "1 h 30 min" (whole units, no padding). */
+export function formatWindowLength(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return DASH;
+  const s = Math.round(seconds);
+  if (s < 120 && s % 60 !== 0) return `${s} s`;
+  if (s % 3600 === 0) return `${s / 3600} h`;
+  if (s < 3600 && s % 60 === 0) return `${s / 60} min`;
+  if (s >= 3600 && s % 60 === 0) return `${Math.floor(s / 3600)} h ${(s % 3600) / 60} min`;
+  return formatDuration(s);
+}
+
 /** A schedule interval: "every 60 s", "every 5 min", "every 24 h". */
 export function formatInterval(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return DASH;
@@ -130,4 +141,52 @@ export function isClosedStatus(status: string): boolean {
 /** Humanise a snake_case token from the API ("pod_security_violation" → "pod security violation"). */
 export function humanize(token: string): string {
   return token.replace(/[_.]+/g, " ").trim();
+}
+
+/** Acronyms and brand spellings inside attribute keys ("os_pretty_name" -> "OS pretty name"). */
+const KEY_WORDS: Record<string, string> = {
+  api: "API",
+  cpu: "CPU",
+  cve: "CVE",
+  dns: "DNS",
+  fqdn: "FQDN",
+  github: "GitHub",
+  http: "HTTP",
+  https: "HTTPS",
+  ip: "IP",
+  ips: "IPs",
+  ipv4: "IPv4",
+  ipv6: "IPv6",
+  k8s: "Kubernetes",
+  macos: "macOS",
+  nat: "NAT",
+  os: "OS",
+  pid: "PID",
+  psa: "PSA",
+  rbac: "RBAC",
+  sha256: "SHA-256",
+  ssh: "SSH",
+  tcp: "TCP",
+  tls: "TLS",
+  udp: "UDP",
+  uid: "UID",
+  url: "URL",
+  uuid: "UUID",
+  vm: "VM",
+};
+
+/**
+ * Label for a reported key (collector attributes): words split on `_`, `.` and spaces, known
+ * acronyms spelled out, the first word capitalised. "id" stays lower case, as in "Asset id".
+ */
+export function keyLabel(key: string): string {
+  const words = key.split(/[_.\s]+/).filter(Boolean);
+  if (words.length === 0) return key;
+  return words
+    .map((word, index) => {
+      const known = KEY_WORDS[word.toLowerCase()];
+      if (known) return known;
+      return index === 0 ? `${word.charAt(0).toUpperCase()}${word.slice(1)}` : word;
+    })
+    .join(" ");
 }

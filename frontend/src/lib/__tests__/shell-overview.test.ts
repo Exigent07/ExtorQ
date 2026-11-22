@@ -199,6 +199,25 @@ describe("KPIs and the page finding", () => {
       "No open alerts · all monitored classes reporting",
     );
   });
+
+  it("names lifecycle-stale assets as the cause instead of a class verdict", () => {
+    const coverage = [COVERAGE({ asset_type: "linux_host" }), COVERAGE({ asset_type: "github_repository", status: "degraded" })];
+    const assets = [
+      { asset_type: "github_repository", coverage_status: "ok" as const, lifecycle_state: "active" },
+      { asset_type: "github_repository", coverage_status: "stale" as const, lifecycle_state: "stale" },
+      { asset_type: "github_repository", coverage_status: "missing" as const, lifecycle_state: "stale" },
+      { asset_type: "github_repository", coverage_status: "missing" as const, lifecycle_state: "retired" },
+    ];
+    assert.equal(overviewFinding({ open_alerts: open, asset_coverage: coverage }, assets), "14 open alerts, 4 high · 2 stale GitHub repositories");
+    // A degraded asset that is still observed keeps the class verdict.
+    assert.equal(
+      overviewFinding(
+        { open_alerts: open, asset_coverage: coverage },
+        [{ asset_type: "github_repository", coverage_status: "degraded" as const, lifecycle_state: "active" }],
+      ),
+      "14 open alerts, 4 high · GitHub repository coverage degraded",
+    );
+  });
 });
 
 describe("alert activity", () => {

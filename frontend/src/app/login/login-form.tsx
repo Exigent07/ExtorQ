@@ -1,10 +1,11 @@
 "use client";
 
-import { CircleAlert } from "lucide-react";
-import { useActionState } from "react";
+import { CircleAlert, Eye, EyeOff } from "lucide-react";
+import { useActionState, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -14,6 +15,7 @@ const initialState: LoginState = { error: null };
 
 export function LoginForm({ next }: { next: string }) {
   const [state, formAction, pending] = useActionState(loginAction, initialState);
+  const [reveal, setReveal] = useState(false);
   return (
     <form action={formAction} className="flex flex-col gap-5" noValidate>
       <input type="hidden" name="next" value={next} />
@@ -41,17 +43,33 @@ export function LoginForm({ next }: { next: string }) {
         <Label htmlFor="password" className="text-sm font-medium text-fg-2">
           Password
         </Label>
-        <Input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          maxLength={512}
-          aria-invalid={state.error ? true : undefined}
-          aria-describedby={state.error ? "login-error" : undefined}
-          className="h-10 bg-white/[0.03] px-3 text-base md:text-base"
-        />
+        <InputGroup className="h-10 bg-white/[0.03]">
+          <InputGroupInput
+            id="password"
+            name="password"
+            type={reveal ? "text" : "password"}
+            autoComplete="current-password"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            required
+            maxLength={512}
+            aria-invalid={state.error ? true : undefined}
+            aria-describedby={state.error ? "login-error" : undefined}
+            className="px-3 text-base md:text-base"
+          />
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton
+              size="icon-xs"
+              aria-label={reveal ? "Hide password" : "Show password"}
+              aria-pressed={reveal}
+              onClick={() => setReveal((v) => !v)}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              {reveal ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
       </div>
       <div aria-live="polite" className="-my-2">
         {state.error ? (
