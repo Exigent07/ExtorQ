@@ -51,10 +51,14 @@ docker build -t extorq/frontend:0.1.0 .                     # compose builds the
 The smoke test covers the overview, every asset class with its tabs (macOS host, Linux VM,
 kind cluster, Kubernetes node: four tabs; GitHub repository: no Services tab), a Kubernetes
 workload, a Kubernetes Service, a host service and the VM's ssh service (authentication card),
-the investigation of each mandatory rule (VM-001, VM-002, K8S-001, K8S-002, GH-001: header,
-evidence, timeline, coverage, involved services, honest Jev/Gemini states), detection filters,
-health, the "Alert not found" page for an invalid id and viewer read-only behaviour. Pin the investigations with
-`EXTORQ_SMOKE_ALERTS="VM-001=<id>,..."` (otherwise the newest alert per rule in 30 days). It
+the investigation of each checked rule (default VM-001, VM-002, K8S-001, K8S-002, GH-001;
+`EXTORQ_SMOKE_RULES="VM-003,K8S-003,..."` picks others: header, evidence, timeline, coverage,
+involved services, honest Jev state), detection filters, health, the "Alert not found" page for
+an invalid id and viewer read-only behaviour. Both account password files are required for a
+passing run. Every page is also checked for retired product controls and branding. Real names
+and evidence text can contain the same words. Pin the
+investigations with `EXTORQ_SMOKE_ALERTS="VM-001=<id>,..."` (otherwise the newest alert per rule
+in 30 days). It
 paces requests (`EXTORQ_SMOKE_PACE_MS`, default 1500): the API's ClickHouse read identity has a
 SHARED quota (6000 queries per minute since migration `0007_api_quota.sql`; it was 1200) and a
 console page costs about 5-20 queries (the API caches aggregate endpoints for 15 s). Keep
@@ -72,7 +76,7 @@ Configuration (server-side environment only; there are no `NEXT_PUBLIC_*` variab
 | `EXTORQ_SESSION_SECRET_FILE` | HS256 session signing secret (≥ 32 chars) |
 | `EXTORQ_ANALYST_USERNAME` / `EXTORQ_VIEWER_USERNAME` | default `analyst` / `viewer` |
 | `EXTORQ_HTTPS` | `auto` (default) / `true` / `false`: `Secure` + `__Host-` cookie and HSTS |
-| `EXTORQ_API_TIMEOUT_MS` / `EXTORQ_SUMMARY_TIMEOUT_MS` | 8000 / 90000 |
+| `EXTORQ_API_TIMEOUT_MS` | per-attempt API timeout, default 8000 |
 | `EXTORQ_GRAFANA_URL` | browser URL of Grafana for the sidebar link (default `http://127.0.0.1:3001/`; http(s) without credentials, anything else falls back to the default) |
 
 ## Layout
@@ -87,13 +91,13 @@ src/app/(console)/              authenticated views (layout re-checks the sessio
                                 Pods/containers run on it: API `hosted`)
   services/[serviceId]/         service drill-down
   detections/                   alert history + rules; URL: `severity`, `rule`, `asset`, `status`
-                                (repeatable: OR within one, AND across), `sim=yes|no`, `range`
+                                (repeatable: OR within one, AND across), `range`
                                 (1h|24h|7d|30d), `tab=rules`, `offset` (only past 200 alerts);
                                 allow-listed in `views/detections/model.ts` (parseDetectionsQuery)
-  investigations/[alertId]/     investigation (also reads /health for the AI provider flags, cached 15 s
-                                by the API: an overview the API would refuse is not offered)
+  investigations/[alertId]/     investigation (also reads /health for Jev's flags, cached 15 s by the
+                                API, so the AI tab can say when Jev is turned off)
   health/                       system health
-  actions.ts                    server actions (logout, state change, AI summary, drill-downs)
+  actions.ts                    server actions (logout, alert state change, read-only drill-downs)
 src/components/console/         app shell (sidebar, breadcrumbs, command palette, freshness) and shared
                                 components (SectionCard, KpiCard, DataTable, DetailSheet, Timeline, badges,
                                 states, skeletons, UntrustedText): catalogue in DESIGN.md §4
@@ -129,8 +133,8 @@ scripts/smoke.mjs, run-tests.mjs
 4. **Every page and every server action re-checks the session**; mutations also check the role
    (`authorizeAction`). The API enforces the role again (`X-ExtorQ-User` / `X-ExtorQ-Role` come
    from the verified session only; the proxy strips client-supplied copies). Viewers cannot
-   change alert state or request AI summaries: the form is not rendered, the server action
-   refuses, and the API returns 403. The smoke test replays the analyst form as the viewer.
+   change alert state: the form is not rendered, the server action refuses, and the API returns
+   403. The smoke test replays the analyst form as the viewer.
 5. **All telemetry is attacker-controlled.** Render strings through `UntrustedText` (plain text,
    visible markers for bidi/zero-width/tag/control characters; long values cut with the full
    value in a popover, `oneLine` ellipsis with a hover card, `plain` inside links, `RawBlock`
@@ -150,9 +154,10 @@ scripts/smoke.mjs, run-tests.mjs
    Library `<style>` elements carry the nonce: the root layout reads `x-nonce` into
    `NonceProvider`, which feeds Radix ScrollArea (`useNonce`) and `get-nonce` (modal scroll lock).
    The command palette and every shell list come from server components as props.
-9. **AI is advisory.** Jev and Gemini panels are labelled advisory; Gemini evidence ids are chips
-   that jump to `#evidence-<event_id>` only when verified, and unverified ids are flagged and
-   never styled as verified. A summary is requested only by an analyst click (it spends budget).
+9. **AI is advisory.** Jev (TypeSafe) is the one AI provider (contracts 2.0). Its triage card is
+   labelled advisory, shows the typed answers, the sufficient-context band and the input hash it
+   was computed from, and says when it was made on an earlier context. The ai-worker assesses
+   alerts on its own: the console never triggers an AI call and offers no AI button.
 
 ## Design system (see `DESIGN.md` and `src/app/globals.css`)
 
@@ -172,7 +177,9 @@ fills (no per-segment gradients); the only gradient is the login glow; motion 15
 hover/focus/open only. Use the token names in DESIGN.md (the first console's
 legacy utility aliases were removed with the last view that used them). Shell: shadcn Sidebar
 (Monitor / Detect / Operate / Analytics), top bar with
-breadcrumbs, Cmd/Ctrl-K palette, LAB pill and data-freshness indicator (Cmd/Ctrl+B collapses).
+breadcrumbs, Cmd/Ctrl-K palette and data-freshness indicator (Cmd/Ctrl+B collapses). No
+environment pill or "lab" label anywhere in the product UI (2026-11-22 decision); real resource
+names (hostnames, cluster and repository names) are shown as reported.
 
 ## Adding a view
 
@@ -198,18 +205,24 @@ breadcrumbs, Cmd/Ctrl-K palette, LAB pill and data-freshness indicator (Cmd/Ctrl
   block to this file whenever it detects an AI coding agent.
 - Investigation display rules live in `src/lib/investigation.ts` and
   `src/components/views/investigation/{model,signals}.ts` (unit-tested): timeline and correlation
-  rows drop the event type the summary repeats, evidence rows are chronological, AI-provider times
-  are shown in UTC only when they are well-formed ISO instants. `signals.ts` lifts the decisive
+  rows drop the event type the summary repeats, evidence rows are chronological. `signals.ts`
+  lifts the decisive
   part of an alert out of the feature lists: key signals (true risk flags and non-empty risk
   lists), threshold checks (`threshold_<x>` against `peak_window_<x>`), the ordered stages of a
   sequence rule (`stage_order` with `*_stage_at` times) and the remaining correlation features
   grouped by source; a new rule's features show up in the lists until a signal is defined for
   them. Related observations are grouped by relationship, strength and event type
-  (`groupRelated`), each group opening its members in a sheet.
+  (`groupRelated`), each group opening its members in a sheet. The evidence tab lists the IDs
+  of unavailable references and identifies those outside event retention where the API knows
+  their event time. The detections drawer displays the same distinction as counts. Rule
+  descriptions and caveats shown as alert metadata must match the alert's rule version.
 - Health shows the ingestion spool backlog once (gateway and writer report the same SQLite
   spool; detector and ai-worker queues are not ingestion) from fresh reports only
   (`src/lib/health.ts`). Pipeline counters are cumulative since each component started (the
   column headers say so; counters that are 0 on every component are named under the table).
+  OpenTelemetry collector entries show delivery state by node and source. Their expandable
+  measurements distinguish an unavailable counter from zero and label the shared node queue
+  in exporter requests.
   Collector counts say when they are inherited from the cluster (`src/lib/assets.ts`), and
   Kubernetes nodes are counted with their cluster on the Overview and the Assets page alike.
 - Finding titles drop a doubled scanner prefix for display (`displayFindingTitle`), and one

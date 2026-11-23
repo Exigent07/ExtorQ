@@ -1,5 +1,4 @@
 import { cn } from "cn";
-import { FlaskConical } from "lucide-react";
 
 import { Hint } from "./hint";
 
@@ -40,29 +39,6 @@ export function ConfidenceBadge({ confidence, className }: { confidence: string;
   return known ? <Hint content={known.hint}>{body}</Hint> : body;
 }
 
-/**
- * Marks alerts whose evidence carries an ExtorQ simulation marker. The telemetry is genuine;
- * the activity was a controlled lab scenario. Neutral, never styled as a severity.
- */
-export function SimulationBadge({ runIds, className }: { runIds: string[]; className?: string }) {
-  if (runIds.length === 0) return null;
-  return (
-    <Hint
-      content={`Evidence carries the simulation marker extorq-sim-${runIds.join(", extorq-sim-")}. The telemetry is genuine; the activity was a controlled lab scenario.`}
-    >
-      <span
-        className={cn(
-          "inline-flex h-5 flex-none items-center gap-1 rounded-md px-1.5 text-xs whitespace-nowrap text-fg-2 ring-1 ring-hairline-strong ring-inset",
-          className,
-        )}
-      >
-        <FlaskConical className="size-3" aria-hidden="true" />
-        Simulation
-      </span>
-    </Hint>
-  );
-}
-
 /** Role of the signed-in account. */
 export function RoleBadge({ role, className }: { role: "analyst" | "viewer"; className?: string }) {
   return (
@@ -75,25 +51,5 @@ export function RoleBadge({ role, className }: { role: "analyst" | "viewer"; cla
     >
       {role === "analyst" ? "Analyst" : "Viewer · read-only"}
     </span>
-  );
-}
-
-/** The environment the console watches. Neutral: it states scope, not health. */
-export function EnvironmentPill({ className }: { className?: string }) {
-  return (
-    <Hint
-      side="bottom"
-      content="Lab environment on one Mac: the macOS host, an Ubuntu 24.04 VM, the kind cluster extorq-lab, plus the GitHub lab repository. Not production."
-    >
-      <span
-        className={cn(
-          "inline-flex h-6 flex-none items-center gap-1.5 rounded-md px-2 text-xs font-medium tracking-wide text-fg-2 ring-1 ring-hairline-strong ring-inset",
-          className,
-        )}
-      >
-        <span aria-hidden="true" className="size-1.5 rounded-full bg-brand" />
-        LAB
-      </span>
-    </Hint>
   );
 }

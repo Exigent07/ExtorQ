@@ -1,11 +1,10 @@
 /**
  * System health view model: collector freshness against the staleness budget, the KPI
- * figures, gateway rejections and AI provider summaries. Pure and isomorphic; every figure is
+ * figures, gateway rejections and the Jev status labels. Pure and isomorphic; every figure is
  * taken or summed from the API's health response, never estimated.
  */
 import type { Tone } from "@/components/console/status-badge";
 import type {
-  AIProviderHealth,
   CollectorStatus,
   HealthResponse,
   PipelineComponentHealth,
@@ -16,6 +15,38 @@ import { spoolBacklog } from "@/lib/health";
 
 /** A collector is stale after this many collection intervals without a success (API rule). */
 export const STALE_INTERVALS = 3;
+
+const OTEL_DELIVERY_STATES = {
+  delivering: { label: "Delivering", tone: "ok" },
+  running_not_delivering: { label: "Running without delivery", tone: "warn" },
+  degraded: { label: "Delivery degraded", tone: "warn" },
+  backlogged: { label: "Delivery backlogged", tone: "warn" },
+  dropping_records: { label: "Dropping records", tone: "bad" },
+  unavailable: { label: "Delivery unavailable", tone: "bad" },
+  unknown: { label: "Delivery unknown", tone: "off" },
+} satisfies Record<string, { label: string; tone: Tone }>;
+
+const OTEL_MEASURES = {
+  queue_requests: "Queued requests",
+  queue_capacity_requests: "Request capacity",
+  accepted_records: "Source records accepted",
+  sent_records: "Exporter records sent",
+  send_failed_records: "Exporter send failures",
+  enqueue_failed_records: "Exporter enqueue failures",
+};
+
+export function otelDelivery(c: Pick<CollectorStatus, "collector_type" | "details">) {
+  if (c.collector_type !== "k8s_otel") return null;
+  const state = c.details?.delivery_state;
+  const status = typeof state === "string" && Object.hasOwn(OTEL_DELIVERY_STATES, state)
+    ? OTEL_DELIVERY_STATES[state as keyof typeof OTEL_DELIVERY_STATES]
+    : OTEL_DELIVERY_STATES.unknown;
+  const measures = Object.entries(OTEL_MEASURES).map(([key, label]) => {
+    const value = c.details?.[key];
+    return { label, value: typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null };
+  });
+  return { ...status, measures };
+}
 
 export interface Freshness {
   /** Share of the staleness budget (3 intervals) used since the last success, 0..1. */
@@ -140,11 +171,9 @@ export function ruleExecution(rules: RuleHealthItem[]): RuleExecution {
   };
 }
 
+/** Jev (TypeSafe System One) is the one AI provider since contracts 2.0. */
 const PROVIDER_NAME: Record<string, string> = {
   "typesafe-jev": "Jev",
-  jev: "Jev",
-  "google-gemini": "Gemini",
-  gemini: "Gemini",
 };
 
 /** Display name of an AI provider token; unknown tokens are shown as reported. */
@@ -167,38 +196,43 @@ export function aiStatusLabel(status: string): string {
   return AI_STATUS_LABEL[status] ?? status;
 }
 
+/**
+ * The state of the worker that runs an AI provider (the ai-worker for Jev), from its newest
+ * fresh health report. This says whether assessments are being produced; null means no fresh
+ * report, which is shown as unknown, never as running or disabled.
+ */
+export function runtimeView(status: string | null | undefined): { tone: Tone; label: string; hint: string } {
+  switch (status) {
+    case "ok":
+      return { tone: "ok", label: "Running", hint: "The ai-worker's latest report is OK: new alerts are assessed within the daily budget." };
+    case "degraded":
+      return { tone: "warn", label: "Degraded", hint: "The ai-worker reports problems (provider failures, write errors or paused calls)." };
+    case "failed":
+      return { tone: "bad", label: "Failing", hint: "The ai-worker's last cycle failed: no new assessment is being produced." };
+    case "disabled":
+      return { tone: "off", label: "Disabled", hint: "The ai-worker reports Jev turned off or without a key: it makes no calls." };
+    case null:
+    case undefined:
+      return { tone: "off", label: "Not reporting", hint: "No fresh ai-worker health report: whether assessments are produced is unknown." };
+    default:
+      return { tone: "warn", label: status, hint: "Status as the ai-worker reported it." };
+  }
+}
+
+/** The API process's own flag and key presence, in words ("enabled, key configured"). */
+export function apiProcessView(provider: { enabled?: boolean | null; configured?: boolean | null }): string {
+  const flag = provider.enabled === true ? "enabled" : provider.enabled === false ? "disabled" : "flag unknown";
+  const key =
+    provider.configured === true ? "key configured" : provider.configured === false ? "no key" : "key presence unknown";
+  return `${flag}, ${key}`;
+}
+
 export function aiStatusTone(status: string | null | undefined): Tone {
   if (!status) return "off";
   if (status === "ok") return "ok";
   if (status === "insufficient_context" || status === "disabled") return "off";
   if (status === "error" || status === "invalid_output") return "bad";
   return "warn";
-}
-
-export interface AISummary {
-  total: number;
-  enabled: number;
-  disabled: number;
-  unknown: number;
-  configured: number;
-  lastCall: { provider: string; at: string; status: string | null } | null;
-}
-
-export function aiSummary(ai: AIProviderHealth[]): AISummary {
-  let lastCall: AISummary["lastCall"] = null;
-  for (const p of ai) {
-    if (p.last_assessment_at && (!lastCall || Date.parse(p.last_assessment_at) > Date.parse(lastCall.at))) {
-      lastCall = { provider: p.provider, at: p.last_assessment_at, status: p.last_status ?? null };
-    }
-  }
-  return {
-    total: ai.length,
-    enabled: ai.filter((p) => p.enabled === true).length,
-    disabled: ai.filter((p) => p.enabled === false).length,
-    unknown: ai.filter((p) => p.enabled === null || p.enabled === undefined).length,
-    configured: ai.filter((p) => p.configured === true).length,
-    lastCall,
-  };
 }
 
 /** The page's one-line finding. */

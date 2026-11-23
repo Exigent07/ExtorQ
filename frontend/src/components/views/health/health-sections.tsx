@@ -13,7 +13,16 @@ import type { AIProviderHealth, HealthResponse, PipelineComponentHealth, RuleHea
 import { DASH, formatCount, formatDuration, formatInterval, formatMs, humanize } from "@/lib/format";
 import { isRuleId } from "@/lib/security/ids";
 
-import { aiStatusLabel, aiStatusTone, currentPipeline, gatewayRejections, providerName, ruleExecution } from "./model";
+import {
+  aiStatusLabel,
+  aiStatusTone,
+  apiProcessView,
+  currentPipeline,
+  gatewayRejections,
+  providerName,
+  ruleExecution,
+  runtimeView,
+} from "./model";
 
 /** A counter: zeros muted, a real 0 printed as 0, unknown as a dash; tone only above a threshold. */
 function Num({ value, tone }: { value: number | null | undefined; tone?: "warn" | "bad" }) {
@@ -381,7 +390,7 @@ export function QuarantineCard({ ingest, className }: { ingest: HealthResponse["
 
 function ProviderRow({ provider, now }: { provider: AIProviderHealth; now: string }) {
   const counts = Object.entries(provider.status_counts).sort((a, b) => b[1] - a[1]);
-  const enabled = provider.enabled;
+  const runtime = runtimeView(provider.runtime_status);
   return (
     <li className="grid gap-2.5 py-3.5 first:pt-0 last:pb-0">
       <div className="flex items-start justify-between gap-3">
@@ -397,20 +406,23 @@ function ProviderRow({ provider, now }: { provider: AIProviderHealth; now: strin
           </p>
         </div>
         <span className="flex flex-none flex-col items-end gap-1 text-xs">
-          {enabled === null || enabled === undefined ? (
-            <StatusDot tone="off" label="Flag unknown" />
-          ) : enabled ? (
-            <StatusDot tone="ok" label="Enabled" />
-          ) : (
-            <StatusDot tone="off" label="Disabled" />
-          )}
+          <Hint content={runtime.hint}>
+            <span>
+              <StatusDot tone={runtime.tone} label={runtime.label} />
+            </span>
+          </Hint>
           <span className="text-muted-foreground">
-            {provider.configured === null || provider.configured === undefined
-              ? "Key presence unknown"
-              : provider.configured
-                ? "Key configured"
-                : "No key configured"}
+            {provider.runtime_reported_at ? (
+              <>
+                reported <RelativeTime value={provider.runtime_reported_at} now={now} className="text-inherit" />
+              </>
+            ) : (
+              "no fresh worker report"
+            )}
           </span>
+          <Hint content="Jev runs in the ai-worker. The API process's own flag and key presence are shown for completeness: they may legitimately be off there.">
+            <span className="text-muted-foreground">API process: {apiProcessView(provider)}</span>
+          </Hint>
         </span>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
@@ -463,8 +475,12 @@ function ProviderRow({ provider, now }: { provider: AIProviderHealth; now: strin
   );
 }
 
-/** AI providers (advisory only): flags, key presence and recent outcomes per provider and task. */
-export function AIProvidersCard({
+/**
+ * AI triage (advisory only): Jev's flag, key presence and recent outcomes as the API reports
+ * them. Jev is the one provider since contracts 2.0; a row for anything else is shown as
+ * reported, never hidden.
+ */
+export function AITriageCard({
   ai,
   source,
   now,
@@ -477,10 +493,10 @@ export function AIProvidersCard({
 }) {
   return (
     <SectionCard
-      title="AI providers"
+      title="AI triage"
       titleId="ai-health-title"
       icon={Bot}
-      description="Advisory only: AI never changes alerts."
+      description="TypeSafe Jev answers typed triage questions per alert. Advisory only: AI never changes alerts."
       meta={
         <Hint content="AI output is stored as advisory assessments. Detection, severity and analyst state never depend on it.">
           <span className="inline-flex h-5 items-center rounded-md px-1.5 text-xs font-medium text-fg-2 ring-1 ring-hairline-strong ring-inset">
@@ -491,7 +507,7 @@ export function AIProvidersCard({
       className={className}
     >
       {ai.length === 0 ? (
-        <EmptyState>No AI provider is configured or has produced an assessment.</EmptyState>
+        <EmptyState>Jev is not configured and has produced no assessment.</EmptyState>
       ) : (
         <ul className="divide-y divide-hairline-soft">
           {ai.map((provider) => (

@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/console/states";
 import { RelativeTime } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AnalystStatusText, SimulationTag } from "@/components/views/alerts/alert-bits";
+import { AnalystStatusText } from "@/components/views/alerts/alert-bits";
 import type { AlertListItem } from "@/lib/api/schemas";
 import { formatCount } from "@/lib/format";
 import { assetHref, investigationHref } from "@/lib/security/ids";
@@ -93,7 +93,6 @@ export function RecentAlertsCard({
                       >
                         {alert.asset_id}
                       </Link>
-                      <SimulationTag runIds={alert.simulation_run_ids} />
                       <span aria-hidden="true" className="text-fg-faint">
                         ·
                       </span>

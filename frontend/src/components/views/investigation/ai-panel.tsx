@@ -1,9 +1,7 @@
 import { cn } from "cn";
-import { BrainCircuit, CircleCheck, FileWarning, Sparkles, TriangleAlert } from "lucide-react";
+import { BrainCircuit, FileWarning, Sparkles, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Disclosure } from "@/components/console/disclosure";
-import { EvidenceChip } from "@/components/console/evidence-chip";
 import { Hint } from "@/components/console/hint";
 import { IdText } from "@/components/console/id-text";
 import { SectionCard } from "@/components/console/section-card";
@@ -11,24 +9,12 @@ import { EmptyState, ErrorState, Notice } from "@/components/console/states";
 import { Timestamp } from "@/components/console/time";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import type { ApiFailure } from "@/lib/api/result";
-import type { AIAssessment, EvidenceStatement, InvestigationSummary, JevAnswer, JevTriageResult } from "@/lib/api/schemas";
-import { formatCount, formatMs, formatProbability, formatUtc, humanize } from "@/lib/format";
-import { providerTime } from "@/lib/investigation";
-import { shortId } from "@/lib/security/display";
+import type { AIAssessment, JevAnswer, JevTriageResult } from "@/lib/api/schemas";
+import { formatCount, formatMs, formatProbability } from "@/lib/format";
 
 import { aiStatusText, QUESTION_LABEL, questionTypeLabel, rationaleLabel, recommendationLabel } from "./ai-labels";
 import { Eyebrow } from "./marks";
-import {
-  choiceOptions,
-  JEV_BANDS,
-  jevZone,
-  percent,
-  type ProviderAvailability,
-  statementChips,
-  summaryUnavailableReason,
-} from "./model";
-import { MoreChips } from "./more-chips";
-import { SummaryRequestButton } from "./summary-request";
+import { choiceOptions, JEV_BANDS, jevZone, percent, type ProviderAvailability } from "./model";
 
 /** The label every AI block carries: advisory, never authoritative. */
 function AdvisoryBadge() {
@@ -233,14 +219,41 @@ function JevBody({ triage }: { triage: JevTriageResult }) {
   );
 }
 
-/** "Jev is disabled now" beside the advisory label when the API reports the provider off. */
-function ProviderOff({ name, availability }: { name: string; availability: ProviderAvailability }) {
-  if (availability.enabled !== false) return null;
+const RUNTIME_MARK: Record<string, { dot: string; label: (name: string) => string; hint: string }> = {
+  disabled: {
+    dot: "bg-health-off",
+    label: (name) => `${name} disabled now`,
+    hint: "The ai-worker reports Jev turned off or without a key: it assesses no new alert. Stored assessments stay readable.",
+  },
+  degraded: {
+    dot: "bg-health-warn",
+    label: () => "ai-worker degraded",
+    hint: "The ai-worker reports problems (provider failures, write errors or paused calls): new assessments may be missing.",
+  },
+  failed: {
+    dot: "bg-health-bad",
+    label: () => "ai-worker failing",
+    hint: "The ai-worker's last cycle failed: no new assessment is being produced.",
+  },
+};
+
+/**
+ * The worker's state beside the advisory label, read from System health (the ai-worker's own
+ * report, never the API process's flags). Nothing is shown while it runs normally; "not
+ * reporting" when no fresh report exists, so a missing assessment is never blamed on a guess.
+ */
+function ProviderState({ name, availability }: { name: string; availability: ProviderAvailability }) {
+  if (availability.runtime === "ok") return null;
+  const mark = availability.runtime === null ? null : RUNTIME_MARK[availability.runtime];
+  const label = mark ? mark.label(name) : "ai-worker not reporting";
+  const hint = mark
+    ? mark.hint
+    : "No fresh ai-worker health report: whether Jev is assessing new alerts is unknown (System health, AI triage).";
   return (
-    <Hint content={`${name} is turned off in the AI settings this API process reads (System health, AI providers). Stored assessments stay readable.`}>
+    <Hint content={hint}>
       <span className="inline-flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
-        <span aria-hidden="true" className="size-1.5 rounded-full bg-health-off" />
-        {name} disabled now
+        <span aria-hidden="true" className={cn("size-1.5 rounded-full", mark?.dot ?? "bg-health-off")} />
+        {label}
       </span>
     </Hint>
   );
@@ -264,7 +277,7 @@ function JevCard({
       description="Typed triage questions answered by TypeSafe Jev over the investigation context"
       meta={
         <span className="flex items-center gap-3">
-          <ProviderOff name="Jev" availability={availability} />
+          <ProviderState name="Jev" availability={availability} />
           <AdvisoryBadge />
         </span>
       }
@@ -295,8 +308,8 @@ function JevCard({
         <EmptyState>
           No Jev triage exists for this alert.{" "}
           {availability.enabled === false
-            ? "Jev is disabled on this deployment, so the ai-worker does not assess new alerts; "
-            : "The ai-worker assesses new alerts only when Jev is enabled and within its budget; "}
+            ? "The ai-worker reports Jev disabled, so it does not assess new alerts; "
+            : "The ai-worker assesses new alerts only while Jev is enabled and within its daily budget; "}
           the deterministic investigation stands on its own.
         </EmptyState>
       ) : (
@@ -324,319 +337,33 @@ function JevCard({
   );
 }
 
-// ── Gemini ────────────────────────────────────────────────────────────────────────
-
-/** A verified id that is a related observation of the context, not one of the evidence rows. */
-function ContextChip({ eventId }: { eventId: string }) {
-  return (
-    <Hint content="Verified: found in the investigation context the model received (a related observation), not one of this alert's evidence rows.">
-      <span className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 font-mono text-xs text-muted-foreground ring-1 ring-hairline-strong ring-inset">
-        <CircleCheck className="size-3 text-fg-2" aria-hidden="true" />
-        {shortId(eventId, 8)}
-        <span className="sr-only">(verified, related observation)</span>
-      </span>
-    </Hint>
-  );
-}
-
-function Chips({ statement, evidenceRows }: { statement: Pick<EvidenceStatement, "evidence_ids" | "unverified_ids">; evidenceRows: ReadonlySet<string> }) {
-  const chips = statementChips(statement, evidenceRows);
-  if (chips.length === 0) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs text-health-warn">
-        <TriangleAlert className="size-3" aria-hidden="true" /> No evidence cited
-      </span>
-    );
-  }
-  const render = (chip: (typeof chips)[number]) =>
-    chip.kind === "context" ? (
-      <ContextChip key={`c:${chip.id}`} eventId={chip.id} />
-    ) : (
-      <EvidenceChip key={`${chip.kind}:${chip.id}`} eventId={chip.id} verified={chip.kind === "evidence"} />
-    );
-  // Unverified ids are never folded away: they carry the warning.
-  const shown = chips.filter((chip, index) => index < CHIP_PREVIEW || chip.kind === "unverified");
-  const rest = chips.filter((chip, index) => index >= CHIP_PREVIEW && chip.kind !== "unverified");
-  return (
-    <span className="flex flex-wrap gap-1.5">
-      {shown.map(render)}
-      {rest.length > 0 ? (
-        <MoreChips count={rest.length} title={`All ${formatCount(chips.length)} cited ids of this statement`}>
-          {rest.map(render)}
-        </MoreChips>
-      ) : null}
-    </span>
-  );
-}
-
-/** Cited ids shown per statement before the rest move into a "+N more" hover card. */
-const CHIP_PREVIEW = 3;
-
-function Statement({ statement, evidenceRows }: { statement: EvidenceStatement; evidenceRows: ReadonlySet<string> }) {
-  return (
-    <li className="grid gap-2 py-3 first:pt-0 last:pb-0">
-      <p className={cn("text-sm leading-relaxed", statement.verified ? "text-foreground" : "text-fg-2")}>
-        <UntrustedText value={statement.text} limit={600} />
-      </p>
-      <Chips statement={statement} evidenceRows={evidenceRows} />
-    </li>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="grid gap-2">
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-function TextList({ title, items }: { title: string; items: string[] }) {
-  return (
-    <section className="grid content-start gap-2 rounded-lg bg-white/[0.02] p-4 ring-1 ring-hairline ring-inset">
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-      {items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">None given.</p>
-      ) : (
-        <ul className="grid list-disc gap-1.5 pl-4 text-sm leading-relaxed text-fg-2 marker:text-fg-faint">
-          {items.map((item, i) => (
-            <li key={i}>
-              <UntrustedText value={item} limit={400} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function SummaryBody({ summary, evidenceRows }: { summary: InvestigationSummary; evidenceRows: ReadonlySet<string> }) {
-  return (
-    <div className="grid gap-7 @container">
-      <Section title="What happened">
-        <ul className="divide-y divide-hairline-soft">
-          {summary.what_happened.map((s, i) => (
-            <Statement key={i} statement={s} evidenceRows={evidenceRows} />
-          ))}
-        </ul>
-      </Section>
-      <Section title="Why the rule fired">
-        <ul>
-          <Statement statement={summary.why_rule_fired} evidenceRows={evidenceRows} />
-        </ul>
-      </Section>
-      {summary.timeline.length > 0 ? (
-        <Disclosure
-          label="Timeline as summarised"
-          meta={formatCount(summary.timeline.length)}
-          triggerClassName="font-semibold text-foreground"
-        >
-          <ol className="mt-3 divide-y divide-hairline-soft">
-            {summary.timeline.map((item, i) => (
-              <li key={i} className="grid gap-x-4 gap-y-1.5 py-2.5 first:pt-0 last:pb-0 sm:grid-cols-[10.5rem_minmax(0,1fr)]">
-                <span className="font-mono text-xs text-muted-foreground tabular-nums">
-                  <UntrustedText value={providerTime(item.time, formatUtc)} limit={32} />
-                </span>
-                <span className="grid gap-1.5">
-                  <span className={cn("text-sm leading-relaxed", item.verified ? "text-foreground" : "text-fg-2")}>
-                    <UntrustedText value={item.description} limit={400} />
-                  </span>
-                  <Chips statement={item} evidenceRows={evidenceRows} />
-                </span>
-              </li>
-            ))}
-          </ol>
-        </Disclosure>
-      ) : null}
-      {summary.related_activity.length > 0 ? (
-        <Section title="Related activity">
-          <ul className="divide-y divide-hairline-soft">
-            {summary.related_activity.map((s, i) => (
-              <Statement key={i} statement={s} evidenceRows={evidenceRows} />
-            ))}
-          </ul>
-        </Section>
-      ) : null}
-      <div className="grid gap-3 @3xl:grid-cols-2">
-        <TextList title="Possible benign explanations" items={summary.benign_explanations} />
-        <TextList title="Missing information" items={summary.missing_information} />
-        <TextList title="Limitations" items={summary.limitations} />
-        <TextList title="Suggested next steps (read-only checks)" items={summary.recommended_next_steps} />
-      </div>
-    </div>
-  );
-}
-
-function EvidenceCheck({ assessment, summary }: { assessment: AIAssessment; summary: InvestigationSummary }) {
-  const v = assessment.validation;
-  return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg bg-white/[0.02] px-4 py-3 text-xs ring-1 ring-hairline ring-inset">
-      <span className="font-medium text-fg-2">Evidence check</span>
-      {v ? (
-        <>
-          <span className="inline-flex items-center gap-1.5 text-fg-2 tabular-nums">
-            <CircleCheck className="size-3.5 text-health-ok" aria-hidden="true" />
-            {formatCount(v.evidence_ids_verified)} of {formatCount(v.evidence_ids_cited)} cited ids verified
-          </span>
-          <span className={cn("tabular-nums", v.evidence_ids_rejected > 0 ? "text-health-warn" : "text-muted-foreground")}>
-            {formatCount(v.evidence_ids_rejected)} rejected
-          </span>
-          <span className={cn("tabular-nums", v.statements_without_evidence > 0 ? "text-health-warn" : "text-muted-foreground")}>
-            {formatCount(v.statements_without_evidence)} statements without evidence
-          </span>
-        </>
-      ) : (
-        <span className="text-muted-foreground">No validation record was stored with this overview.</span>
-      )}
-      <span className="text-muted-foreground">
-        Model&apos;s own confidence: <span className="text-fg-2">{humanize(summary.overall_confidence)}</span>
-      </span>
-      <span className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline-soft pt-2 text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5">
-          <CircleCheck className="size-3 text-health-ok" aria-hidden="true" /> evidence row of this alert (jumps to it)
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <CircleCheck className="size-3 text-fg-2" aria-hidden="true" /> verified related observation
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <TriangleAlert className="size-3 text-health-warn" aria-hidden="true" /> unverified id
-        </span>
-      </span>
-    </div>
-  );
-}
-
-function GeminiCard({
-  alertId,
-  assessment,
-  canRequest,
-  availability,
-  evidenceRows,
-  currentInputHash,
-}: {
-  alertId: string;
-  assessment: AIAssessment | null;
-  canRequest: boolean;
-  availability: ProviderAvailability;
-  evidenceRows: ReadonlySet<string>;
-  currentInputHash: string | null;
-}) {
-  const summary = assessment?.status === "ok" ? (assessment.summary ?? null) : null;
-  const outdated = assessment !== null && currentInputHash !== null && assessment.context_input_hash !== currentInputHash;
-  const unavailable = summaryUnavailableReason(availability);
-  return (
-    <SectionCard
-      title="Gemini overview"
-      titleId="gemini-title"
-      icon={Sparkles}
-      description="A narrative overview of the investigation context; every statement cites evidence ids checked by the backend"
-      meta={
-        <span className="flex items-center gap-3">
-          <ProviderOff name="Gemini" availability={availability} />
-          <AdvisoryBadge />
-        </span>
-      }
-      footer={
-        assessment ? (
-          <Footer
-            rows={[
-              { label: "Model", value: <UntrustedText value={`${assessment.model} · ${assessment.prompt_version}`} limit={80} mono /> },
-              { label: "Input hash", value: <IdText id={assessment.context_input_hash} head={12} /> },
-              {
-                label: "Requested",
-                value: (
-                  <span>
-                    <Timestamp value={assessment.created_at} />
-                    <span className="text-muted-foreground">
-                      {" by "}
-                      <UntrustedText value={assessment.requested_by} limit={40} /> · {formatMs(assessment.latency_ms)}
-                    </span>
-                  </span>
-                ),
-              },
-            ]}
-          />
-        ) : undefined
-      }
-    >
-      <div className="grid gap-6">
-        <SummaryRequestButton alertId={alertId} canRequest={canRequest} hasSummary={Boolean(summary)} unavailable={unavailable} />
-        {!assessment ? (
-          <EmptyState>
-            No overview has been generated for this alert.
-            {unavailable ? " None can be requested while Gemini is unavailable; the deterministic investigation stands on its own." : ""}
-          </EmptyState>
-        ) : !summary ? (
-          <Notice icon={FileWarning}>
-            The latest request did not produce an overview: {aiStatusText(assessment.status).toLowerCase()}.
-            {assessment.error ? (
-              <span className="mt-1 block font-mono">
-                <UntrustedText value={assessment.error} limit={200} />
-              </span>
-            ) : null}
-          </Notice>
-        ) : (
-          <>
-            {outdated ? (
-              <Notice tone="warn" icon={TriangleAlert}>
-                Generated from an earlier version of the investigation context (its input hash differs).
-                {unavailable ? " A new overview cannot be requested while Gemini is unavailable." : " Generate a new overview for the current one."}
-              </Notice>
-            ) : null}
-            <EvidenceCheck assessment={assessment} summary={summary} />
-            <SummaryBody summary={summary} evidenceRows={evidenceRows} />
-          </>
-        )}
-      </div>
-    </SectionCard>
-  );
-}
-
 /**
- * AI tab: Jev's typed triage and Gemini's evidence-cited overview, both advisory. Evidence
- * chips jump to their evidence row only when the backend verified the id and it is one of
- * this alert's evidence events; unverified ids are flagged and never links.
+ * AI tab: Jev's typed triage of the investigation context, advisory only. Jev is the one AI
+ * provider (contracts 2.0); the ai-worker assesses new alerts on its own, so the console
+ * never triggers a provider call. The newest assessment is shown; older attempts stay stored.
  */
 export function AiPanel({
-  alertId,
   assessments,
   assessmentsError,
   currentInputHash,
-  canRequest,
-  evidenceRows,
   triage,
-  summary,
   triageAvailability,
-  summaryAvailability,
 }: {
-  alertId: string;
   assessments: AIAssessment[];
   assessmentsError: ApiFailure | null;
   currentInputHash: string | null;
-  canRequest: boolean;
-  evidenceRows: ReadonlySet<string>;
+  /** The newest triage assessment (null when none is stored). */
   triage: AIAssessment | null;
-  summary: AIAssessment | null;
-  /** Provider flags from System health (null fields when health could not be read). */
+  /** Jev's flags from System health (null fields when health could not be read). */
   triageAvailability: ProviderAvailability;
-  summaryAvailability: ProviderAvailability;
 }) {
   return (
     <div className="grid gap-6">
       {assessmentsError ? <ErrorState what="the AI assessments" error={assessmentsError} /> : null}
       <JevCard assessment={triage} currentInputHash={currentInputHash} availability={triageAvailability} />
-      <GeminiCard
-        alertId={alertId}
-        assessment={summary}
-        canRequest={canRequest}
-        availability={summaryAvailability}
-        evidenceRows={evidenceRows}
-        currentInputHash={currentInputHash}
-      />
-      {assessments.length > 2 ? (
+      {assessments.length > 1 ? (
         <p className="text-xs text-muted-foreground">
-          {formatCount(assessments.length)} AI assessments are stored for this alert; the newest of each kind is shown.
+          {formatCount(assessments.length)} Jev assessments are stored for this alert (one per attempt); the newest is shown.
         </p>
       ) : null}
     </div>

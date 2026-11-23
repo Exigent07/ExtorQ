@@ -1,4 +1,4 @@
-/** System health view model: freshness budget, collector partition, rejections, AI summary. */
+/** System health view model: freshness budget, collector partition, rejections, Jev status labels. */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
@@ -6,15 +6,35 @@ import { type HealthResponse, zAIProviderHealth, zHealthResponse } from "../../.
 
 import {
   aiStatusTone,
-  aiSummary,
+  apiProcessView,
   collectorCounts,
   collectorFreshness,
   gatewayRejections,
   healthFinding,
+  otelDelivery,
   ruleExecution,
+  runtimeView,
 } from "./model";
 
 const NOW = "2026-11-22T07:00:00Z";
+
+describe("OpenTelemetry delivery", () => {
+  it("renders per-node delivery state and distinguishes missing measurements from zero", () => {
+    const delivery = otelDelivery({ collector_type: "k8s_otel", details: {
+      delivery_state: "dropping_records", queue_requests: 0, queue_capacity_requests: 100,
+      accepted_records: 17, sent_records: "17", send_failed_records: -1,
+    } });
+    assert.equal(delivery?.label, "Dropping records");
+    assert.equal(delivery.tone, "bad");
+    assert.deepEqual(delivery.measures.map(({ value }) => value), [0, 100, 17, null, null, null]);
+  });
+
+  it("keeps absent or unsupported delivery reports unknown", () => {
+    assert.equal(otelDelivery({ collector_type: "k8s_otel" })?.label, "Delivery unknown");
+    assert.equal(otelDelivery({ collector_type: "k8s_otel", details: { delivery_state: "constructor" } })?.tone, "off");
+    assert.equal(otelDelivery({ collector_type: "linux", details: { delivery_state: "delivering" } }), null);
+  });
+});
 
 describe("collectorFreshness", () => {
   const base = { interval_seconds: 60, stale: false, status: "ok" as const, last_success_at: null };
@@ -77,7 +97,7 @@ describe("gatewayRejections", () => {
   });
 });
 
-describe("ruleExecution and aiSummary", () => {
+describe("ruleExecution and AI status", () => {
   it("adds runs and failures over the rules that ran", () => {
     const run = (failures: number, status = "succeeded") => ({
       rule_version: "1.0.0",
@@ -96,17 +116,21 @@ describe("ruleExecution and aiSummary", () => {
     assert.deepEqual([out.runs24h, out.failures24h, out.failingNow, out.neverRan, out.overdue, out.quiet], [200, 2, 1, 1, 1, 1]);
   });
 
-  it("counts flags as reported (unknown stays unknown) and finds the latest call", () => {
-    const provider = (o: Record<string, unknown>) =>
-      zAIProviderHealth.parse({ provider: "typesafe-jev", task: "triage", window_hours: 24, status_counts: {}, ...o });
-    const out = aiSummary([
-      provider({ enabled: false, configured: false, last_assessment_at: "2026-11-21T21:00:00Z", last_status: "ok" }),
-      provider({ provider: "google-gemini", task: "summary", enabled: null, configured: true, last_assessment_at: "2026-11-21T22:00:00Z", last_status: "timeout" }),
-    ]);
-    assert.deepEqual([out.total, out.enabled, out.disabled, out.unknown, out.configured], [2, 0, 1, 1, 1]);
-    assert.deepEqual(out.lastCall, { provider: "google-gemini", at: "2026-11-21T22:00:00Z", status: "timeout" });
-    assert.equal(aiSummary([]).lastCall, null);
+  it("keeps unknown Jev flags unknown and maps assessment statuses to tones", () => {
+    const jev = zAIProviderHealth.parse({ provider: "typesafe-jev", task: "triage", window_hours: 24, status_counts: {} });
+    assert.equal(jev.enabled ?? null, null);
+    assert.equal(jev.configured ?? null, null);
     assert.deepEqual(["ok", "timeout", "error", "disabled", null].map(aiStatusTone), ["ok", "warn", "bad", "off", "off"]);
+  });
+
+  it("takes Jev's running state from the ai-worker and keeps a missing report unknown", () => {
+    assert.deepEqual(
+      ["ok", "degraded", "failed", "disabled", null, "unknown"].map((s) => runtimeView(s).label),
+      ["Running", "Degraded", "Failing", "Disabled", "Not reporting", "unknown"],
+    );
+    assert.equal(runtimeView(null).tone, "off");
+    assert.equal(apiProcessView({ enabled: false, configured: false }), "disabled, no key");
+    assert.equal(apiProcessView({}), "flag unknown, key presence unknown");
   });
 });
 

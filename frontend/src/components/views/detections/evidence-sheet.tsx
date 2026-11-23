@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { type EvidenceActionResult, loadEvidenceAction } from "@/app/(console)/actions";
-import { ConfidenceBadge, SimulationBadge } from "@/components/console/badges";
+import { ConfidenceBadge } from "@/components/console/badges";
 import { DetailSection, DetailSheet } from "@/components/console/detail-sheet";
 import { KeyValueList } from "@/components/console/key-values";
 import { SeverityBadge } from "@/components/console/severity";
@@ -62,7 +62,6 @@ export function EvidenceSheet({ row }: { row: AlertRow }) {
             Evidence confidence
             <ConfidenceBadge confidence={row.confidence} className="text-xs" />
           </span>
-          <SimulationBadge runIds={row.simulationRunIds} />
         </>
       }
       footer={
@@ -160,15 +159,17 @@ function EvidenceEvents({ alertId }: { alertId: string }) {
       </DetailSection>
     );
   }
+  const unavailable = result.unavailable > 0
+    ? `${formatCount(result.unavailable)} evidence reference${result.unavailable === 1 ? "" : "s"} unavailable in storage.`
+    : null;
+  const expired = result.expired > 0
+    ? `${formatCount(result.expired)} evidence reference${result.expired === 1 ? "" : "s"} outside event retention.`
+    : null;
   if (result.rows.length === 0) {
     return (
       <DetailSection title="Evidence events">
         <EmptyState>
-          No evidence event could be resolved from storage
-          {result.unresolved > 0
-            ? ` (${formatCount(result.unresolved)} cited id${result.unresolved === 1 ? "" : "s"} not found; retention may have removed them)`
-            : ""}
-          .
+          No cited events are available in storage. {expired} {unavailable}
         </EmptyState>
       </DetailSection>
     );
@@ -202,11 +203,9 @@ function EvidenceEvents({ alertId }: { alertId: string }) {
       </ol>
       <p className="text-xs leading-relaxed text-muted-foreground">
         {formatCount(result.rows.length)} of {formatCount(result.total)} cited events shown
-        {result.capped ? " (the detector capped the evidence list)" : ""}
-        {result.unresolved > 0
-          ? ` · ${formatCount(result.unresolved)} cited id${result.unresolved === 1 ? "" : "s"} not found in storage`
-          : ""}
-        . Raw excerpts and the full timeline are in the investigation.
+        {result.capped ? " (the API capped the evidence list)" : ""}.
+        {expired ? ` ${expired}` : ""}
+        {unavailable ? ` ${unavailable}` : ""} Raw excerpts and the full timeline are in the investigation.
       </p>
     </DetailSection>
   );

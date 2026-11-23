@@ -4,7 +4,7 @@ import type { ColumnDef, ColumnFiltersState } from "@tanstack/react-table";
 import Link from "next/link";
 import { useMemo } from "react";
 
-import { ConfidenceBadge, SimulationBadge } from "@/components/console/badges";
+import { ConfidenceBadge } from "@/components/console/badges";
 import { DataTable, type Facet, type FacetOption, type TableCounts } from "@/components/console/data-table";
 import { SEVERITY_LABEL, SEVERITY_ORDER, SeverityBadge, SeverityDot } from "@/components/console/severity";
 import { RelativeTime } from "@/components/console/time";
@@ -99,15 +99,6 @@ function columns(now: string): ColumnDef<AlertRow, unknown>[] {
       meta: { className: "hidden w-[164px] @4xl:table-cell", label: "Analyst status" },
       cell: ({ row }) => <AnalystStatusText status={row.original.status} recorded={row.original.statusRecorded} />,
     },
-    {
-      // Facet only (the simulation badge sits in the alert cell): never displayed.
-      id: "sim",
-      accessorFn: (r) => r.sim,
-      header: "Simulation",
-      enableHiding: false,
-      enableSorting: false,
-      cell: () => null,
-    },
   ];
 }
 
@@ -136,7 +127,6 @@ function AlertCell({ row }: { row: AlertRow }) {
         <span className="max-w-[55%] min-w-0 shrink truncate font-mono text-xs text-fg-2 @min-[1080px]:hidden">
           <UntrustedText value={row.assetId} plain limit={48} />
         </span>
-        <SimulationBadge runIds={row.simulationRunIds} />
         <span className="min-w-0 flex-1">
           <UntrustedText value={row.summary} oneLine />
         </span>
@@ -165,11 +155,6 @@ function AssetCell({ row }: { row: AlertRow }) {
   );
 }
 
-const SIM_OPTIONS: FacetOption[] = [
-  { value: "yes", label: "Simulation", description: "Evidence carries an extorq-sim marker" },
-  { value: "no", label: "Not simulation", description: "No simulation marker in the evidence" },
-];
-
 const STATUS_OPTIONS: FacetOption[] = ANALYST_STATUSES.map((status) => ({ value: status, label: analystStatusLabel(status) }));
 
 const SEVERITY_OPTIONS: FacetOption[] = SEVERITY_ORDER.map((severity) => ({
@@ -183,7 +168,6 @@ const FACET_TITLES: Record<FacetKey, string> = {
   rule: "Rule",
   asset: "Asset",
   status: "Status",
-  sim: "Simulation",
 };
 
 function summary({ first, last, filtered, total, pageSize, isFiltered }: TableCounts) {
@@ -248,7 +232,6 @@ export function AlertsTable({
       rule: rulesWithSelection,
       asset: assetOptions,
       status: STATUS_OPTIONS,
-      sim: SIM_OPTIONS,
     };
     return FACET_KEYS.map((key) => ({ columnId: key, title: FACET_TITLES[key], options: options[key] }));
   }, [rulesWithSelection, assetOptions]);
@@ -275,7 +258,6 @@ export function AlertsTable({
         columnFilters={columnFilters}
         onColumnFiltersChange={onFiltersChange}
         search={{ placeholder: "Search rule, title, asset, summary", label: "Search alerts", match: matchesSearch }}
-        initialColumnVisibility={{ sim: false }}
         rowHref={(row) => investigationHref(row.id)}
         busy={pending}
         summary={summary}

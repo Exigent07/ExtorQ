@@ -5,8 +5,9 @@ import { redirect } from "next/navigation";
 
 import { ANALYST_STATUSES, type AnalystStatus } from "@/lib/api/schemas";
 import type { ApiFailure } from "@/lib/api/result";
+import { unresolvedEvidenceByRetention } from "@/lib/investigation";
 import { isHexId } from "@/lib/security/ids";
-import { getAlert, getEvent, requestSummary, updateAlertState } from "@/lib/server/api";
+import { getAlert, getEvent, updateAlertState } from "@/lib/server/api";
 import { log } from "@/lib/server/log";
 import { authorizeAction, destroySession, getSession } from "@/lib/server/session";
 
@@ -14,7 +15,8 @@ import { authorizeAction, destroySession, getSession } from "@/lib/server/sessio
  * Server actions of the console. Each one re-verifies the session (and the role for
  * mutations) itself; the proxy gate is never relied on alone. Next.js additionally
  * rejects cross-origin action calls (Origin vs Host check) and the session cookie is
- * SameSite=Strict.
+ * SameSite=Strict. The only mutation is the analyst workflow state of an alert; AI
+ * (Jev triage) runs in the backend's ai-worker and is never triggered from the console.
  */
 
 type Failure = { ok: false; message: string };
@@ -79,47 +81,6 @@ export async function updateAlertStateAction(
   return { ok: true, message: null, savedAt: result.data.state.updated_at ?? new Date().toISOString() };
 }
 
-// ── On-demand Gemini overview ────────────────────────────────────────────────────
-
-export type SummaryActionResult =
-  | { ok: true; assessmentId: string; status: string; error: string | null }
-  | Failure;
-
-export async function requestSummaryAction(alertId: string): Promise<SummaryActionResult> {
-  const auth = await authorizeAction("requestSummary");
-  if (!auth.ok) return { ok: false, message: auth.message };
-  if (!isHexId(alertId)) return { ok: false, message: "Invalid alert id." };
-  const result = await requestSummary(auth.session, alertId);
-  if (!result.ok) {
-    const { error } = result;
-    log("warn", "ai_summary_unavailable", {
-      user: auth.session.user,
-      alert_id: alertId,
-      kind: error.kind,
-      status: error.status,
-    });
-    if (error.kind === "conflict") {
-      return { ok: false, message: "A summary for this alert is already being generated. Try again shortly." };
-    }
-    if (error.kind === "timeout") {
-      return {
-        ok: false,
-        message: "The AI provider did not answer in time. The deterministic investigation above is unaffected.",
-      };
-    }
-    return failure(error);
-  }
-  revalidatePath(`/investigations/${alertId}`);
-  const { assessment } = result.data;
-  return {
-    ok: true,
-    assessmentId: assessment.assessment_id,
-    status: assessment.status,
-    // The API's refusal / failure reason (budget, cooldown); bounded, rendered as text only.
-    error: assessment.status === "ok" || !assessment.error ? null : assessment.error.slice(0, 300),
-  };
-}
-
 // ── Read-only drill-downs (any signed-in role) ───────────────────────────────────
 
 export interface EvidenceRow {
@@ -134,7 +95,7 @@ export interface EvidenceRow {
 }
 
 export type EvidenceActionResult =
-  | { ok: true; rows: EvidenceRow[]; total: number; capped: boolean; unresolved: number }
+  | { ok: true; rows: EvidenceRow[]; total: number; capped: boolean; expired: number; unavailable: number }
   | Failure;
 
 export async function loadEvidenceAction(alertId: string): Promise<EvidenceActionResult> {
@@ -143,12 +104,14 @@ export async function loadEvidenceAction(alertId: string): Promise<EvidenceActio
   if (!isHexId(alertId)) return { ok: false, message: "Invalid alert id." };
   const result = await getAlert(session, alertId);
   if (!result.ok) return failure(result.error);
-  const { evidence, evidence_total, evidence_capped, unresolved_evidence_ids } = result.data;
+  const { evidence, evidence_total, evidence_capped, unresolved_evidence_ids, expired_evidence_ids } = result.data;
+  const { expired, unavailable } = unresolvedEvidenceByRetention(unresolved_evidence_ids, expired_evidence_ids);
   return {
     ok: true,
     total: evidence_total,
     capped: evidence_capped,
-    unresolved: unresolved_evidence_ids.length,
+    expired: expired.length,
+    unavailable: unavailable.length,
     rows: evidence.slice(0, 50).map((event) => ({
       eventId: event.event_id,
       eventTime: event.event_time,

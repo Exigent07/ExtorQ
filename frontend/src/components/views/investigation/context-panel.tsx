@@ -209,7 +209,9 @@ export function ContextPanel({
               <BulletList items={context.limitations} />
             </div>
           ) : null}
-          {context.rule.blind_spots.length > 0 || context.rule.false_positives.length > 0 ? (
+          {context.rule.version !== context.alert.rule_version ? (
+            <Notice tone="warn">Blind spots and known false positives for this alert&apos;s rule version are unavailable.</Notice>
+          ) : context.rule.blind_spots.length > 0 || context.rule.false_positives.length > 0 ? (
             <div className="grid gap-6 border-t border-hairline-soft pt-5 @container">
               <div className="grid gap-6 @2xl:grid-cols-2">
                 <div className="grid content-start gap-2">

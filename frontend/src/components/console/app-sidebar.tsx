@@ -72,7 +72,7 @@ export function AppSidebar({
           className="flex min-w-0 items-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
         >
           <span className="group-data-[collapsible=icon]:hidden">
-            <BrandLockup scope="Security console · Lab" />
+            <BrandLockup scope="Security console" />
           </span>
           <span className="hidden group-data-[collapsible=icon]:flex">
             <BrandTile />

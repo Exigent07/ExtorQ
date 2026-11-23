@@ -33,8 +33,11 @@ export function evidenceIdFromHash(hash: string): string | null {
 
 // ── AI assessments ────────────────────────────────────────────────────────────────
 
-/** The newest assessment of one task (triage = Jev, summary = Gemini), or null. */
-export function latestAssessment(items: readonly AIAssessment[], task: "triage" | "summary"): AIAssessment | null {
+/**
+ * The newest assessment of one task, or null. Jev triage is the only task since contracts
+ * 2.0; the task stays a parameter so a stored row of any other task is never mistaken for it.
+ */
+export function latestAssessment(items: readonly AIAssessment[], task: "triage"): AIAssessment | null {
   let best: AIAssessment | null = null;
   let bestTime = Number.NEGATIVE_INFINITY;
   for (const item of items) {
@@ -47,34 +50,6 @@ export function latestAssessment(items: readonly AIAssessment[], task: "triage" 
     }
   }
   return best;
-}
-
-export type ChipKind = "evidence" | "context" | "unverified";
-
-/**
- * Evidence chips of one AI statement. `evidence_ids` hold only ids the backend found in the
- * evidence bundle the model received (verified); `unverified_ids` are the rest. A verified
- * id jumps to its evidence row when it is one of this alert's evidence events ("evidence"),
- * otherwise it is a verified related observation of the context ("context", not a link).
- * Unverified ids are flagged and never become links.
- */
-export function statementChips(
-  statement: { evidence_ids: readonly string[]; unverified_ids: readonly string[] },
-  evidenceRows: ReadonlySet<string>,
-): { id: string; kind: ChipKind }[] {
-  const seen = new Set<string>();
-  const chips: { id: string; kind: ChipKind }[] = [];
-  for (const id of statement.evidence_ids) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    chips.push({ id, kind: evidenceRows.has(id) ? "evidence" : "context" });
-  }
-  for (const id of statement.unverified_ids) {
-    if (seen.has(`u:${id}`)) continue;
-    seen.add(`u:${id}`);
-    chips.push({ id, kind: "unverified" });
-  }
-  return chips;
 }
 
 /**
@@ -707,10 +682,6 @@ export function evidenceFieldGroups(e: EvidenceEvent): FieldGroup[] {
       { label: "Instance id", value: e.service_instance_id ?? null, mono: true },
       { label: "Adapter", value: e.adapter_id ?? null, mono: true },
     ]),
-    optional("Simulation", [
-      { label: "Run id", value: e.simulation_run_id ?? null, mono: true },
-      { label: "Scenario", value: e.scenario_id ?? null, mono: true },
-    ]),
   ];
   return groups.filter((g): g is FieldGroup => g !== null);
 }
@@ -718,7 +689,7 @@ export function evidenceFieldGroups(e: EvidenceEvent): FieldGroup[] {
 // ── Analyst actions ───────────────────────────────────────────────────────────────
 
 export interface ActionView {
-  /** "changed the status to", "requested an AI overview", or the humanised action. */
+  /** "changed the status", "built the investigation context", or the humanised action. */
   verb: string;
   /** Status token the action set (analyst workflow), when there is one. */
   status: string | null;
@@ -727,9 +698,11 @@ export interface ActionView {
   details: [string, string][];
 }
 
+/** The audited analyst actions the API records (backend/src/extorq/api/routes/alerts.py). */
 const ACTION_VERB: Record<string, string> = {
   alert_state_changed: "changed the status",
-  ai_summary_requested: "requested an AI overview",
+  alert_state_change_failed: "tried to change the status (not stored)",
+  context_built: "built the investigation context",
 };
 
 /** One analyst action for the activity log; details are listed, never dumped as JSON. */
@@ -737,7 +710,7 @@ export function actionView(action: { action: string; details?: Record<string, un
   const details = action.details ?? {};
   const status = typeof details.status === "string" ? details.status : null;
   const note = typeof details.note === "string" && details.note.trim() !== "" ? details.note : null;
-  const skip = new Set(["status", "note", "previous_status", "previous_assignee", "task"]);
+  const skip = new Set(["status", "note", "previous_status", "previous_assignee"]);
   const rest: [string, string][] = [];
   for (const [key, value] of Object.entries(details)) {
     if (skip.has(key) || value === null || value === undefined || value === "") continue;
@@ -768,34 +741,26 @@ export function coverageIssues(context: Pick<InvestigationContext, "coverage" | 
 // ── AI provider availability ──────────────────────────────────────────────────────
 
 export interface ProviderAvailability {
-  /** The provider's flag as the API process reports it; null when health could not be read. */
+  /**
+   * Status of the worker that runs the provider, from its newest fresh health report ("ok",
+   * "degraded", "failed", "disabled"); null when it is not reporting or health was unreadable.
+   */
+  runtime: string | null;
+  /** Whether the worker runs the provider: false only when it reports "disabled"; null unknown. */
   enabled: boolean | null;
-  /** Whether a key is configured; null when unknown. */
-  configured: boolean | null;
-}
-
-/** Availability of the provider that serves one task (triage = Jev, summary = Gemini). */
-export function providerAvailability(
-  providers: readonly { task: string; enabled?: boolean | null; configured?: boolean | null }[] | null,
-  task: "triage" | "summary",
-): ProviderAvailability {
-  const provider = providers?.find((p) => p.task === task);
-  return { enabled: provider?.enabled ?? null, configured: provider?.configured ?? null };
 }
 
 /**
- * Why an overview cannot be requested right now, from the API's own provider flags (System
- * health reads the same ones). Null when it can be requested or when the flags are unknown: the
- * button then stays available and the API's answer is shown as it comes.
+ * Whether the provider that serves one task (triage: Jev) is running, from System health. The
+ * ai-worker's own report decides; the API process's flags are not used here because Jev never
+ * runs in the API process (its key and flag may legitimately be absent there).
  */
-export function summaryUnavailableReason(gemini: ProviderAvailability): string | null {
-  if (gemini.enabled === false) {
-    return gemini.configured === false
-      ? "Gemini is disabled and has no API key on this deployment, so the API refuses overview requests."
-      : "Gemini is disabled in the AI settings of this deployment, so the API refuses overview requests.";
-  }
-  if (gemini.configured === false) return "No Gemini API key is configured on this deployment, so the API refuses overview requests.";
-  return null;
+export function providerAvailability(
+  providers: readonly { task: string; runtime_status?: string | null }[] | null,
+  task: "triage",
+): ProviderAvailability {
+  const runtime = providers?.find((p) => p.task === task)?.runtime_status ?? null;
+  return { runtime, enabled: runtime === null ? null : runtime !== "disabled" };
 }
 
 /**

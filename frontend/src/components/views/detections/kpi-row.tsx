@@ -94,8 +94,9 @@ export function DetectionsKpiRow({
               />
               <span className="mt-1 block">
                 <span className="text-fg-2 tabular-nums">{formatCount(alerts.rulesFiring)}</span>{" "}
-                {alerts.rulesFiring === 1 ? "rule" : "rules"} fired ·{" "}
-                <span className="text-fg-2 tabular-nums">{formatCount(alerts.simulated)}</span> simulation-tagged
+                {alerts.rulesFiring === 1 ? "rule" : "rules"} fired on{" "}
+                <span className="text-fg-2 tabular-nums">{formatCount(alerts.assets.length)}</span>{" "}
+                {alerts.assets.length === 1 ? "asset" : "assets"}
               </span>
               {partial ? <span className="mt-1 block text-xs">Counted {partial}</span> : null}
             </>

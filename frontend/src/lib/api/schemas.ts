@@ -2,7 +2,7 @@
  * Runtime validation for every analyst-API response the console renders.
  *
  * Source of truth: D1's response models (backend/src/extorq/api/schemas.py, exported to
- * docs/api/openapi.json) and the lead's contracts (backend/src/extorq/contracts, schema 1.1).
+ * docs/api/openapi.json) and the lead's contracts (backend/src/extorq/contracts, schema 2.0).
  * `src/lib/api/contract-check.ts` asserts at compile time that these schemas stay
  * assignable to the types generated from the OpenAPI document (`pnpm gen:api`).
  *
@@ -199,10 +199,9 @@ export const zAlertListItem = z.object({
   last_seen: zTime,
   event_count: z.number().int(),
   entities: zStringMap,
-  /** Services whose telemetry is evidence for the alert (contracts 1.1; [] before 1.1). */
+  /** Services whose telemetry is evidence for the alert ([] when not attributable). */
   service_ids: z.array(z.string()).default([]),
   mitre_techniques: z.array(z.string()),
-  simulation_run_ids: z.array(z.string()),
   created_at: zTime,
   updated_at: zTime,
   analyst_status: zAnalystStatus,
@@ -251,7 +250,6 @@ export const zAlertRecord = z.object({
   evidence_truncated: z.boolean(),
   features: zJsonObject.nullish(),
   mitre_techniques: z.array(z.string()),
-  simulation_run_ids: z.array(z.string()),
   created_at: zTime,
   updated_at: zTime,
   detector_version: z.string(),
@@ -302,14 +300,12 @@ export const zEventListItem = z.object({
   gh_workflow_path: z.string().nullish(),
   gh_workflow_run_id: z.number().int().nullish(),
   gh_actor_login: z.string().nullish(),
-  simulation_run_id: z.string().nullish(),
-  scenario_id: z.string().nullish(),
-  /** Kubernetes enrichment of container logs / audit events (1.1). */
+  /** Kubernetes enrichment of container logs / audit events. */
   k8s_cluster: z.string().nullish(),
   k8s_node: z.string().nullish(),
   k8s_pod_uid: z.string().nullish(),
   k8s_container: z.string().nullish(),
-  /** Service attribution (contracts 1.1): set only when the adapter could attribute it. */
+  /** Service attribution: set only when the adapter could attribute the event to a service. */
   service_id: z.string().nullish(),
   service_name: z.string().nullish(),
   service_instance_id: z.string().nullish(),
@@ -363,6 +359,7 @@ export const zAlertDetailResponse = z.object({
   asset: zAssetBrief.nullish(),
   evidence: z.array(zEvidenceEvent),
   unresolved_evidence_ids: z.array(z.string()),
+  expired_evidence_ids: z.array(z.string()).default([]),
   evidence_total: z.number().int(),
   evidence_capped: z.boolean(),
   actions: z.array(zAnalystActionItem),
@@ -383,7 +380,7 @@ export const zRelationshipType = z.enum(RELATIONSHIP_TYPES);
 export type RelationshipType = z.infer<typeof zRelationshipType>;
 
 const zDetectionAlert = z.object({
-  schema_version: z.string().default("1.0"),
+  schema_version: z.string().default("2.0"),
   alert_id: z.string(),
   rule_id: z.string(),
   rule_version: z.string(),
@@ -405,7 +402,6 @@ const zDetectionAlert = z.object({
   evidence_truncated: z.boolean().default(false),
   features: zAttributes.default({}),
   mitre_techniques: z.array(z.string()).default([]),
-  simulation_run_ids: z.array(z.string()).default([]),
   created_at: zTime,
   updated_at: zTime,
   detector_version: z.string(),
@@ -523,7 +519,7 @@ const zContextAsset = z.object({
 });
 
 export const zInvestigationContext = z.object({
-  schema_version: z.string().default("1.0"),
+  schema_version: z.string().default("2.0"),
   context_id: z.string(),
   alert_id: z.string(),
   builder_version: z.string(),
@@ -544,7 +540,6 @@ export const zInvestigationContext = z.object({
   coverage: z.array(zSourceCoverage).default([]),
   missing_telemetry: z.array(z.string()).default([]),
   limitations: z.array(z.string()).default([]),
-  simulation_run_ids: z.array(z.string()).default([]),
   truncated: z.record(z.string(), z.boolean()).default({}),
 });
 export type InvestigationContext = z.infer<typeof zInvestigationContext>;
@@ -597,58 +592,20 @@ export const zJevTriageResult = z.object({
 });
 export type JevTriageResult = z.infer<typeof zJevTriageResult>;
 
-export const zEvidenceStatement = z.object({
-  text: z.string(),
-  evidence_ids: z.array(z.string()).default([]),
-  verified: z.boolean().default(false),
-  unverified_ids: z.array(z.string()).default([]),
-});
-export type EvidenceStatement = z.infer<typeof zEvidenceStatement>;
-
-export const zSummaryTimelineItem = z.object({
-  time: z.string(),
-  description: z.string(),
-  evidence_ids: z.array(z.string()).default([]),
-  verified: z.boolean().default(false),
-  unverified_ids: z.array(z.string()).default([]),
-});
-export type SummaryTimelineItem = z.infer<typeof zSummaryTimelineItem>;
-
-export const zInvestigationSummary = z.object({
-  what_happened: z.array(zEvidenceStatement),
-  timeline: z.array(zSummaryTimelineItem),
-  why_rule_fired: zEvidenceStatement,
-  related_activity: z.array(zEvidenceStatement).default([]),
-  benign_explanations: z.array(z.string()).default([]),
-  missing_information: z.array(z.string()).default([]),
-  limitations: z.array(z.string()).default([]),
-  recommended_next_steps: z.array(z.string()).default([]),
-  overall_confidence: z.enum(["low", "medium", "high"]),
-});
-export type InvestigationSummary = z.infer<typeof zInvestigationSummary>;
-
-export const zSummaryValidation = z.object({
-  schema_valid: z.boolean(),
-  evidence_ids_cited: z.number().int(),
-  evidence_ids_verified: z.number().int(),
-  evidence_ids_rejected: z.number().int(),
-  statements_without_evidence: z.number().int(),
-});
-
 export const zAIAssessment = z.object({
-  schema_version: z.string().default("1.0"),
+  schema_version: z.string().default("2.0"),
   assessment_id: z.string(),
   alert_id: z.string(),
   context_id: z.string(),
   context_input_hash: z.string(),
+  /** "typesafe-jev" (contracts 2.0: Jev is the only provider). */
   provider: z.string(),
   model: z.string(),
-  task: z.enum(["triage", "summary"]),
+  /** "triage". A string, not an enum: a task added later must not break the AI tab. */
+  task: z.string(),
   prompt_version: z.string(),
   status: zAIStatus,
   triage: zJevTriageResult.nullish(),
-  summary: zInvestigationSummary.nullish(),
-  validation: zSummaryValidation.nullish(),
   latency_ms: z.number().int().nullish(),
   input_tokens: z.number().int().nullish(),
   output_tokens: z.number().int().nullish(),
@@ -667,12 +624,6 @@ export const zAssessmentListResponse = z.object({
 });
 export type AssessmentListResponse = z.infer<typeof zAssessmentListResponse>;
 
-export const zSummaryResponse = z.object({
-  alert_id: z.string(),
-  assessment: zAIAssessment,
-});
-export type SummaryResponse = z.infer<typeof zSummaryResponse>;
-
 // ── Events ───────────────────────────────────────────────────────────────────────
 
 export const zEventListResponse = z.object({
@@ -684,7 +635,7 @@ export type EventListResponse = z.infer<typeof zEventListResponse>;
 
 /** The subset of contracts/event.py SecurityEvent the console renders. */
 export const zSecurityEvent = z.object({
-  schema_version: z.string().default("1.0"),
+  schema_version: z.string().default("2.0"),
   event_id: z.string(),
   event_type: z.string(),
   category: z.string(),
@@ -730,7 +681,6 @@ export const zSecurityEvent = z.object({
     truncated: z.boolean().default(false),
     redaction_count: z.number().int().default(0),
   }),
-  simulation: z.object({ run_id: z.string(), scenario_id: z.string().nullish() }).nullish(),
 });
 export type SecurityEvent = z.infer<typeof zSecurityEvent>;
 
@@ -930,8 +880,16 @@ export type RuleHealthItem = z.infer<typeof zRuleHealthItem>;
 export const zAIProviderHealth = z.object({
   provider: z.string(),
   task: z.string(),
+  /** Key presence and flag as the API process sees them (the ai-worker may differ). */
   configured: z.boolean().nullish(),
   enabled: z.boolean().nullish(),
+  /**
+   * Status of the newest fresh report of the worker that runs the provider (the ai-worker for
+   * Jev): "disabled" when it is off or has no key there; null when no fresh report exists.
+   * A string, not an enum, so a new health status never breaks the page.
+   */
+  runtime_status: z.string().nullish(),
+  runtime_reported_at: zTime.nullish(),
   window_hours: z.number().int(),
   status_counts: z.record(z.string(), z.number().int()),
   last_assessment_at: zTime.nullish(),

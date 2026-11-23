@@ -2,7 +2,6 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { cn } from "cn";
-import { FlaskConical } from "lucide-react";
 import Link from "next/link";
 import { type ReactElement, type ReactNode, useEffect, useMemo, useState } from "react";
 
@@ -132,8 +131,6 @@ function fieldGroups(e: EventListItem): { title: string; rows: Field[] }[] {
       rows: [
         { label: "Service instance", value: e.service_instance_id, mono: true },
         { label: "Adapter", value: e.adapter_id, mono: true },
-        { label: "Simulation run", value: e.simulation_run_id, mono: true },
-        { label: "Scenario", value: e.scenario_id },
       ],
     },
   ];
@@ -221,22 +218,14 @@ export function EventSheet({ event: e, children }: { event: EventListItem; child
         </span>
       }
       badges={
-        <>
-          <span
-            className={cn(
-              "inline-flex h-5 items-center rounded-md px-1.5 text-xs ring-1 ring-hairline-strong ring-inset",
-              OUTCOME_TONE[e.outcome] ?? "text-muted-foreground",
-            )}
-          >
-            <UntrustedText value={e.outcome} plain limit={24} />
-          </span>
-          {e.simulation_run_id ? (
-            <span className="inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-xs text-fg-2 ring-1 ring-hairline-strong ring-inset">
-              <FlaskConical className="size-3" aria-hidden="true" />
-              Simulation
-            </span>
-          ) : null}
-        </>
+        <span
+          className={cn(
+            "inline-flex h-5 items-center rounded-md px-1.5 text-xs ring-1 ring-hairline-strong ring-inset",
+            OUTCOME_TONE[e.outcome] ?? "text-muted-foreground",
+          )}
+        >
+          <UntrustedText value={e.outcome} plain limit={24} />
+        </span>
       }
     >
       {e.message ? (

@@ -26,7 +26,8 @@ export const metadata: Metadata = { title: "Assets" };
 /**
  * Asset details (findings and service summaries) are read for at most this many monitored
  * assets per page view: each detail costs about a dozen queries of the API's shared ClickHouse
- * quota. The lab has 7; beyond the cap a card says its figures were not loaded.
+ * quota. A single-host deployment has well under the cap; beyond it a card says its figures
+ * were not loaded.
  */
 const MAX_DETAILS = 16;
 

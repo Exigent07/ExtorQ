@@ -3,7 +3,7 @@
  * published OpenAPI document (docs/api/openapi.json → `pnpm gen:api` → openapi.d.ts).
  *
  * Each line asserts that a response typed by the OpenAPI document is accepted by the
- * corresponding zod schema's input type. If D1 removes or retypes a field the console
+ * corresponding zod schema's input type. If the API removes or retypes a field the console
  * relies on, `pnpm typecheck` fails here instead of the page failing at runtime.
  * Nothing in this file is executed or bundled.
  */
@@ -28,7 +28,6 @@ export type ContractChecks = [
   Accepts<z.input<typeof S.zAlertStateResponse>, Api["AlertStateResponse"]>,
   Accepts<z.input<typeof S.zContextResponse>, Api["ContextResponse"]>,
   Accepts<z.input<typeof S.zAssessmentListResponse>, Api["AssessmentListResponse"]>,
-  Accepts<z.input<typeof S.zSummaryResponse>, Api["SummaryResponse"]>,
   Accepts<z.input<typeof S.zEventListResponse>, Api["EventListResponse"]>,
   Accepts<z.input<typeof S.zEventDetailResponse>, Api["EventDetailResponse"]>,
   Accepts<z.input<typeof S.zHealthResponse>, Api["HealthResponse"]>,

@@ -43,7 +43,8 @@ export function OverviewPanel({
   contextError: ApiFailure | null;
 }) {
   const alert = detail.alert;
-  const ruleDescription = detail.rule?.description ?? context?.rule.description ?? null;
+  const ruleDescription = detail.rule?.description
+    ?? (context?.rule.version === alert.rule_version ? context.rule.description : null);
   const entities = Object.entries(alert.entities);
   const detectorFeatures = context?.alert.features ?? alert.features ?? null;
   const contextFeatures = context?.features ?? null;
@@ -80,7 +81,7 @@ export function OverviewPanel({
               <UntrustedText value={ruleDescription} limit={900} />
             </p>
           ) : (
-            <p className="text-sm text-muted-foreground">The rule definition is not available from the API.</p>
+            <p className="text-sm text-muted-foreground">The rule definition for this alert&apos;s version is unavailable.</p>
           )}
           <div className="rounded-lg bg-white/[0.02] px-4 py-3.5 ring-1 ring-hairline ring-inset">
             <Eyebrow>What the detector found</Eyebrow>

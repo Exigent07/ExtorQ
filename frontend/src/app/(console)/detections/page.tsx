@@ -45,7 +45,6 @@ export default async function DetectionsPage({ searchParams }: PageProps<"/detec
     rule: query.rule,
     asset: query.asset,
     status: query.status,
-    sim: query.sim,
   };
   const [inRange, rules] = await Promise.all([listAlerts(session, { range: query.range }), listRules(session)]);
 

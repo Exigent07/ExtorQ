@@ -34,7 +34,6 @@ function alert(overrides: Partial<Record<string, unknown>> = {}): AlertListItem 
     entities: {},
     service_ids: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
     mitre_techniques: ["T1110"],
-    simulation_run_ids: [],
     created_at: "2026-11-21T14:41:00Z",
     updated_at: "2026-11-21T14:41:00Z",
     analyst_status: "new",
@@ -85,10 +84,9 @@ describe("parseDetectionsQuery", () => {
   });
 
   it("accepts repeated parameters, in canonical order, without duplicates", () => {
-    const q = parseDetectionsQuery({ severity: ["low", "critical", "low"], status: ["closed_benign", "new"], sim: ["no", "yes"] });
+    const q = parseDetectionsQuery({ severity: ["low", "critical", "low"], status: ["closed_benign", "new"] });
     assert.deepEqual(q.severity, ["critical", "low"]);
     assert.deepEqual(q.status, ["new", "closed_benign"]);
-    assert.deepEqual(q.sim, ["yes", "no"]);
   });
 
   it("drops anything outside the allow-lists and patterns", () => {
@@ -97,7 +95,6 @@ describe("parseDetectionsQuery", () => {
       status: "closed",
       rule: ["vm-001", "VM-001'--", "K8S-002"],
       asset: ["../etc/passwd", "linux:lab-vm-01", "a/../b"],
-      sim: "maybe",
       range: "1y",
       tab: "settings",
       offset: "-5",
@@ -106,7 +103,6 @@ describe("parseDetectionsQuery", () => {
     assert.deepEqual(q.status, []);
     assert.deepEqual(q.rule, ["K8S-002"]);
     assert.deepEqual(q.asset, ["linux:lab-vm-01"]);
-    assert.deepEqual(q.sim, []);
     assert.equal(q.range, "7d");
     assert.equal(q.tab, "alerts");
     assert.equal(q.offset, 0);
@@ -122,6 +118,12 @@ describe("parseDetectionsQuery", () => {
 
   it("reads the rules tab", () => {
     assert.equal(parseDetectionsQuery({ tab: "rules" }).tab, "rules");
+  });
+
+  it("ignores parameters that are not filters (no unknown key reaches the selection)", () => {
+    const q = parseDetectionsQuery({ sim: "yes", category: "x", severity: "high" });
+    assert.deepEqual(Object.keys(q).sort(), ["asset", "offset", "range", "rule", "severity", "status", "tab"]);
+    assert.deepEqual(q.severity, ["high"]);
   });
 });
 
@@ -144,8 +146,8 @@ describe("detectionsSearch", () => {
 
 describe("sanitizeSelection", () => {
   it("re-validates a selection coming back from the browser", () => {
-    const out = sanitizeSelection({ severity: ["high", "bogus"], rule: ["VM-001", "<script>"], asset: ["linux:lab-vm-01", " x"], sim: ["yes"] });
-    assert.deepEqual(out, { severity: ["high"], rule: ["VM-001"], asset: ["linux:lab-vm-01"], status: [], sim: ["yes"] });
+    const out = sanitizeSelection({ severity: ["high", "bogus"], rule: ["VM-001", "<script>"], asset: ["linux:lab-vm-01", " x"] });
+    assert.deepEqual(out, { severity: ["high"], rule: ["VM-001"], asset: ["linux:lab-vm-01"], status: [] });
   });
 });
 
@@ -153,7 +155,7 @@ describe("apiFilters", () => {
   it("sends arrays for severity and status, one rule or asset only when exactly one is chosen", () => {
     const one = apiFilters({ ...emptySelection(), severity: ["high"], rule: ["VM-001"], asset: ["linux:lab-vm-01"] });
     assert.deepEqual([one.severity, one.ruleId, one.assetId, one.partial], [["high"], "VM-001", "linux:lab-vm-01", false]);
-    const several = apiFilters({ ...emptySelection(), rule: ["VM-001", "VM-002"], sim: ["yes"] });
+    const several = apiFilters({ ...emptySelection(), rule: ["VM-001", "VM-002"] });
     assert.equal(several.ruleId, null);
     assert.equal(several.partial, true);
   });
@@ -161,7 +163,7 @@ describe("apiFilters", () => {
 
 describe("matchesSelection", () => {
   const rows = [
-    toAlertRow(alert({ alert_id: "a".repeat(32), severity: "high", rule_id: "VM-002", simulation_run_ids: ["b7a712bc786d"] })),
+    toAlertRow(alert({ alert_id: "a".repeat(32), severity: "high", rule_id: "VM-002" })),
     toAlertRow(alert({ alert_id: "b".repeat(32), severity: "medium", rule_id: "VM-001" })),
     toAlertRow(alert({ alert_id: "c".repeat(32), severity: "low", rule_id: "HTTP-001", analyst_status: "closed_benign" })),
   ];
@@ -170,7 +172,7 @@ describe("matchesSelection", () => {
     assert.deepEqual(pick(emptySelection()), ["VM-002", "VM-001", "HTTP-001"]);
     assert.deepEqual(pick({ ...emptySelection(), severity: ["high", "low"] }), ["VM-002", "HTTP-001"]);
     assert.deepEqual(pick({ ...emptySelection(), severity: ["high", "low"], status: ["new"] }), ["VM-002"]);
-    assert.deepEqual(pick({ ...emptySelection(), sim: ["no"] }), ["VM-001", "HTTP-001"]);
+    assert.deepEqual(pick({ ...emptySelection(), rule: ["VM-001", "HTTP-001"], status: ["closed_benign"] }), ["HTTP-001"]);
   });
 });
 
@@ -179,7 +181,7 @@ describe("alertFigures", () => {
     const items = [
       alert({ alert_id: "a".repeat(32), severity: "high", analyst_status: "new", asset_id: "k8s:extorq-lab", asset_type: "kubernetes_cluster" }),
       alert({ alert_id: "b".repeat(32), severity: "high", analyst_status: "investigating" }),
-      alert({ alert_id: "c".repeat(32), severity: "low", analyst_status: "closed_false_positive", simulation_run_ids: ["c7cbc976ecaf"] }),
+      alert({ alert_id: "c".repeat(32), severity: "low", analyst_status: "closed_false_positive" }),
     ];
     const f = alertFigures(items, 3, false);
     assert.equal(f.total, 3);
@@ -187,7 +189,6 @@ describe("alertFigures", () => {
     assert.deepEqual(f.bySeverity, { critical: 0, high: 2, medium: 0, low: 1, info: 0 });
     assert.deepEqual([f.open, f.untriaged, f.investigating, f.acknowledged, f.closed], [2, 1, 1, 0, 1]);
     assert.equal(f.openBySeverity.high, 2);
-    assert.equal(f.simulated, 1);
     assert.deepEqual(
       f.assets.map((a) => [a.assetId, a.count]),
       [

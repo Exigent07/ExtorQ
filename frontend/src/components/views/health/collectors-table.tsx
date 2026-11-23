@@ -17,7 +17,7 @@ import type { CollectorStatus } from "@/lib/api/schemas";
 import { DASH, formatCount, formatDuration, formatInterval, formatVersion } from "@/lib/format";
 import { assetHref, isAssetId } from "@/lib/security/ids";
 
-import { collectorFreshness, STALE_INTERVALS } from "./model";
+import { collectorFreshness, otelDelivery, STALE_INTERVALS } from "./model";
 
 type HealthKey = "failed" | "stale" | "degraded" | "other" | "healthy";
 
@@ -143,6 +143,30 @@ function Sources({ sources }: { sources: string[] }) {
   );
 }
 
+function OtelDeliveryDetails({ collector }: { collector: CollectorStatus }) {
+  const delivery = otelDelivery(collector);
+  if (delivery === null) return null;
+  return (
+    <details className="py-1 text-xs text-muted-foreground">
+      <summary className="cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-ring">
+        <StatusPill tone={delivery.tone} label={delivery.label} />
+      </summary>
+      <p className="mt-1 max-w-60 break-all">
+        <UntrustedText value={collector.asset_id} plain mono /> · <UntrustedText value={collector.source_types.join(", ")} plain mono />
+      </p>
+      <dl className="mt-1 grid grid-cols-[1fr_auto] gap-x-2 gap-y-0.5 tabular-nums">
+        {delivery.measures.map(({ label, value }) => (
+          <div key={label} className="contents">
+            <dt>{label}</dt>
+            <dd className="text-right text-fg-2">{value === null ? DASH : formatCount(value)}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-1 max-w-60">The exporter and its queue are shared by sources on the node. Record counters are cumulative since the Collector started.</p>
+    </details>
+  );
+}
+
 function columns(now: string): ColumnDef<CollectorStatus, unknown>[] {
   return [
     {
@@ -198,6 +222,7 @@ function columns(now: string): ColumnDef<CollectorStatus, unknown>[] {
                 </Hint>
               ) : null}
             </span>
+            <OtelDeliveryDetails collector={c} />
           </div>
         );
       },
@@ -276,11 +301,12 @@ function columns(now: string): ColumnDef<CollectorStatus, unknown>[] {
     },
     {
       id: "buffered",
-      accessorFn: (c) => c.records_buffered,
+      accessorFn: (c) => c.collector_type === "k8s_otel" ? -1 : c.records_buffered,
       header: "Buffered",
       sortDescFirst: true,
       meta: { align: "right", className: "hidden w-[96px] @2xl:table-cell", label: "Records buffered" },
       cell: ({ row }) => {
+        if (row.original.collector_type === "k8s_otel") return <span className="text-muted-foreground">{DASH}</span>;
         const n = row.original.records_buffered;
         return (
           <span className={cn("text-sm tabular-nums", n > 0 ? "text-fg-2" : "text-muted-foreground")}>{formatCount(n)}</span>

@@ -3,6 +3,20 @@
  * data (untrusted strings stay strings: callers still render them with UntrustedText).
  */
 
+/** Count each unresolved reference once, using its known retention status. */
+export function unresolvedEvidenceByRetention(
+  unresolvedIds: readonly string[],
+  expiredIds: readonly string[],
+): { expired: string[]; unavailable: string[] } {
+  const knownExpired = new Set(expiredIds);
+  const expired: string[] = [];
+  const unavailable: string[] = [];
+  for (const id of new Set(unresolvedIds)) {
+    (knownExpired.has(id) ? expired : unavailable).push(id);
+  }
+  return { expired, unavailable };
+}
+
 /**
  * The correlation layer's timeline summaries usually begin with the event type itself
  * ("auth.ssh.invalid_user user=x from 10.0.2.2:61976", "process.audit.exec: auditd exec ...").
@@ -33,17 +47,4 @@ export function chronological<T extends { event_time: string; event_id: string }
     if (delta !== 0 && !Number.isNaN(delta)) return delta;
     return a.event_id < b.event_id ? -1 : a.event_id > b.event_id ? 1 : 0;
   });
-}
-
-const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/;
-
-/**
- * A time written by an AI provider (untrusted text): shown in the console's UTC format when
- * it is a well-formed ISO-8601 instant with a zone, otherwise returned exactly as written
- * (never guessed). The caller still renders the result as untrusted text.
- */
-export function providerTime(raw: string, format: (iso: string) => string): string {
-  const value = raw.trim();
-  if (!ISO_INSTANT.test(value) || Number.isNaN(Date.parse(value))) return raw;
-  return format(value);
 }

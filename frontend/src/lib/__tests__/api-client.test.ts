@@ -1,50 +1,45 @@
 /**
- * The server-side API client against a throwaway local HTTP server: credentials and identity
- * headers, retries, size and schema limits, redirects and configuration errors.
- * The token is synthetic (random per run) and lives in a temporary file.
+ * The server-side API client at the Fetch boundary. Request and Response exercise the wire
+ * shapes without binding a socket. The deployed smoke suite covers the HTTP transport.
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, beforeEach, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it, mock } from "node:test";
 
 import { z } from "zod";
 
 import type { Session } from "../auth/token";
 import { apiRequest } from "../server/api-client";
 
-type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+type Handler = (request: Request) => Response;
 
 const TOKEN = `synthetic-test-token-${randomBytes(24).toString("hex")}`;
 const session: Session = { user: "analyst", role: "viewer", sessionId: "s", issuedAt: 0, expiresAt: 0 };
 const schema = z.object({ value: z.number() });
 
-let server: Server;
-let handler: Handler = (_req, res) => res.end("{}");
-let hits: IncomingMessage[] = [];
+let handler: Handler = () => Response.json({});
+let hits: Request[] = [];
 let dir: string;
 
-before(async () => {
+before(() => {
   dir = mkdtempSync(join(tmpdir(), "extorq-d2-test-"));
   const tokenFile = join(dir, "api_token");
   writeFileSync(tokenFile, `${TOKEN}\n`, { mode: 0o600 });
-  server = createServer((req, res) => {
-    hits.push(req);
-    handler(req, res);
+  mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    hits.push(request);
+    return handler(request);
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  process.env.EXTORQ_API_BASE_URL = `http://127.0.0.1:${port}`;
+  process.env.EXTORQ_API_BASE_URL = "http://127.0.0.1:1";
   process.env.EXTORQ_API_TOKEN_FILE = tokenFile;
   process.env.EXTORQ_API_TIMEOUT_MS = "1000";
 });
 
 after(() => {
-  server.close();
+  mock.restoreAll();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -56,22 +51,19 @@ const get = () => apiRequest(session, schema, { method: "GET", path: "/api/v1/ov
 
 describe("apiRequest", () => {
   it("sends the bearer token and the verified identity, and validates the body", async () => {
-    handler = (_req, res) => res.end(JSON.stringify({ value: 7, extra: "stripped" }));
+    handler = () => Response.json({ value: 7, extra: "stripped" });
     const result = await get();
     assert.ok(result.ok);
     assert.deepEqual(result.data, { value: 7 });
     const req = hits[0]!;
-    assert.equal(req.headers.authorization, `Bearer ${TOKEN}`);
-    assert.equal(req.headers["x-extorq-user"], "analyst");
-    assert.equal(req.headers["x-extorq-role"], "viewer");
-    assert.match(String(req.headers["x-request-id"]), /^[0-9a-f-]{36}$/);
+    assert.equal(req.headers.get("authorization"), `Bearer ${TOKEN}`);
+    assert.equal(req.headers.get("x-extorq-user"), "analyst");
+    assert.equal(req.headers.get("x-extorq-role"), "viewer");
+    assert.match(req.headers.get("x-request-id") ?? "", /^[0-9a-f-]{36}$/);
   });
 
   it("retries idempotent GETs on 503 (bounded) but never retries a POST", async () => {
-    handler = (_req, res) => {
-      res.statusCode = 503;
-      res.end(JSON.stringify({ detail: "storage unavailable" }));
-    };
+    handler = () => Response.json({ detail: "storage unavailable" }, { status: 503 });
     const result = await get();
     assert.equal(hits.length, 3);
     assert.ok(!result.ok && result.error.kind === "unavailable");
@@ -83,36 +75,36 @@ describe("apiRequest", () => {
   });
 
   it("rejects responses that do not match the schema without passing data on", async () => {
-    handler = (_req, res) => res.end(JSON.stringify({ value: "seven" }));
+    handler = () => Response.json({ value: "seven" });
     const result = await get();
     assert.ok(!result.ok && result.error.kind === "invalid_response");
     assert.ok(!result.ok && result.error.message.includes("value"));
   });
 
   it("rejects non-JSON and oversized responses", async () => {
-    handler = (_req, res) => res.end("<html>proxy error</html>");
-    let result = await get();
+    handler = () => new Response("<html>proxy error</html>");
+    const result = await get();
     assert.ok(!result.ok && result.error.message === "The API response was not JSON");
-    handler = (_req, res) => {
-      res.setHeader("content-type", "application/json");
-      const chunk = Buffer.alloc(1024 * 1024, 0x20);
-      for (let i = 0; i < 9; i += 1) res.write(chunk);
-      res.end();
-    };
-    result = await get();
-    assert.ok(!result.ok && result.error.message.includes("size limit"));
+
+    handler = () => new Response(new ReadableStream({
+      start(controller) {
+        const chunk = Buffer.alloc(1024 * 1024, 0x20);
+        for (let i = 0; i < 9; i += 1) controller.enqueue(chunk);
+        controller.close();
+      },
+    }));
+    const oversized = await get();
+    assert.ok(!oversized.ok && oversized.error.message.includes("size limit"));
   });
 
-  it("does not follow redirects (the token is never replayed to another location)", async () => {
-    handler = (req, res) => {
-      if (req.url?.startsWith("/elsewhere")) return res.end(JSON.stringify({ value: 1 }));
-      res.statusCode = 302;
-      res.setHeader("location", "/elsewhere");
-      res.end();
-    };
-    const result = await get();
-    assert.ok(!result.ok);
-    assert.equal(hits.filter((h) => h.url?.startsWith("/elsewhere")).length, 0);
+  it("requires Fetch to reject redirects when sending credentials", async () => {
+    handler = () => { throw new TypeError("redirect rejected"); };
+    const result = await apiRequest(session, schema, {
+      method: "POST", path: "/api/v1/alerts/x/state", route: "r", body: {},
+    });
+    assert.ok(!result.ok && result.error.kind === "network");
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0]?.redirect, "error");
   });
 
   it("maps 401/403/404/409 to fixed messages", async () => {
@@ -123,10 +115,7 @@ describe("apiRequest", () => {
       [409, "conflict"],
     ];
     for (const [status, kind] of cases) {
-      handler = (_req, res) => {
-        res.statusCode = status;
-        res.end(JSON.stringify({ detail: "alert not found" }));
-      };
+      handler = () => Response.json({ detail: "alert not found" }, { status });
       const result = await get();
       assert.ok(!result.ok && result.error.kind === kind, `${status}`);
       if (status === 401) assert.ok(!result.ok && !result.error.message.includes("alert not found"));

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { AIAssessment, EvidenceEvent, JevAnswer, Relationship, TimelineEntry } from "../../../lib/api/schemas";
+import { unresolvedEvidenceByRetention } from "../../../lib/investigation";
 import {
   actionView,
   axisBounds,
@@ -23,13 +24,21 @@ import {
   orderFeatures,
   parseTab,
   percent,
+  providerAvailability,
   relatedRows,
   relationshipGroups,
-  statementChips,
   topTypes,
 } from "./model";
 
 const ID = (n: number) => n.toString(16).padStart(32, "0");
+
+describe("evidence retention", () => {
+  it("separates expired references from unresolved references of unknown cause", () => {
+    assert.deepEqual(unresolvedEvidenceByRetention([ID(2), ID(1), ID(1)], [ID(1), ID(3)]), {
+      expired: [ID(1)], unavailable: [ID(2)],
+    });
+  });
+});
 
 function entry(n: number, time: string, type: string, extra: Partial<TimelineEntry> = {}): TimelineEntry {
   return {
@@ -73,27 +82,22 @@ describe("tabs and anchors", () => {
 });
 
 describe("AI assessments", () => {
-  const base = { task: "summary", created_at: "2026-11-21T20:00:00Z" } as AIAssessment;
-  it("picks the newest assessment of a task", () => {
+  const base = { task: "triage", created_at: "2026-11-21T20:00:00Z" } as AIAssessment;
+  it("picks the newest triage assessment and never another task's row", () => {
     const items = [
       { ...base, assessment_id: "a", created_at: "2026-11-21T20:00:00Z" },
       { ...base, assessment_id: "b", created_at: "2026-11-21T21:00:00Z" },
-      { ...base, assessment_id: "c", task: "triage", created_at: "2026-11-21T22:00:00Z" },
+      { ...base, assessment_id: "c", task: "other", created_at: "2026-11-21T22:00:00Z" },
     ] as AIAssessment[];
-    assert.equal(latestAssessment(items, "summary")?.assessment_id, "b");
-    assert.equal(latestAssessment(items, "triage")?.assessment_id, "c");
+    assert.equal(latestAssessment(items, "triage")?.assessment_id, "b");
     assert.equal(latestAssessment([], "triage"), null);
   });
-  it("links only verified ids that are evidence rows; flags unverified ones", () => {
-    const chips = statementChips(
-      { evidence_ids: [ID(1), ID(2), ID(1)], unverified_ids: ["deadbeef"] },
-      new Set([ID(1)]),
-    );
-    assert.deepEqual(chips, [
-      { id: ID(1), kind: "evidence" },
-      { id: ID(2), kind: "context" },
-      { id: "deadbeef", kind: "unverified" },
-    ]);
+  it("takes Jev's availability from the ai-worker's report, never from the API process flags", () => {
+    const jev = (runtime_status: string | null) => [{ task: "triage", runtime_status, enabled: false, configured: false }];
+    assert.deepEqual(providerAvailability(jev("ok"), "triage"), { runtime: "ok", enabled: true });
+    assert.deepEqual(providerAvailability(jev("disabled"), "triage"), { runtime: "disabled", enabled: false });
+    assert.deepEqual(providerAvailability(jev(null), "triage"), { runtime: null, enabled: null });
+    assert.deepEqual(providerAvailability(null, "triage"), { runtime: null, enabled: null });
   });
   it("places the sufficient-context probability in the documented bands", () => {
     assert.equal(jevZone(0.1), "insufficient");

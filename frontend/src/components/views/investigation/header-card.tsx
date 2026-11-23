@@ -3,7 +3,7 @@ import { TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { ConfidenceBadge, SimulationBadge } from "@/components/console/badges";
+import { ConfidenceBadge } from "@/components/console/badges";
 import { Hint } from "@/components/console/hint";
 import { IdText } from "@/components/console/id-text";
 import { SeverityBadge } from "@/components/console/severity";
@@ -42,7 +42,7 @@ function Fact({
 }
 
 /**
- * The alert at a glance: rule, title, severity, simulation marker, the detector's summary,
+ * The alert at a glance: rule, title, severity, ATT&CK techniques, the detector's summary,
  * and the facts that frame every tab (evidence confidence, asset, first and last seen, event
  * count). The analyst status picker sits top right for analysts; viewers see the status.
  */
@@ -65,11 +65,11 @@ export function HeaderCard({
   const mix = evidenceMix(detail.evidence, 2);
   const evidenceSub = alert.evidence_truncated
     ? "evidence list truncated by the detector"
-    : detail.evidence_capped
-      ? `${formatCount(detail.evidence.length)} of ${formatCount(detail.evidence_total)} stored events shown`
+    : detail.evidence_capped || detail.unresolved_evidence_ids.length > 0
+      ? `${formatCount(detail.evidence.length)} of ${formatCount(detail.evidence_total)} cited events shown`
       : mix
         ? <UntrustedText value={mix} limit={160} plain />
-        : `${formatCount(detail.evidence_total)} stored evidence event${detail.evidence_total === 1 ? "" : "s"}`;
+        : `${formatCount(detail.evidence.length)} stored evidence event${detail.evidence.length === 1 ? "" : "s"}`;
 
   return (
     <section aria-labelledby="alert-title" className="@container mt-7 overflow-hidden rounded-xl bg-card shadow-card ring-1 ring-hairline">
@@ -98,7 +98,6 @@ export function HeaderCard({
             </h1>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <SeverityBadge severity={alert.severity} size="md" />
-              <SimulationBadge runIds={alert.simulation_run_ids} className="h-6" />
               {alert.mitre_techniques.map((technique) => (
                 <Hint key={technique} content="MITRE ATT&CK technique mapped by the rule definition.">
                   <Chip mono className="h-6">
@@ -107,7 +106,7 @@ export function HeaderCard({
                 </Hint>
               ))}
               {natSources !== null ? (
-                <Hint content="The evidence's source address is shared by NAT or a gateway (lab loopback, cluster bridge): it does not identify one origin, so links through it stay unestablished on the Timeline and Correlation tabs.">
+                <Hint content="The evidence's source address is shared by NAT or a gateway (the VM's user-mode network, a cluster bridge): it does not identify one origin, so links through it stay unestablished on the Timeline and Correlation tabs.">
                   <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-health-warn/[0.06] px-2 text-xs text-fg-2 ring-1 ring-health-warn/25 ring-inset">
                     <TriangleAlert className="size-3 text-health-warn" aria-hidden="true" />
                     Shared NAT source
@@ -148,15 +147,7 @@ export function HeaderCard({
         </Fact>
         <Fact
           label="Asset"
-          sub={
-            asset ? (
-              <>
-                {assetTypeLabel(asset.asset_type)} · <UntrustedText value={asset.environment} limit={24} plain />
-              </>
-            ) : (
-              assetTypeLabel(alert.asset_type)
-            )
-          }
+          sub={assetTypeLabel(asset?.asset_type ?? alert.asset_type)}
         >
           <Link href={assetHref(alert.asset_id)} className="block truncate hover:underline">
             <UntrustedText value={assetName ?? alert.asset_id} limit={48} plain />

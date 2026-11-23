@@ -3,8 +3,9 @@
  * ExtorQ console smoke test (read-only).
  *
  * Signs in through the real login form (the server action's no-JavaScript form post), then
- * fetches every view and asserts HTTP 200 plus key markers. It never changes alert state and
- * never requests AI summaries. Passwords are read from files and never printed.
+ * fetches every view and asserts HTTP 200 plus key markers. It never changes alert state (the
+ * console has no other mutation; AI triage runs in the backend). Passwords are read from files
+ * and never printed.
  *
  * Usage:
  *   EXTORQ_SMOKE_ANALYST_PASSWORD_FILE=../var/secrets/analyst_password \
@@ -15,14 +16,16 @@
  * EXTORQ_SMOKE_ANALYST_USER / EXTORQ_SMOKE_VIEWER_USER (default analyst / viewer),
  * EXTORQ_SMOKE_ALLOW_ERRORS=1 to report (not fail on) blocks that show an API error state,
  * EXTORQ_SMOKE_ALERTS="VM-001=<alert id>,GH-001=<alert id>,..." to pin the investigation checked
- * for a mandatory rule (otherwise the newest alert of that rule in the last 30 days is used).
+ * for a rule (otherwise the newest alert of that rule in the last 30 days is used),
+ * EXTORQ_SMOKE_RULES="VM-001,VM-003,..." to choose the rules whose investigation is checked
+ * (default: the five original mandatory rules VM-001, VM-002, K8S-001, K8S-002, GH-001).
  *
  * Coverage (demo readiness): overview; every asset class (macOS host, Linux VM, kind cluster,
  * Kubernetes node, GitHub repository) with its overview / services / findings / events tabs;
  * a Kubernetes workload, a Kubernetes Service and a host service; the investigation of each
- * mandatory rule (VM-001, VM-002, K8S-001, K8S-002, GH-001) section by section, including the
- * honest state of the Jev and Gemini panels; detection filters; system health; viewer
- * read-only behaviour.
+ * checked rule section by section, including the honest state of the Jev panel; detection
+ * filters; system health; viewer read-only behaviour; and that no removed concept (simulation
+ * badges or filters, the Gemini panel, "lab" environment labels) is rendered anywhere.
  * Exit code 0 when every check passed, 1 otherwise.
  */
 import { readFileSync } from "node:fs";
@@ -32,9 +35,9 @@ const baseArg = args.indexOf("--base");
 const BASE = new URL(baseArg >= 0 && args[baseArg + 1] ? args[baseArg + 1] : "http://127.0.0.1:3100");
 const ALLOW_ERRORS = process.env.EXTORQ_SMOKE_ALLOW_ERRORS === "1";
 const TIMEOUT_MS = 30_000;
-// Each console page costs the API about 10-20 ClickHouse queries and the read identity is
-// limited to 1200 queries per minute (shared with every other API user): pace the requests
-// so a full run never exhausts it (EXTORQ_SMOKE_PACE_MS, default 1500 ms between requests).
+// Each console page costs the API about 10-20 ClickHouse queries and the read identity's quota
+// (6000 queries per minute since migration 0007) is shared with every other API user: pace the
+// requests so a full run never starves them (EXTORQ_SMOKE_PACE_MS, default 1500 ms).
 const PACE_MS = Math.max(0, Number.parseInt(process.env.EXTORQ_SMOKE_PACE_MS ?? "1500", 10) || 0);
 let lastRequestAt = 0;
 
@@ -48,6 +51,24 @@ const results = [];
 function record(ok, name, detail = "") {
   results.push({ ok, name, detail });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
+}
+
+/**
+ * Check retired product controls and branding in their HTML structure. Resource names and
+ * historical controlled-validation provenance can use the same words in evidence text.
+ */
+const REMOVED_COPY = [
+  { name: "Simulation badge", pattern: /lucide-flask-conical[^>]*>[\s\S]*?<\/svg>\s*Simulation\s*<\/span>/ },
+  { name: "Gemini panel", pattern: /\bid="gemini-title"/ },
+  { name: "LAB environment pill", pattern: /bg-brand"\s*><\/span>\s*LAB\s*<\/span>/ },
+  { name: "Lab product label", pattern: />Security console · Lab<\/span>/ },
+];
+
+function checkNoRemovedCopy(name, html) {
+  const nav = html.match(/<nav\b[^>]*aria-label="Primary"[^>]*>[\s\S]*?<\/nav>/i)?.[0] ?? "";
+  const found = REMOVED_COPY.filter((c) => c.pattern.test(html)).map((c) => c.name);
+  if (/>\s*Simulations\s*<\/span>/.test(nav)) found.push("Simulations navigation");
+  record(found.length === 0, `${name}: no removed concepts rendered`, found.length ? `found: ${found.join(", ")}` : "");
 }
 
 function readPassword(envName) {
@@ -164,6 +185,7 @@ async function page(name, path, cookie, markers, { expectErrorState = false } = 
     .filter(Boolean)
     .join("; ");
   record(ok, `${name} ${path}`, detail);
+  if (response.status === 200) checkNoRemovedCopy(name, response.text);
   return response;
 }
 
@@ -194,7 +216,14 @@ function section(html, id) {
   return html.slice(start, next < 0 ? undefined : next);
 }
 
-const MANDATORY_RULES = ["VM-001", "VM-002", "K8S-001", "K8S-002", "GH-001"];
+const DEFAULT_RULES = ["VM-001", "VM-002", "K8S-001", "K8S-002", "GH-001"];
+const MANDATORY_RULES = (() => {
+  const chosen = (process.env.EXTORQ_SMOKE_RULES ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^[A-Z][A-Z0-9]{1,15}-\d{3}$/.test(s));
+  return chosen.length > 0 ? [...new Set(chosen)] : DEFAULT_RULES;
+})();
 const SEVERITY_WORDS = ["Critical", "High", "Medium", "Low", "Info"];
 
 function pinnedAlerts() {
@@ -206,17 +235,16 @@ function pinnedAlerts() {
   return pinned;
 }
 
-/** Rule ids shown in the alert-history table (not the filter form's options or the rules table). */
-function tableRuleIds(html) {
-  const history = section(html, "alert-history-title");
-  const table = history.slice(Math.max(0, history.indexOf("<table")));
-  return [...table.matchAll(/>([A-Z][A-Z0-9]{1,15}-\d{3})<\/span>/g)].map((m) => m[1]);
+/** Data rows of the alert-history table, excluding its filter controls and the rules table. */
+function alertHistoryRows(html) {
+  const table = html.match(/<table\b[^>]*aria-label="Alert history"[^>]*>[\s\S]*?<\/table>/i)?.[0] ?? "";
+  const body = table.match(/<tbody\b[^>]*>([\s\S]*?)<\/tbody>/i)?.[1] ?? "";
+  return [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((match) => match[1]);
 }
 
 /**
- * Investigation of one mandatory rule: every section renders, the header carries severity,
- * evidence confidence and the simulation badge, and the AI panels are either real
- * assessments or their honest empty states.
+ * Investigation of one rule: every section renders, the header carries severity and evidence
+ * confidence, and the Jev panel is either a real assessment or its honest empty state.
  */
 async function investigation(rule, cookie, pinned) {
   let path = pinned[rule] ? `/investigations/${pinned[rule]}` : null;
@@ -237,7 +265,6 @@ async function investigation(rule, cookie, pinned) {
     "Coverage and known gaps",
     "Involved services and assets",
     "Jev contextual assessment",
-    "Gemini overview",
     "Correlated observations",
     "Analyst status",
   ]);
@@ -245,7 +272,6 @@ async function investigation(rule, cookie, pinned) {
   const text = visibleText(response.text);
   const header = text.slice(0, text.indexOf("Evidence confidence"));
   record(SEVERITY_WORDS.some((w) => header.includes(w)), `investigation ${rule}: severity in the header`);
-  record(header.includes("Simulation"), `investigation ${rule}: simulation badge (scenario telemetry)`);
   record(
     /Evidence confidence\s+(High|Medium|Low)/.test(text),
     `investigation ${rule}: evidence confidence shown`,
@@ -258,18 +284,12 @@ async function investigation(rule, cookie, pinned) {
   );
   const evidenceRows = (section(response.text, "evidence-title").match(/id="evidence-[0-9a-f]{32}"/g) ?? []).length;
   record(evidenceRows > 0, `investigation ${rule}: evidence table has rows`, `${evidenceRows} rows`);
-  // The AI cards are checked on the whole page: React may stream the end of a large card after
+  // The AI card is checked on the whole page: React may stream the end of a large card after
   // later sections (an outlined boundary), so a slice up to the next heading can stop early. The
-  // phrases below appear only in their own card.
+  // phrases below appear only in the Jev card.
   record(
     text.includes("No Jev triage exists for this alert") || text.includes("Recommendation") || text.includes("Jev did not produce a triage"),
     `investigation ${rule}: Jev panel is an assessment or an honest empty state`,
-  );
-  record(
-    text.includes("No overview has been generated for this alert") ||
-      text.includes("What happened") ||
-      text.includes("did not produce an overview"),
-    `investigation ${rule}: Gemini panel is an overview or an honest empty state`,
   );
   return path;
 }
@@ -348,16 +368,21 @@ async function assetDrilldown(assetsHtml, cookie) {
 }
 
 /** Detection filters reach the API and the table honours them. */
-async function detectionFilters(cookie) {
+async function detectionFilters(cookie, clusterPath) {
   const byRule = await page("detections: rule filter", "/detections?rule=VM-001&range=30d", cookie, ["Alert history", "match the filters"]);
   if (byRule) {
-    const ids = tableRuleIds(byRule.text);
+    const ids = alertHistoryRows(byRule.text).map((row) => row.match(/>([A-Z][A-Z0-9]{1,15}-\d{3})<\/span>/)?.[1] ?? "missing rule");
     record(ids.length > 0 && ids.every((id) => id === "VM-001"), "detections: rule filter keeps only VM-001 rows", ids.join(" ") || "no rows");
   }
-  const byAsset = await page("detections: asset filter", "/detections?asset=k8s%3Aextorq-lab&range=30d", cookie, ["Alert history"]);
-  if (byAsset) {
-    const ids = tableRuleIds(byAsset.text);
-    record(ids.length > 0 && ids.every((id) => id.startsWith("K8S-") || id === "APP-001"), "detections: asset filter keeps cluster rows", [...new Set(ids)].join(" ") || "no rows");
+  if (clusterPath) {
+    const asset = clusterPath.slice("/assets/".length);
+    const byAsset = await page("detections: asset filter", `/detections?asset=${asset}&range=30d`, cookie, ["Alert history"]);
+    if (byAsset) {
+      const paths = alertHistoryRows(byAsset.text).map((row) => firstLink(row, "/assets/"));
+      record(paths.length > 0 && paths.every((path) => path === clusterPath), "detections: asset filter keeps cluster rows", `${paths.length} rows`);
+    }
+  } else {
+    record(false, "detections: asset filter keeps cluster rows", "no Kubernetes cluster listed");
   }
   await page("detections: severity filter", "/detections?severity=high&range=30d", cookie, ["Alert history", "match the filters"]);
   await page("detections: status filter", "/detections?status=new&range=30d", cookie, ["Alert history", "match the filters"]);
@@ -380,6 +405,7 @@ async function main() {
 
   const loginPage = await request("/login");
   record(loginPage.status === 200 && visibleText(loginPage.text).includes("Sign in"), "login page renders", `HTTP ${loginPage.status}`);
+  if (loginPage.status === 200) checkNoRemovedCopy("login page", loginPage.text);
 
   const badLogin = await login(process.env.EXTORQ_SMOKE_ANALYST_USER ?? "analyst", "definitely-not-the-password");
   record(badLogin.cookie === null, "wrong password gets no session", badLogin.detail);
@@ -408,9 +434,10 @@ async function main() {
   if (overview) {
     checkSecurityHeaders("overview", overview.headers);
     const text = visibleText(overview.text);
-    // App shell: labelled nav groups, the Cmd/Ctrl-K palette trigger, the environment pill.
-    const shell = ["Monitor", "Detect", "Operate", "System health", "Grafana", "Search", "LAB"].filter((m) => !text.includes(m));
-    record(shell.length === 0, "console shell: sidebar groups, palette trigger, environment", shell.length ? `missing: ${shell.join(", ")}` : "");
+    // App shell: labelled nav groups, the Cmd/Ctrl-K palette trigger and the product scope line
+    // (no environment pill: the 2026-11-22 decision removed every "lab" label).
+    const shell = ["Monitor", "Detect", "Operate", "System health", "Grafana", "Search", "Security console"].filter((m) => !text.includes(m));
+    record(shell.length === 0, "console shell: sidebar groups, palette trigger, scope line", shell.length ? `missing: ${shell.join(", ")}` : "");
     record(!/Show all \d+ characters/.test(text), "no 'Show all N characters' walls on the overview");
   }
 
@@ -445,7 +472,8 @@ async function main() {
     const path = await investigation(rule, cookie, pinned);
     investigationPath ??= path;
   }
-  await detectionFilters(cookie);
+  const clusterPath = assets ? allLinks(assets.text, "/assets/k8s%3A").find((path) => !path.includes("%2F")) : null;
+  await detectionFilters(cookie, clusterPath);
   await page("health", "/health", cookie, [
     "System health",
     "Ingestion spool",
@@ -453,7 +481,7 @@ async function main() {
     "Ingestion pipeline",
     "Rule execution",
     "Quarantine and rejections",
-    "AI providers",
+    "AI triage",
   ]);
   await page("filtered detections", "/detections?severity=high&range=24h", cookie, ["Alert history"]);
   await page("invalid alert id is refused before the API", "/investigations/not-an-id", cookie, [
@@ -469,10 +497,11 @@ async function main() {
     if (viewer.cookie && investigationPath) {
       await page("viewer investigation is read-only", investigationPath, viewer.cookie, [
         "Viewer accounts can read investigations but cannot change their status",
-        "Viewer accounts cannot request AI overviews",
       ]);
       await forgedViewerStateChange(cookie, viewer.cookie, investigationPath);
     }
+  } else {
+    record(false, "viewer sign-in", "EXTORQ_SMOKE_VIEWER_PASSWORD_FILE not set or unreadable");
   }
   return finish();
 }

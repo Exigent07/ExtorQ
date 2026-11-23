@@ -9,7 +9,7 @@ import { StatusPill } from "@/components/console/status-badge";
 import { UntrustedText } from "@/components/console/untrusted-text";
 import { CollectorsTable } from "@/components/views/health/collectors-table";
 import {
-  AIProvidersCard,
+  AITriageCard,
   HealthNotesCard,
   PipelineCard,
   QuarantineCard,
@@ -27,7 +27,7 @@ export const metadata: Metadata = { title: "System health" };
 /**
  * System health: can the telemetry behind every alert be trusted right now? Collectors
  * (fresh, stale, failing), the ingestion pipeline (backlog, rejections, write errors), rule
- * execution and the advisory AI providers. One API read; every figure is the API's.
+ * execution and advisory AI triage (Jev). One API read; every figure is the API's.
  */
 export default async function HealthPage({ searchParams }: PageProps<"/health">) {
   const session = await requireSession();
@@ -37,7 +37,7 @@ export default async function HealthPage({ searchParams }: PageProps<"/health">)
   if (!result.ok) {
     return (
       <>
-        <PageHeader title="System health" subtitle="Collectors, ingestion pipeline, rule execution and AI providers" />
+        <PageHeader title="System health" subtitle="Collectors, ingestion pipeline, rule execution and AI triage" />
         <ErrorState what="system health" error={result.error} />
       </>
     );
@@ -119,7 +119,7 @@ export default async function HealthPage({ searchParams }: PageProps<"/health">)
           {/* The stack ends level with the rule table: the last card takes the remaining height. */}
           <div className="flex flex-col gap-6 xl:col-span-4">
             <QuarantineCard ingest={data.ingest} />
-            <AIProvidersCard ai={data.ai} source={data.ai_configuration_source} now={now} className="flex-1" />
+            <AITriageCard ai={data.ai} source={data.ai_configuration_source} now={now} className="flex-1" />
           </div>
         </div>
 

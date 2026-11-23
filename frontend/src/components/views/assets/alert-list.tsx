@@ -1,7 +1,6 @@
 import { cn } from "cn";
 import Link from "next/link";
 
-import { SimulationBadge } from "@/components/console/badges";
 import { Hint } from "@/components/console/hint";
 import { SeverityBadge } from "@/components/console/severity";
 import { RelativeTime } from "@/components/console/time";
@@ -93,11 +92,6 @@ export function AlertList({
                   )}
                 </div>
                 <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  {alert.simulation_run_ids.length > 0 ? (
-                    <span className="flex-none">
-                      <SimulationBadge runIds={alert.simulation_run_ids} />
-                    </span>
-                  ) : null}
                   <span className="min-w-0 flex-1">
                     <UntrustedText value={alert.summary} oneLine />
                   </span>

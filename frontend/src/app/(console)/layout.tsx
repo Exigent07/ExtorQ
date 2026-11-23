@@ -2,7 +2,6 @@ import { cookies } from "next/headers";
 import { Suspense } from "react";
 
 import { AppSidebar } from "@/components/console/app-sidebar";
-import { EnvironmentPill } from "@/components/console/badges";
 import { CommandPalette } from "@/components/console/command-palette";
 import { FreshnessIndicator, FreshnessProvider } from "@/components/console/freshness";
 import { CrumbsProvider, RouteBreadcrumbs } from "@/components/console/route-breadcrumbs";
@@ -16,7 +15,7 @@ import { getPaletteData } from "@/lib/server/shell";
 
 /**
  * The console shell: collapsible sidebar, a sticky top bar (breadcrumbs, Cmd/Ctrl-K palette,
- * environment, data freshness) and the page canvas. The session is re-checked here and on
+ * data freshness) and the page canvas. The session is re-checked here and on
  * every page. The palette's lists stream in behind a Suspense boundary so they never delay
  * the page itself.
  */
@@ -47,7 +46,6 @@ export default async function ConsoleLayout({ children }: LayoutProps<"/">) {
                 <Suspense fallback={<CommandPalette data={null} grafanaUrl={grafana} />}>
                   <PaletteLoader session={session} grafanaUrl={grafana} />
                 </Suspense>
-                <EnvironmentPill className="hidden sm:inline-flex" />
                 <FreshnessIndicator />
               </div>
             </header>

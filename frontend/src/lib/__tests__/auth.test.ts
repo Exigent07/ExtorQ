@@ -74,10 +74,10 @@ describe("FailureLimiter", () => {
 });
 
 describe("roles", () => {
-  it("only analysts may mutate or spend AI budget", () => {
+  it("only analysts may mutate (the alert workflow state is the one mutation)", () => {
     assert.equal(permissions.changeAlertState("analyst"), true);
     assert.equal(permissions.changeAlertState("viewer"), false);
-    assert.equal(permissions.requestSummary("viewer"), false);
+    assert.deepEqual(Object.keys(permissions), ["changeAlertState"]);
     assert.equal(isRole("admin"), false);
   });
 });

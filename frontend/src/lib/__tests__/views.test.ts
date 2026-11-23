@@ -2,18 +2,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { questionTypeLabel, refusalDetail } from "../../components/views/investigation/ai-labels";
+import { questionTypeLabel } from "../../components/views/investigation/ai-labels";
 import { zAssetListItem, zAssetServicesResponse } from "../api/schemas";
 import { collectorsSummary } from "../assets";
 import { spoolBacklog } from "../health";
-import { formatUtc } from "../format";
-import { chronological, providerTime, summaryWithoutType } from "../investigation";
+import { chronological, summaryWithoutType } from "../investigation";
 
 describe("summaryWithoutType", () => {
   it("drops the event type the timeline already prints (with or without a colon)", () => {
     assert.equal(
-      summaryWithoutType("auth.ssh.invalid_user user=extorq-sim-x from 10.0.2.2:61976", "auth.ssh.invalid_user"),
-      "user=extorq-sim-x from 10.0.2.2:61976",
+      summaryWithoutType("auth.ssh.invalid_user user=oracle from 10.0.2.2:61976", "auth.ssh.invalid_user"),
+      "user=oracle from 10.0.2.2:61976",
     );
     assert.equal(
       summaryWithoutType("process.audit.exec: auditd exec as euid 0: id -u", "process.audit.exec"),
@@ -138,40 +137,5 @@ describe("hosted services (Pods on a node)", () => {
   });
   it("rejects a hosted entry without instances data instead of rendering it", () => {
     assert.throws(() => zAssetServicesResponse.parse({ ...base, hosted: [{ service: {}, instances_on_asset: 1 }] }));
-  });
-});
-
-describe("providerTime", () => {
-  it("formats well-formed ISO instants from the AI provider in the console's UTC style", () => {
-    assert.equal(providerTime("2026-11-21T19:58:57.000Z", formatUtc), "2026-11-21 19:58:57Z");
-    assert.equal(providerTime("2026-11-21T21:28:57+01:30", formatUtc), "2026-11-21 19:58:57Z");
-  });
-  it("keeps anything else exactly as the provider wrote it (never guessed)", () => {
-    for (const raw of ["shortly after 19:58", "2026-11-21 19:58", "2026-11-21T19:58:57", "2026-13-41T99:99:99Z", ""]) {
-      assert.equal(providerTime(raw, formatUtc), raw);
-    }
-  });
-});
-
-describe("refusalDetail (Generate overview refused by the AI budget)", () => {
-  it("names the per-alert cooldown with the wait the API gave", () => {
-    assert.equal(
-      refusalDetail("cooldown_active (per-alert summary cooldown; retry in 87 s)"),
-      "This alert's overview cooldown is active: try again in 87 s.",
-    );
-    assert.equal(
-      refusalDetail("cooldown_active (per-alert summary cooldown; retry in 600 s)"),
-      "This alert's overview cooldown is active: try again in 10 min.",
-    );
-  });
-  it("names the daily cap with the API's counts", () => {
-    assert.equal(
-      refusalDetail("daily_cap_reached (20/20 gemini calls today, UTC)"),
-      "Today's Gemini cap is reached (20 of 20 calls, UTC day). Try again tomorrow.",
-    );
-  });
-  it("returns null for anything else, so the generic sentence stays", () => {
-    assert.equal(refusalDetail(null), null);
-    assert.equal(refusalDetail("budget_check_unavailable (OperationalError)"), null);
   });
 });

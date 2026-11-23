@@ -35,7 +35,7 @@ here.
 | Brand tint | `bg-brand-soft` | accent at 12% | avatar, role badge |
 
 The accent appears on: the primary action, the active nav item's icon, focus rings, chart
-series 1, the active tab underline, the LAB pill's dot and the user avatar. Nowhere else.
+series 1, the active tab underline and the user avatar. Nowhere else.
 
 ### 1.2 Meaning colours
 
@@ -109,14 +109,14 @@ Weights: 400 body, 500 emphasis and nav-active,
 `src/app/(console)/layout.tsx`:
 
 - **Sidebar** (`AppSidebar`, shadcn Sidebar, `collapsible="icon"`, 240px): brand lockup (the
-  ExtorQ mark on a brand tile + "ExtorQ" + "Security console · Lab"), labelled groups
+  ExtorQ mark on a brand tile + "ExtorQ" + "Security console"), labelled groups
   **Monitor** (Overview, Assets), **Detect** (Detections), **Operate** (System health),
   **Analytics** (Grafana, external, `EXTORQ_GRAFANA_URL`), user menu in the footer (avatar,
   name, role, role badge, shortcuts, sign out). Collapses to icons with Cmd/Ctrl+B or the rail;
   state persists in the `sidebar_state` cookie (UI preference only); a sheet on phones.
 - **Top bar** (sticky, 56px, hairline below): sidebar trigger, breadcrumbs derived from the URL
   (`src/lib/navigation.ts`: group > section > object; ids validated, shown as text), the
-  Cmd/Ctrl-K **command palette** trigger, the **LAB** environment pill, the **data freshness**
+  Cmd/Ctrl-K **command palette** trigger, the **data freshness**
   indicator ("Updated 13:57:12 UTC" at every width: the time the page's data was received from
   the API; amber dot when the view is older than 5 minutes; refresh re-runs the server
   components). Detail pages name their object in the trail (asset display name, service name,
@@ -171,9 +171,10 @@ Weights: 400 body, 500 emphasis and nav-active,
    Timeline: bursts carry their expander at the row end ("9 ›"), link strength is a 3-dot meter
    with its word. Correlation: one toggle per relationship type (count and strength mix; a press
    filters the list), observations grouped by relationship, strength and event type (each group
-   opens its members in a sheet), "Every observation" for the flat list. AI: cited ids capped at 3
-   per statement plus "+N more" (unverified ids never folded), with a legend; rationale codes in
-   words (the code in a hint); the summarised timeline folded. Context: one status per source, and
+   opens its members in a sheet), "Every observation" for the flat list. AI (Jev triage only):
+   the recommendation, the sufficient-context probability on its documented bands, each typed
+   answer with its bar, rationale codes in words (the code in a hint), and the input hash it was
+   computed from (a notice when it differs from the current context). Context: one status per source, and
    the card meta counts gaps and missing-telemetry notes together so no two lines disagree.
 
 ## 4. Components (src/components/console)
@@ -195,14 +196,12 @@ Weights: 400 body, 500 emphasis and nav-active,
 | `CoverageBadge` | service coverage state | dot (hollow for planned) + word; meaning and API reasons in the hint |
 | `StaleBadge` | stale data, always | never let old data pass as current |
 | `ConfidenceBadge` | alert evidence confidence | three neutral signal bars + word; it is completeness, not a verdict |
-| `SimulationBadge` | alerts whose evidence carries `extorq-sim-*` | neutral outline + flask; telemetry is genuine |
-| `RoleBadge`, `EnvironmentPill` | shell | neutral; role badge in brand tint |
+| `RoleBadge` | user menu | brand tint for analysts, neutral outline for viewers |
 | `DataTable` | any list that needs sorting/filtering/paging | TanStack: sorting, `facets` (popover checkboxes with live counts; a facet with fewer than two values is hidden), uncontrolled (`initialColumnFilters`) or controlled filters (`columnFilters` + `onColumnFiltersChange`, to mirror the URL; applied in the server render), `search` over listed columns or a custom `match`, column visibility (`meta.label`), pagination with range and total (`summary` / `footerNote` to word it): the rows-per-page menu appears once the rows outgrow the default page and the arrows with "1 / N" only with more than one page, so a one-page table never shows a pager that cannot page; `busy` while new data loads. Rows: `rowHref` navigates, `onRowClick` runs a callback (`clickRowOpener` clicks the row's `data-row-open` button to open its sheet); both ignore clicks from portalled content, controls and text selections. Keep a real link or button in the identity cell. `rowAnchorId` + `handleRef.reveal(rowId)` for jump targets (`#evidence-<id>`). Filters run on loaded rows: say so when the API capped the list |
 | `FacetFilter` | a facet outside a DataTable (or wired to one) | controlled: `selected`, `counts`, `onChange`; options may carry an icon and a description |
 | `DetailSheet`, `DetailSection`, `RawBlock` | event / evidence / finding details | right drawer, `KeyValueList` fields, raw excerpt via `UntrustedText multiline mono` inside `RawBlock` |
 | `KeyValueList` | facts in rails and sheets | `layout="stacked"` for long values; DASH for missing |
 | `Timeline` | investigation timeline | markers: filled brand = evidence, filled white = direct, dashed = candidate, faint = unestablished; word beside each; times UTC mono; `anchorId` for `#evidence-<id>` jumps |
-| `EvidenceChip` | AI-cited evidence ids | verified: link to `#evidence-<id>` with an emerald check; unverified: dashed amber outline, warning icon, not a link, never styled as verified |
 | `UntrustedText` | every telemetry string | see section 6 |
 | `EmptyState` | honest empty blocks | dashed frame + one sentence; `compact={false}` for a whole-card empty |
 | `ErrorState` | failed blocks | "Couldn't load X." + API message + request id + Retry (wording used by smoke) |
@@ -246,8 +245,8 @@ sizes use `text-sm` (13px, on the type scale) instead of the generated `text-[0.
 - **Error**: `ErrorState` inside the failed block (other blocks still render), with retry.
 - **Not found**: `NotFoundState` (a 404 is not a system failure): what is missing, why it may be,
   a way back.
-- **Unavailable action**: an action the API would refuse is shown disabled with the reason (the
-  Gemini overview when the AI settings disable Gemini, read from `/health` like System health).
+- **Provider off**: when System health reports Jev disabled, the AI tab says so next to its
+  advisory label and the empty state explains why no assessment exists (read from `/health`).
 - **Capped lists**: the count says so ("Events 50+", "Newest 50 shown").
 - **Viewer role**: mutating controls are not rendered; say "read-only" where an analyst would
   see a form.
@@ -298,8 +297,7 @@ Never "Show all N characters" walls; never put telemetry in `Hint` or `title`.
 | Status dot | text height | 12-13px in `text-fg-2` | 6px dot + word |
 | Coverage | text height | 13px in `text-fg-2` | 8px dot (hollow ring for planned) + word |
 | Confidence | text height | 13px | 3 bars (4 / 7 / 10px) in `fg-2`, empty bars `hairline-strong` |
-| Simulation | 20px | 12px | `ring-hairline-strong` outline, flask icon |
-| Role / environment | 20-24px | 12px 500 | brand tint (analyst) / neutral outline |
+| Role | 20px | 12px 500 | brand tint (analyst) / neutral outline (viewer) |
 
 ## 9. Accessibility
 

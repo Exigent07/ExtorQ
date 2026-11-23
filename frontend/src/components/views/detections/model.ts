@@ -20,20 +20,17 @@ import { formatCount, isClosedStatus } from "@/lib/format";
 import { isAssetId, isRuleId } from "@/lib/security/ids";
 
 export type DetectionsTab = "alerts" | "rules";
-export type SimulationFacet = "yes" | "no";
 
-export const SIMULATION_VALUES: readonly SimulationFacet[] = ["yes", "no"];
 export const RANGE_KEYS = Object.keys(TIME_RANGES) as TimeRangeKey[];
 
 /** Facet dimensions of the alert table; the URL parameter has the same name. */
-export const FACET_KEYS = ["severity", "rule", "asset", "status", "sim"] as const;
+export const FACET_KEYS = ["severity", "rule", "asset", "status"] as const;
 export type FacetKey = (typeof FACET_KEYS)[number];
 export type FacetSelection = Record<FacetKey, string[]>;
 
 export interface DetectionsQuery extends FacetSelection {
   severity: Severity[];
   status: AnalystStatus[];
-  sim: SimulationFacet[];
   range: TimeRangeKey;
   offset: number;
   tab: DetectionsTab;
@@ -65,7 +62,7 @@ function allowed<T extends string>(list: string[], allow: readonly T[]): T[] {
 }
 
 export function emptySelection(): FacetSelection {
-  return { severity: [], rule: [], asset: [], status: [], sim: [] };
+  return { severity: [], rule: [], asset: [], status: [] };
 }
 
 /**
@@ -80,7 +77,6 @@ export function parseDetectionsQuery(params: RawParams): DetectionsQuery {
     status: allowed(values(params, "status"), ANALYST_STATUSES),
     rule: values(params, "rule").filter(isRuleId).sort(),
     asset: values(params, "asset").filter(isAssetId).sort(),
-    sim: allowed(values(params, "sim"), SIMULATION_VALUES),
     range: range && (RANGE_KEYS as string[]).includes(range) ? (range as TimeRangeKey) : DEFAULT_RANGE,
     offset: Number.isFinite(offsetRaw) && offsetRaw > 0 && offsetRaw <= 100000 ? offsetRaw : 0,
     tab: values(params, "tab")[0] === "rules" ? "rules" : "alerts",
@@ -95,7 +91,6 @@ export function sanitizeSelection(selection: Partial<Record<FacetKey, readonly s
     status: allowed(pick("status"), ANALYST_STATUSES),
     rule: pick("rule").filter(isRuleId).sort(),
     asset: pick("asset").filter(isAssetId).sort(),
-    sim: allowed(pick("sim"), SIMULATION_VALUES),
   };
 }
 
@@ -126,9 +121,8 @@ export function hasFacetFilters(selection: FacetSelection): boolean {
 
 /**
  * The part of a selection the API can apply itself: severities and statuses as arrays, a
- * rule or an asset only when exactly one is selected (the API takes one of each). The
- * simulation facet has no API parameter. `partial` says some of the selection could only be
- * applied to the loaded rows.
+ * rule or an asset only when exactly one is selected (the API takes one of each). `partial`
+ * says some of the selection could only be applied to the loaded rows.
  */
 export function apiFilters(selection: FacetSelection): {
   severity: Severity[];
@@ -142,7 +136,7 @@ export function apiFilters(selection: FacetSelection): {
     status: selection.status as AnalystStatus[],
     ruleId: selection.rule.length === 1 ? (selection.rule[0] ?? null) : null,
     assetId: selection.asset.length === 1 ? (selection.asset[0] ?? null) : null,
-    partial: selection.rule.length > 1 || selection.asset.length > 1 || selection.sim.length > 0,
+    partial: selection.rule.length > 1 || selection.asset.length > 1,
   };
 }
 
@@ -163,8 +157,6 @@ export interface AlertRow {
   lastSeen: string;
   events: number;
   services: number;
-  simulationRunIds: string[];
-  sim: SimulationFacet;
   status: AnalystStatus;
   statusRecorded: boolean;
 }
@@ -184,8 +176,6 @@ export function toAlertRow(item: AlertListItem): AlertRow {
     lastSeen: item.last_seen,
     events: item.event_count,
     services: item.service_ids.length,
-    simulationRunIds: item.simulation_run_ids,
-    sim: item.simulation_run_ids.length > 0 ? "yes" : "no",
     status: item.analyst_status,
     statusRecorded: item.analyst_state_recorded,
   };
@@ -202,8 +192,6 @@ export function facetValue(row: AlertRow, key: FacetKey): string {
       return row.assetId;
     case "status":
       return row.status;
-    case "sim":
-      return row.sim;
   }
 }
 
@@ -232,7 +220,6 @@ export interface AlertFigures {
   acknowledged: number;
   closed: number;
   openBySeverity: Record<Severity, number>;
-  simulated: number;
   assets: { assetId: string; assetType: string; count: number }[];
   rulesFiring: number;
   /** First activity of the oldest open alert (the age of the open backlog); null when none is open. */
@@ -252,7 +239,6 @@ export function alertFigures(items: AlertListItem[], apiTotal: number | null | u
   let untriaged = 0;
   let investigating = 0;
   let acknowledged = 0;
-  let simulated = 0;
   let oldestOpenSince: string | null = null;
   for (const item of items) {
     bySeverity[item.severity] += 1;
@@ -264,7 +250,6 @@ export function alertFigures(items: AlertListItem[], apiTotal: number | null | u
       if (item.analyst_status === "investigating") investigating += 1;
       if (item.analyst_status === "acknowledged") acknowledged += 1;
     }
-    if (item.simulation_run_ids.length > 0) simulated += 1;
     rules.add(item.rule_id);
     const asset = assets.get(item.asset_id) ?? { assetId: item.asset_id, assetType: item.asset_type, count: 0 };
     asset.count += 1;
@@ -281,7 +266,6 @@ export function alertFigures(items: AlertListItem[], apiTotal: number | null | u
     acknowledged,
     closed: items.length - open,
     openBySeverity,
-    simulated,
     assets: [...assets.values()].sort((a, b) => b.count - a.count || a.assetId.localeCompare(b.assetId)),
     rulesFiring: rules.size,
     oldestOpenSince,

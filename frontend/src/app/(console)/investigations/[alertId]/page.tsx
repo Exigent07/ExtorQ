@@ -33,10 +33,10 @@ export const metadata: Metadata = { title: "Investigation" };
 const NO_CONTEXT = { kind: "server" as const, message: "No investigation context was returned.", requestId: "-" };
 
 /**
- * Investigation of one alert: a header card (rule, severity, simulation marker, evidence
+ * Investigation of one alert: a header card (rule, severity, ATT&CK techniques, evidence
  * confidence, asset, first/last seen, event count, analyst status), tabs for the overview,
- * timeline, evidence, correlation, advisory AI and context, and a right rail with the
- * analyst status, key facts and the activity log. Three API reads in parallel; each block
+ * timeline, evidence, correlation, advisory AI (Jev triage) and context, and a right rail with
+ * the analyst status, key facts and the activity log. Four API reads in parallel; each block
  * shows its own error. Switching tabs never calls the API (all panels render here).
  */
 export default async function InvestigationPage({ params }: PageProps<"/investigations/[alertId]">) {
@@ -55,8 +55,8 @@ export default async function InvestigationPage({ params }: PageProps<"/investig
     );
   }
 
-  // Health is read for the AI provider flags only (cached by the API for 15 s), so the AI tab
-  // never offers a request the API would refuse.
+  // Health is read for Jev's flags only (cached by the API for 15 s): the AI tab says when Jev
+  // is turned off, which explains a missing assessment.
   const [detailResult, contextResult, assessmentsResult, healthResult] = await Promise.all([
     getAlert(session, alertId),
     getAlertContext(session, alertId),
@@ -91,11 +91,10 @@ export default async function InvestigationPage({ params }: PageProps<"/investig
   const contextError = contextResult.ok ? null : contextResult.error;
   const assessments = assessmentsResult.ok ? assessmentsResult.data.items : [];
   const triage = latestAssessment(assessments, "triage");
-  const summary = latestAssessment(assessments, "summary");
   const evidenceRows = new Set(detail.evidence.map((e) => e.event_id));
   const canEdit = permissions.changeAlertState(session.role);
   const inputHash = context?.input_hash ?? null;
-  const aiOutdated = [triage, summary].some((a) => a !== null && inputHash !== null && a.context_input_hash !== inputHash);
+  const aiOutdated = triage !== null && inputHash !== null && triage.context_input_hash !== inputHash;
   const issues = context ? coverageIssues(context) : 0;
   const providers = healthResult.ok ? healthResult.data.ai : null;
   const related = context ? relatedRows(context) : [];
@@ -111,7 +110,7 @@ export default async function InvestigationPage({ params }: PageProps<"/investig
     { key: "timeline", label: "Timeline", count: context?.timeline.length ?? null },
     { key: "evidence", label: "Evidence", count: detail.evidence.length },
     { key: "correlation", label: "Correlation", count: context ? related.length : null },
-    { key: "ai", label: "AI", attention: aiOutdated ? "AI output was made on an earlier investigation context" : null },
+    { key: "ai", label: "AI", attention: aiOutdated ? "Jev's triage was made on an earlier investigation context" : null },
     {
       key: "context",
       label: "Context",
@@ -137,16 +136,11 @@ export default async function InvestigationPage({ params }: PageProps<"/investig
     correlation: <CorrelationPanel context={context} contextError={contextError} />,
     ai: (
       <AiPanel
-        alertId={alert.alert_id}
-        assessments={assessments}
+        assessments={assessments.filter((a) => a.task === "triage")}
         assessmentsError={assessmentsResult.ok ? null : assessmentsResult.error}
         currentInputHash={inputHash}
-        canRequest={permissions.requestSummary(session.role)}
-        evidenceRows={evidenceRows}
         triage={triage}
-        summary={summary}
         triageAvailability={providerAvailability(providers, "triage")}
-        summaryAvailability={providerAvailability(providers, "summary")}
       />
     ),
     context: <ContextPanel context={context} contextError={contextError} now={now} />,

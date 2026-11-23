@@ -46,7 +46,6 @@ const BASIS_LABEL: Record<string, string> = {
   same_service_instance: "same service instance",
   cross_service_same_asset: "other service, same asset",
   cross_asset: "another asset",
-  simulation_run: "same simulation run",
 };
 
 export function basisLabel(basis: string): string {
@@ -62,7 +61,6 @@ const IDENTIFYING = new Set([
   "shared_workflow_run",
   "shared_resource",
   "shared_principal",
-  "simulation_run",
   "shared_source_ip",
 ]);
 

@@ -18,7 +18,6 @@ import {
   zOverviewResponse,
   zRuleListResponse,
   zServiceDetailResponse,
-  zSummaryResponse,
   zTimeSeriesResponse,
 } from "@/lib/api/schemas";
 import type { Session } from "@/lib/auth/token";
@@ -26,7 +25,6 @@ import { ALERTS_PER_REQUEST, rangeBounds, type TimeRangeKey } from "@/lib/filter
 import { isAssetId, isHexId, isRuleId } from "@/lib/security/ids";
 
 import { apiRequest, type ApiResult } from "./api-client";
-import { summaryTimeoutMs } from "./config";
 
 /**
  * Typed endpoint functions for the analyst API (PLAN §5.2, base /api/v1).
@@ -166,16 +164,6 @@ export function listAssessments(session: Session, alertId: string) {
     method: "GET",
     path: `/api/v1/alerts/${seg(alertId)}/assessments`,
     route: "/api/v1/alerts/{id}/assessments",
-  });
-}
-
-export function requestSummary(session: Session, alertId: string) {
-  if (!isHexId(alertId)) return Promise.resolve(invalidId<never>("alert id"));
-  return apiRequest(session, zSummaryResponse, {
-    method: "POST",
-    path: `/api/v1/alerts/${seg(alertId)}/summary`,
-    route: "/api/v1/alerts/{id}/summary",
-    timeoutMs: summaryTimeoutMs(),
   });
 }
 

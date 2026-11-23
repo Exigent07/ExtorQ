@@ -8,7 +8,7 @@ import { collectorCounts, gatewayRejections, ruleExecution } from "./model";
 
 /**
  * System health headline figures: collectors healthy and fresh, the ingestion spool backlog,
- * quarantined records and gateway rejections, and rule failures (the AI providers have their own card).
+ * quarantined records and gateway rejections, and rule failures (Jev triage has its own card).
  * Each figure is the API's number or a sum of the API's rows; unknown values are a dash.
  */
 export function HealthKpiRow({ data }: { data: HealthResponse }) {
@@ -38,7 +38,7 @@ export function HealthKpiRow({ data }: { data: HealthResponse }) {
               : { tone: "ok", label: "None" };
 
   return (
-    // 4 cards (DESIGN §3): one row at xl, 2 + 2 below. The AI providers have their own card
+    // 4 cards (DESIGN §3): one row at xl, 2 + 2 below. Jev triage has its own card
     // further down; detection never waits for them.
     <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <KpiCard

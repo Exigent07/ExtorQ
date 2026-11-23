@@ -24,7 +24,7 @@ const VM001 = {
   src_ip_shared_nat: true,
   threshold_connections: 5,
   threshold_failures: 10,
-  usernames: ["extorq-sim-bace7dc4a3d2"],
+  usernames: ["oracle"],
   window_seconds: 300,
 };
 const VM001_CTX = {

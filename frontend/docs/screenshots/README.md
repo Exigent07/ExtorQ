@@ -1,4 +1,12 @@
-# Console screenshots (real lab data)
+# Console screenshots (real data)
+
+> **Outdated set, retake pending.** These captures predate contract schema 2.0 and the
+> 2026-11-22 product decisions. They still show UI that no longer exists: the LAB environment
+> pill and the "Security console · Lab" sidebar line, Simulation badges and the Simulation facet,
+> the "simulation-tagged" KPI line, the Gemini overview card and its "Generate overview" button,
+> and the asset "Environment" fact. Retake the set with `scripts/screenshots.mjs` (command in
+> `frontend/AGENTS.md`) once the database has been cleared and every asset re-verified with
+> the detection-test matrix, so the images show the current console over real test activity.
 
 Captured 2026-11-22 14:16-14:36 UTC from the compose console (`http://127.0.0.1:3000`, image
 `extorq/frontend:0.1.0` rebuilt from this tree) over the compose analyst API, with

@@ -181,27 +181,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** AI assessments (advisory) recorded for an alert */
+        /** Advisory Jev triage assessments recorded for an alert (newest first) */
         get: operations["list_alert_assessments"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/alerts/{alert_id}/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Request an evidence-grounded AI summary (analyst only, advisory) */
-        post: operations["request_alert_summary"];
         delete?: never;
         options?: never;
         head?: never;
@@ -249,7 +232,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One stored SecurityEvent (contract schema 1.0/1.1) with ingest metadata */
+        /** One stored SecurityEvent (contract schema 2.0) with ingest metadata */
         get: operations["get_event"];
         put?: never;
         post?: never;
@@ -352,7 +335,7 @@ export interface components {
         AIAssessment: {
             /**
              * Schema Version
-             * @default 1.1
+             * @default 2.0
              */
             schema_version: string;
             /** Assessment Id */
@@ -371,8 +354,6 @@ export interface components {
             prompt_version: string;
             status: components["schemas"]["AIStatus"];
             triage?: components["schemas"]["JevTriageResult"] | null;
-            summary?: components["schemas"]["InvestigationSummary"] | null;
-            validation?: components["schemas"]["SummaryValidation"] | null;
             /** Latency Ms */
             latency_ms?: number | null;
             /** Input Tokens */
@@ -395,8 +376,12 @@ export interface components {
          * AIProvider
          * @enum {string}
          */
-        AIProvider: "typesafe-jev" | "google-gemini";
-        /** AIProviderHealth */
+        AIProvider: "typesafe-jev";
+        /**
+         * AIProviderHealth
+         * @description One AI provider/task: configuration as the API process sees it, the state of the
+         *     component that actually runs it (the ai-worker for Jev triage) and recent outcomes.
+         */
         AIProviderHealth: {
             /** Provider */
             provider: string;
@@ -406,6 +391,9 @@ export interface components {
             configured?: boolean | null;
             /** Enabled */
             enabled?: boolean | null;
+            runtime_status?: components["schemas"]["HealthStatus"] | null;
+            /** Runtime Reported At */
+            runtime_reported_at?: string | null;
             /** Window Hours */
             window_hours: number;
             /** Status Counts */
@@ -430,7 +418,7 @@ export interface components {
          * AITask
          * @enum {string}
          */
-        AITask: "triage" | "summary";
+        AITask: "triage";
         /** Actor */
         Actor: {
             /** @default unknown */
@@ -464,6 +452,8 @@ export interface components {
             evidence: components["schemas"]["EvidenceEvent"][];
             /** Unresolved Evidence Ids */
             unresolved_evidence_ids: string[];
+            /** Expired Evidence Ids */
+            expired_evidence_ids?: string[];
             /** Evidence Total */
             evidence_total: number;
             /** Evidence Capped */
@@ -508,8 +498,6 @@ export interface components {
             };
             /** Mitre Techniques */
             mitre_techniques: string[];
-            /** Simulation Run Ids */
-            simulation_run_ids: string[];
             /**
              * Created At
              * Format: date-time
@@ -594,8 +582,6 @@ export interface components {
             } | null;
             /** Mitre Techniques */
             mitre_techniques: string[];
-            /** Simulation Run Ids */
-            simulation_run_ids: string[];
             /**
              * Created At
              * Format: date-time
@@ -670,7 +656,14 @@ export interface components {
          * @enum {string}
          */
         AnalystStatus: "new" | "acknowledged" | "investigating" | "closed_true_positive" | "closed_benign" | "closed_false_positive";
-        /** AssessmentListResponse */
+        /**
+         * AssessmentListResponse
+         * @description Advisory Jev triage assessments of one alert, newest first.
+         *
+         *     Jev never changes severity, suppresses, closes or counts anything: these records sit
+         *     next to the deterministic alert and cite the ``context_input_hash`` they were computed
+         *     from.
+         */
         AssessmentListResponse: {
             /** Alert Id */
             alert_id: string;
@@ -992,7 +985,7 @@ export interface components {
          * CollectionMethod
          * @enum {string}
          */
-        CollectionMethod: "ssh_pull" | "native_command" | "api_poll" | "api_watch" | "file_tail" | "otel_filelog" | "scanner" | "simulation_control";
+        CollectionMethod: "ssh_pull" | "native_command" | "api_poll" | "api_watch" | "file_tail" | "otel_filelog" | "scanner";
         /**
          * CollectorStatus
          * @description Latest report of one collector (``v_collector_latest``) plus derived staleness.
@@ -1079,7 +1072,7 @@ export interface components {
         DetectionAlert: {
             /**
              * Schema Version
-             * @default 1.1
+             * @default 2.0
              */
             schema_version: string;
             /** Alert Id */
@@ -1140,8 +1133,6 @@ export interface components {
             };
             /** Mitre Techniques */
             mitre_techniques?: string[];
-            /** Simulation Run Ids */
-            simulation_run_ids?: string[];
             /**
              * Created At
              * Format: date-time
@@ -1313,10 +1304,6 @@ export interface components {
             service_instance_id?: string | null;
             /** Adapter Id */
             adapter_id?: string | null;
-            /** Simulation Run Id */
-            simulation_run_id?: string | null;
-            /** Scenario Id */
-            scenario_id?: string | null;
             /** Message */
             message?: string | null;
         };
@@ -1475,10 +1462,6 @@ export interface components {
             service_instance_id?: string | null;
             /** Adapter Id */
             adapter_id?: string | null;
-            /** Simulation Run Id */
-            simulation_run_id?: string | null;
-            /** Scenario Id */
-            scenario_id?: string | null;
             /** Message */
             message?: string | null;
             /** Role */
@@ -1489,20 +1472,6 @@ export interface components {
             attributes?: {
                 [key: string]: unknown;
             } | null;
-        };
-        /** EvidenceStatement */
-        EvidenceStatement: {
-            /** Text */
-            text: string;
-            /** Evidence Ids */
-            evidence_ids?: string[];
-            /**
-             * Verified
-             * @default false
-             */
-            verified: boolean;
-            /** Unverified Ids */
-            unverified_ids?: string[];
         };
         /**
          * FindingCategory
@@ -1736,7 +1705,7 @@ export interface components {
         InvestigationContext: {
             /**
              * Schema Version
-             * @default 1.1
+             * @default 2.0
              */
             schema_version: string;
             /** Context Id */
@@ -1787,35 +1756,10 @@ export interface components {
             missing_telemetry?: string[];
             /** Limitations */
             limitations?: string[];
-            /** Simulation Run Ids */
-            simulation_run_ids?: string[];
             /** Truncated */
             truncated?: {
                 [key: string]: boolean;
             };
-        };
-        /** InvestigationSummary */
-        InvestigationSummary: {
-            /** What Happened */
-            what_happened: components["schemas"]["EvidenceStatement"][];
-            /** Timeline */
-            timeline: components["schemas"]["SummaryTimelineItem"][];
-            why_rule_fired: components["schemas"]["EvidenceStatement"];
-            /** Related Activity */
-            related_activity?: components["schemas"]["EvidenceStatement"][];
-            /** Benign Explanations */
-            benign_explanations?: string[];
-            /** Missing Information */
-            missing_information?: string[];
-            /** Limitations */
-            limitations?: string[];
-            /** Recommended Next Steps */
-            recommended_next_steps?: string[];
-            /**
-             * Overall Confidence
-             * @enum {string}
-             */
-            overall_confidence: "low" | "medium" | "high";
         };
         /** JevAnswer */
         JevAnswer: {
@@ -2061,7 +2005,7 @@ export interface components {
          * RelationshipBasis
          * @enum {string}
          */
-        RelationshipBasis: "evidence" | "shared_request_id" | "shared_pod_uid" | "shared_audit_id" | "shared_commit_sha" | "shared_workflow_run" | "shared_resource" | "shared_principal" | "shared_source_ip" | "shared_nat_source_ip" | "same_asset_time_window" | "same_service" | "same_service_instance" | "cross_service_same_asset" | "cross_asset" | "simulation_run";
+        RelationshipBasis: "evidence" | "shared_request_id" | "shared_pod_uid" | "shared_audit_id" | "shared_commit_sha" | "shared_workflow_run" | "shared_resource" | "shared_principal" | "shared_source_ip" | "shared_nat_source_ip" | "same_asset_time_window" | "same_service" | "same_service_instance" | "cross_service_same_asset" | "cross_asset";
         /**
          * RelationshipType
          * @enum {string}
@@ -2364,7 +2308,7 @@ export interface components {
         SecurityEvent: {
             /**
              * Schema Version
-             * @default 1.1
+             * @default 2.0
              */
             schema_version: string;
             /** Event Id */
@@ -2409,7 +2353,6 @@ export interface components {
             /** Raw */
             raw?: string | null;
             provenance: components["schemas"]["Provenance"];
-            simulation?: components["schemas"]["SimulationTag"] | null;
         };
         /** SeriesPoint */
         SeriesPoint: {
@@ -2880,17 +2823,6 @@ export interface components {
              */
             total: number;
         };
-        /**
-         * SimulationTag
-         * @description Set only when the telemetry itself carries an ExtorQ simulation marker
-         *     (``extorq-sim-<run_id>``). The event remains genuine telemetry.
-         */
-        SimulationTag: {
-            /** Run Id */
-            run_id: string;
-            /** Scenario Id */
-            scenario_id?: string | null;
-        };
         /** SourceCoverage */
         SourceCoverage: {
             /** Source Type */
@@ -2924,7 +2856,7 @@ export interface components {
          * SourceType
          * @enum {string}
          */
-        SourceType: "linux.journald" | "linux.auditd" | "linux.nginx" | "linux.apache" | "linux.app" | "linux.inventory" | "linux.posture" | "macos.unified_log" | "macos.launchd" | "macos.inventory" | "macos.posture" | "k8s.audit" | "k8s.api_inventory" | "k8s.events" | "k8s.container_log" | "k8s.posture" | "github.api" | "github.posture" | "scanner.trivy" | "scanner.gitleaks" | "scanner.semgrep" | "extorq.pipeline" | "extorq.simulation";
+        SourceType: "linux.journald" | "linux.auditd" | "linux.nginx" | "linux.apache" | "linux.app" | "linux.inventory" | "linux.posture" | "macos.unified_log" | "macos.launchd" | "macos.inventory" | "macos.posture" | "k8s.audit" | "k8s.api_inventory" | "k8s.events" | "k8s.container_log" | "k8s.posture" | "github.api" | "github.posture" | "scanner.trivy" | "scanner.gitleaks" | "scanner.semgrep" | "extorq.pipeline";
         /** SourceTypeEventCount */
         SourceTypeEventCount: {
             /** Source Type */
@@ -2942,41 +2874,6 @@ export interface components {
             reachable: boolean;
             /** Error */
             error?: string | null;
-        };
-        /** SummaryResponse */
-        SummaryResponse: {
-            /** Alert Id */
-            alert_id: string;
-            assessment: components["schemas"]["AIAssessment"];
-        };
-        /** SummaryTimelineItem */
-        SummaryTimelineItem: {
-            /** Time */
-            time: string;
-            /** Description */
-            description: string;
-            /** Evidence Ids */
-            evidence_ids?: string[];
-            /**
-             * Verified
-             * @default false
-             */
-            verified: boolean;
-            /** Unverified Ids */
-            unverified_ids?: string[];
-        };
-        /** SummaryValidation */
-        SummaryValidation: {
-            /** Schema Valid */
-            schema_valid: boolean;
-            /** Evidence Ids Cited */
-            evidence_ids_cited: number;
-            /** Evidence Ids Verified */
-            evidence_ids_verified: number;
-            /** Evidence Ids Rejected */
-            evidence_ids_rejected: number;
-            /** Statements Without Evidence */
-            statements_without_evidence: number;
         };
         /** TelemetryRequirement */
         TelemetryRequirement: {
@@ -3394,7 +3291,7 @@ export interface operations {
                 category?: components["schemas"]["FindingCategory"] | null;
                 /** @description Lifecycle filter; requires the findings lifecycle view (else 400). */
                 state?: ("open" | "unverified" | "resolved")[] | null;
-                /** @description Filter by service id (32 hex, schema 1.1). */
+                /** @description Filter by service id (32 hex). */
                 service_id?: string | null;
             };
             header?: {
@@ -3637,9 +3534,8 @@ export interface operations {
                 status?: components["schemas"]["AnalystStatus"][] | null;
                 /** @description Exclude closed_* analyst statuses. */
                 open_only?: boolean;
-                simulation_run_id?: string | null;
                 sort?: "last_seen" | "first_seen" | "severity";
-                /** @description Filter by service id (32 hex, schema 1.1). */
+                /** @description Filter by service id (32 hex). */
                 service_id?: string | null;
             };
             header?: {
@@ -3955,106 +3851,6 @@ export interface operations {
             };
         };
     };
-    request_alert_summary: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Signed-in console user, set by the Next.js server. */
-                "X-ExtorQ-User"?: string | null;
-                /** @description Role of the console user: `analyst` (may mutate) or `viewer` (read-only). */
-                "X-ExtorQ-Role"?: string | null;
-            };
-            path: {
-                /** @description 32-hex alert id. */
-                alert_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SummaryResponse"];
-                };
-            };
-            /** @description Invalid parameters */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Missing/invalid bearer token or user header */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Viewer role */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Alert not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Summary already in progress */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Per-user rate limit */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description AI unavailable or disabled */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     set_alert_state: {
         parameters: {
             query?: never;
@@ -4171,8 +3967,7 @@ export interface operations {
                 actor?: string | null;
                 /** @description Exact IP (also matches k8s source IPs). */
                 src_ip?: string | null;
-                simulation_run_id?: string | null;
-                /** @description Filter by service id (32 hex, schema 1.1). */
+                /** @description Filter by service id (32 hex). */
                 service_id?: string | null;
             };
             header?: {

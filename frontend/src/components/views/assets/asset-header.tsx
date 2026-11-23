@@ -37,8 +37,10 @@ export function AssetTitle({ assetType, name }: { assetType: string; name: strin
 }
 
 /**
- * Identity of the asset under the page title, shown on every tab: type, id, environment,
- * criticality, owner, parent, first seen, latest inventory report and the reporting producer.
+ * Identity of the asset under the page title, shown on every tab: type, id, criticality,
+ * owner, parent, first seen, latest inventory report and the reporting producer. The
+ * contract's deployment `environment` tag is not shown: it is the same for every asset of
+ * this single-host deployment and says nothing about the asset itself.
  * Every value is as reported (telemetry rendered as text); missing values are a dash.
  */
 export function AssetHeaderCard({ detail, now }: { detail: AssetDetailResponse; now: string }) {
@@ -52,9 +54,6 @@ export function AssetHeaderCard({ detail, now }: { detail: AssetDetailResponse; 
           <span className="font-mono text-xs text-foreground">
             <UntrustedText value={a.asset_id} oneLine mono />
           </span>
-        </Fact>
-        <Fact label="Environment">
-          <UntrustedText value={a.environment} plain limit={32} />
         </Fact>
         <Fact label="Criticality">
           <UntrustedText value={a.criticality} plain limit={32} />
@@ -71,7 +70,8 @@ export function AssetHeaderCard({ detail, now }: { detail: AssetDetailResponse; 
         <Fact label="Owner">
           <UntrustedText value={a.owner} plain limit={48} />
         </Fact>
-        <Fact label="Observed by">
+        {/* Two columns on wide screens so the second row of five ends level with the first. */}
+        <Fact label="Observed by" className="lg:col-span-2">
           <span className="font-mono text-xs">
             <UntrustedText value={a.observed_by} oneLine mono />
           </span>

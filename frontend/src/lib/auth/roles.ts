@@ -14,10 +14,8 @@ export function isRole(value: unknown): value is Role {
 export const USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$/;
 
 export const permissions = {
-  /** Change analyst workflow state (acknowledge, investigate, close). */
+  /** Change analyst workflow state (acknowledge, investigate, close): the only mutation. */
   changeAlertState: (role: Role): boolean => role === "analyst",
-  /** Request an on-demand Gemini overview (spends the AI budget). */
-  requestSummary: (role: Role): boolean => role === "analyst",
 } as const;
 
 export const ROLE_LABEL: Record<Role, string> = {

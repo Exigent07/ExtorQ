@@ -4,7 +4,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { PanelRightOpen } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
-import { SimulationBadge } from "@/components/console/badges";
 import { clickRowOpener, DataTable, type DataTableHandle, type Facet, type FacetOption } from "@/components/console/data-table";
 import { DetailSheet } from "@/components/console/detail-sheet";
 import { Timestamp } from "@/components/console/time";
@@ -58,7 +57,6 @@ function OpenButton({ event }: { event: EvidenceEvent }) {
               {role} evidence
             </span>
           ) : null}
-          {event.simulation_run_id ? <SimulationBadge runIds={[event.simulation_run_id]} /> : null}
           <Timestamp value={event.event_time} className="text-xs" />
         </>
       }

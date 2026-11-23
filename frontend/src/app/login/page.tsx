@@ -17,7 +17,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         <div className="mb-8 flex flex-col items-center text-center">
           <BrandTile className="size-11 rounded-xl [&>svg]:size-[64%]" />
           <h1 className="mt-6 text-2xl font-semibold tracking-tight text-foreground">Sign in to ExtorQ</h1>
-          <p className="mt-2 text-base text-muted-foreground">Security console for the lab environment</p>
+          <p className="mt-2 text-base text-muted-foreground">Security telemetry, detections and investigations</p>
         </div>
 
         <section

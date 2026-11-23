@@ -22,7 +22,6 @@ import { readSecret, SecretConfigError, tryReadSecret } from "./secrets";
  * | EXTORQ_VIEWER_USERNAME          | Viewer username (default "viewer")                         |
  * | EXTORQ_HTTPS                    | auto (default) / true / false: Secure cookie, HSTS         |
  * | EXTORQ_API_TIMEOUT_MS           | Per-attempt timeout for API reads (default 8000)           |
- * | EXTORQ_SUMMARY_TIMEOUT_MS       | Timeout for on-demand AI summaries (default 90000)         |
  * | EXTORQ_GRAFANA_URL              | Browser URL of Grafana for the sidebar link                |
  * |                                 | (default http://127.0.0.1:3001; http(s) origin only)       |
  */
@@ -80,10 +79,6 @@ export function apiToken(): string {
 
 export function apiTimeoutMs(): number {
   return intFromEnv("EXTORQ_API_TIMEOUT_MS", 8000, 500, 60000);
-}
-
-export function summaryTimeoutMs(): number {
-  return intFromEnv("EXTORQ_SUMMARY_TIMEOUT_MS", 90000, 5000, 300000);
 }
 
 const DEFAULT_GRAFANA_URL = "http://127.0.0.1:3001/";

@@ -56,7 +56,7 @@ export default async function OverviewPage() {
   if (!result.ok) {
     return (
       <>
-        <PageHeader title="Overview" subtitle="Coverage, detections and posture across the lab" />
+        <PageHeader title="Overview" subtitle="Coverage, detections and posture across all monitored assets" />
         <ErrorState what="the overview" error={result.error} />
       </>
     );

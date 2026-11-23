@@ -32,7 +32,7 @@ import {
 /**
  * Client state of the Detections page, mirrored in the URL so every view is shareable and a
  * refresh keeps it: the tab (`tab=rules`), the facet selection (the allow-listed alert
- * filters `severity`, `rule`, `asset`, `status`, plus `sim`) and the time range (`range`).
+ * filters `severity`, `rule`, `asset`, `status`) and the time range (`range`).
  *
  * - Tab and facet changes rewrite the URL in place (history.replaceState, which Next.js
  *   integrates with its router) without a server round trip when the table holds every alert

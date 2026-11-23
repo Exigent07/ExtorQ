@@ -1,13 +1,7 @@
 import { cn } from "cn";
 
-import { SimulationBadge } from "@/components/console/badges";
 import { Hint } from "@/components/console/hint";
 import { analystStatusLabel, isClosedStatus } from "@/lib/format";
-
-/** Marks alerts whose evidence carries an ExtorQ simulation marker (still genuine telemetry). */
-export function SimulationTag({ runIds }: { runIds: string[] }) {
-  return <SimulationBadge runIds={runIds} />;
-}
 
 const STATUS_DOT: Record<string, string> = {
   new: "bg-foreground",
