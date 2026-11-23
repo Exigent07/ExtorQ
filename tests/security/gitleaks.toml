@@ -26,7 +26,7 @@ regexes = ['''^\s*[A-Z][A-Z0-9_]*_KEY_FPR="[0-9A-F]{40}"\s*$''']
 description = "F-22 (resolved 2026-11-22: E builds the synthetic sample at runtime, so the working-tree entry was removed). History only: commit e243768 (originally 4ee5baa; renamed when the lead purged personal-Mac fixtures from local history on 2026-11-22) added the synthetic 'api_key: ...' sample to E's sanitiser test. Commit AND path must both match, so any new occurrence anywhere, including this file, is reported."
 targetRules = ["generic-api-key"]
 condition = "AND"
-commits = ["e243768010cdbd6dda68147380287a2690768809"]
+commits = ["118366197b65a8400e878e53b5ac2e6bae792a8f"]
 paths = ['''(^|/)tests/unit/ai/test_ai_sanitize\.py$''']
 
 [[allowlists]]
